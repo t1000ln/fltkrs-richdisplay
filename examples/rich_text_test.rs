@@ -48,7 +48,7 @@ async fn main() {
                 // }
 
                 global_sender.send(GlobalMessage::ContentData(data_unit));
-                tokio::time::sleep(Duration::from_millis(30)).await;
+                tokio::time::sleep(Duration::from_millis(1000)).await;
             }
         }
 

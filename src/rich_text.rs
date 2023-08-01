@@ -5,46 +5,25 @@
 use std::cell::RefCell;
 use std::cmp::{min, Ordering};
 use std::collections::VecDeque;
+use std::ops::Deref;
 use std::rc::Rc;
-use fltk::draw::{descent, draw_line, draw_rect_fill, draw_rounded_rectf, draw_text2, measure, set_draw_color, set_font};
-use fltk::enums::{Align, Color, Event, Font};
+use fltk::button::Button;
+use fltk::draw::{descent, draw_image, draw_line, draw_rect_fill, draw_rounded_rectf, draw_text2, measure, set_draw_color, set_font};
+use fltk::enums::{Align, Color, ColorDepth, Event, Font, FrameType};
 use fltk::frame::Frame;
-use fltk::group::{Scroll, ScrollType};
-use fltk::prelude::{GroupExt, WidgetBase, WidgetExt};
+use fltk::group::{Group, Pack, PackType, Scroll, ScrollType};
+use fltk::output::{MultilineOutput, Output};
+use fltk::prelude::{GroupExt, ImageExt, InputExt, SurfaceDevice, WidgetBase, WidgetExt};
+use fltk::surface::ImageSurface;
 use fltk::widget_extends;
+use crate::lined_flow::Padding;
 
 #[derive(Debug, Clone)]
 pub struct Coordinates(i32, i32, i32, i32);
 
 
 
-#[derive(Debug, Clone)]
-pub struct Padding {
-    left: i32,
-    top: i32,
-    right: i32,
-    bottom: i32,
-}
-impl Default for Padding {
-    fn default() -> Self {
-        Self {
-            left: 1,
-            top: 1,
-            right: 1,
-            bottom: 1,
-        }
-    }
-}
-impl Padding {
-    pub fn new(left: i32, top: i32, right: i32, bottom: i32) -> Self {
-        Self {
-            left,
-            top,
-            right,
-            bottom,
-        }
-    }
-}
+
 
 #[derive(Debug, Clone)]
 pub struct LineCoord {
@@ -260,28 +239,29 @@ pub trait LinedData: Ord + Clone {
 #[derive(Clone, Debug)]
 pub enum DataType {
     Text,
+    TextButton,
     Image,
 }
 
 #[derive(Clone, Debug)]
 pub struct RichData {
-    text: String,
-    font: Font,
-    font_size: i32,
-    fg_color: Color,
-    bg_color: Option<Color>,
-    underline: bool,
-    clickable: bool,
-    expired: bool,
-    line_no: usize,
-    col_no: u16,
-    start_point: Option<LineCoord>,
-    bounds: Vec<Coordinates>,
-    wrapped: bool,
-    data_type: DataType,
-    image: Option<Vec<u8>>,
-    image_width: i32,
-    image_height: i32,
+    pub text: String,
+    pub font: Font,
+    pub font_size: i32,
+    pub fg_color: Color,
+    pub bg_color: Option<Color>,
+    pub underline: bool,
+    pub clickable: bool,
+    pub expired: bool,
+    pub line_no: usize,
+    pub col_no: u16,
+    pub start_point: Option<LineCoord>,
+    pub bounds: Vec<Coordinates>,
+    pub wrapped: bool,
+    pub data_type: DataType,
+    pub image: Option<Vec<u8>>,
+    pub image_width: i32,
+    pub image_height: i32,
 }
 
 impl RichData {
@@ -624,12 +604,12 @@ impl LinedData for RichData {
 
 pub struct RichText {
     inner: Scroll,
-    panel: Frame,
+    panel: Group,
     // data_buffer: Arc<Mutex<VecDeque<RichData>>>,
     data_buffer: Rc<RefCell<VecDeque<RichData>>>,
     background_color: Rc<RefCell<Color>>,
     padding: Rc<RefCell<Padding>>,
-    total_height: Rc<RefCell<i32>>
+    total_height: Rc<RefCell<i32>>,
 }
 widget_extends!(RichText, Scroll, inner);
 
@@ -640,15 +620,19 @@ impl RichText {
     pub fn new<T>(x: i32, y: i32, w: i32, h: i32, title: T) -> Self
         where T: Into<Option<&'static str>> + Clone {
         let mut inner = Scroll::new(x, y, w, h, title);
-        inner.set_type(ScrollType::Vertical);
+        // inner.set_type(ScrollType::Vertical);
         inner.set_scrollbar_size(Self::SCROLL_BAR_WIDTH);
+        inner.set_color(Color::Black);
 
-        // let mut panel = Frame::new(x, y, w - Self::SCROLL_BAR_WIDTH, h - Self::SCROLL_BAR_WIDTH, None);
-        let mut panel = Frame::default().size_of_parent().center_of_parent();
+        // let mut panel = Frame::default().size_of_parent().center_of_parent();
+        let mut panel = Group::default_fill();
+        panel.clear_visible_focus();
+        panel.set_frame(FrameType::NoBox);
 
         inner.end();
         inner.resizable(&panel);
-        inner.set_clip_children(true);
+        // inner.set_clip_children(true);
+
 
         let padding = Rc::new(RefCell::new(Padding::default()));
 
@@ -665,90 +649,97 @@ impl RichText {
         let bg_rc = background_color.clone();
         let data_buffer_rc = data_buffer.clone();
 
-        panel.draw({
-            let mut scroll_rc = inner.clone();
-            let padding_rc = padding.clone();
-            // let panel_current_height_rc = panel_current_height.clone();
-            let total_height_rc = total_height.clone();
-            move |ctx| {
-                let base_y = scroll_rc.yposition();
-                let window_width = scroll_rc.width();
-                let window_height = scroll_rc.height();
-                let drawable_max_width = window_width - padding_rc.borrow().left - padding_rc.borrow().right;
-                let drawable_max_height = window_height - padding_rc.borrow().top - padding_rc.borrow().bottom;
-                // 填充黑色背景
-                draw_rect_fill(0, 0, window_width, window_height, *bg_rc.borrow());
+        // let mut btn = Button::new(0, 0, 100, 100, None);
+        // btn.set_callback({
+        //     move |b| {
+        //         println!("click button");
+        //     }
+        // });
 
-                let mut data = data_buffer_rc.borrow_mut();
-                let mut suggested = LineCoord {
-                    x: padding_rc.borrow().left,
-                    y: padding_rc.borrow().top - base_y,
-                    line_height: 0,
-                    line_spacing: 0,
-                    padding: padding_rc.borrow().clone(),
-                    line_no: 0,
-                    line_count: 0
-                };
-                *total_height_rc.borrow_mut() = padding_rc.borrow().top;
-                for (seq, rich_data) in data.iter_mut().enumerate() {
-                    // rich_data.set_line_no(seq);
-                    if seq == 0 {
-                        set_font(rich_data.font, rich_data.font_size);
-                        suggested.line_spacing = descent();
-                        suggested.y += suggested.line_spacing;
-                    }
-                    rich_data.draw(&mut suggested, drawable_max_width, drawable_max_height, total_height_rc.clone());
-                }
-
-                let content_height = *total_height_rc.borrow() + padding_rc.borrow().bottom;
-                if content_height > ctx.height() {
-                    ctx.resize(ctx.x(), ctx.y(), ctx.width(), content_height);
-                    // *panel_current_height_rc.borrow_mut() = content_height;
-                }
-            }
-        });
-
-        // panel.handle({
-        //     let panel_current_height_rc = panel_current_height.clone();
-        //     let total_height_rc = total_height.clone();
-        //     move |ctx, evt| {
+        // inner.handle({
+        //     let pack_rc = panel.clone();
+        //     move |p, evt| {
         //         match evt {
         //             Event::Resize => {
-        //                 // *panel_current_height_rc.borrow_mut() = ctx.height();
-        //                 println!("total height: {}, panel height: {}", *total_height_rc.borrow(), ctx.height());
+        //                 pack_rc.clone().size_of_parent();
         //             }
         //             _ => {}
         //         }
+        //
         //         false
+        //     }
+        // });
+
+
+        // panel.draw({
+        //     let mut scroll_rc = inner.clone();
+        //     let padding_rc = padding.clone();
+        //     // let panel_current_height_rc = panel_current_height.clone();
+        //     let total_height_rc = total_height.clone();
+        //     move |ctx| {
+        //         // let base_y = scroll_rc.yposition();
+        //         // let window_width = scroll_rc.width();
+        //         // let window_height = scroll_rc.height();
+        //         // let drawable_max_width = window_width - padding_rc.borrow().left - padding_rc.borrow().right;
+        //         // let drawable_max_height = window_height - padding_rc.borrow().top - padding_rc.borrow().bottom;
+        //         // // 填充黑色背景
+        //         // draw_rect_fill(0, 0, window_width, window_height, *bg_rc.borrow());
+        //         //
+        //         // let mut data = data_buffer_rc.borrow_mut();
+        //         // let mut suggested = LineCoord {
+        //         //     x: padding_rc.borrow().left,
+        //         //     y: padding_rc.borrow().top - base_y,
+        //         //     line_height: 0,
+        //         //     line_spacing: 0,
+        //         //     padding: padding_rc.borrow().clone(),
+        //         //     line_no: 0,
+        //         //     line_count: 0
+        //         // };
+        //         // *total_height_rc.borrow_mut() = padding_rc.borrow().top;
+        //         // for (seq, rich_data) in data.iter_mut().enumerate() {
+        //         //     // rich_data.set_line_no(seq);
+        //         //     if seq == 0 {
+        //         //         set_font(rich_data.font, rich_data.font_size);
+        //         //         suggested.line_spacing = descent();
+        //         //         suggested.y += suggested.line_spacing;
+        //         //     }
+        //         //     rich_data.draw(&mut suggested, drawable_max_width, drawable_max_height, total_height_rc.clone());
+        //         // }
+        //         //
+        //         // let content_height = *total_height_rc.borrow() + padding_rc.borrow().bottom;
+        //         // if content_height > ctx.height() {
+        //         //     ctx.resize(ctx.x(), ctx.y(), ctx.width(), content_height);
+        //         //     // *panel_current_height_rc.borrow_mut() = content_height;
+        //         // }
         //     }
         // });
 
         /*
         跟随新增行自动滚动到最底部。
          */
-        inner.handle({
-            // let panel_last_height_rc = panel_last_height.clone();
-            // let panel_current_height_rc = panel_current_height.clone();
-            let total_height_rc = total_height.clone();
-            let padding_rc = padding.clone();
-            move |scroll, evt| {
-                match evt {
-                    Event::NoEvent => {
-                        // let last_height = *panel_last_height_rc.borrow();
-                        // let current_height = *panel_current_height_rc.borrow();
-                        // if last_height != current_height {
-                        //     scroll.scroll_to(0, *total_height_rc.borrow() - scroll.height());
-                        //     *panel_last_height_rc.borrow_mut() = current_height;
-                        // }
-                        if *total_height_rc.borrow() > scroll.height() {
-                            scroll.scroll_to(0, *total_height_rc.borrow() - scroll.height() + padding_rc.borrow().bottom);
-                        }
-                    }
-                    _ => {}
-                }
-                false
-            }
-        });
+        // inner.handle({
+        //     // let panel_last_height_rc = panel_last_height.clone();
+        //     // let panel_current_height_rc = panel_current_height.clone();
+        //     let total_height_rc = total_height.clone();
+        //     let padding_rc = padding.clone();
+        //     move |scroll, evt| {
+        //         match evt {
+        //             Event::NoEvent => {
+        //                 // let last_height = *panel_last_height_rc.borrow();
+        //                 // let current_height = *panel_current_height_rc.borrow();
+        //                 // if last_height != current_height {
+        //                 //     scroll.scroll_to(0, *total_height_rc.borrow() - scroll.height());
+        //                 //     *panel_last_height_rc.borrow_mut() = current_height;
+        //                 // }
+        //                 if *total_height_rc.borrow() > scroll.height() {
+        //                     scroll.scroll_to(0, *total_height_rc.borrow() - scroll.height() + padding_rc.borrow().bottom);
+        //                 }
+        //             }
+        //             _ => {}
+        //         }
+        //         false
+        //     }
+        // });
 
         // panel.handle({
         //     let mut scroll_rc = inner.clone();
@@ -770,28 +761,46 @@ impl RichText {
     }
 
     pub fn append(&mut self, rich_data: RichData) {
-        // println!("append {:?}", rich_data);
-        self.data_buffer.borrow_mut().push_back(rich_data);
-        self.inner.redraw();
-        // println!("current panel height {}", self.panel.height());
+        let data_rc = Rc::new(rich_data);
+
+        // let w = self.inner.width() - self.padding.borrow().left - self.padding.borrow().right;
+        // let sur = ImageSurface::new(w, self.panel.height(), false);
+        // ImageSurface::push_current(&sur);
+        // set_font(rich_data.font, rich_data.font_size);
+        // let (tw, th) = measure(rich_data.text.as_str(), false);
+        // ImageSurface::pop_current();
+        //
+        //
+        // println!("tw: {}, th: {}, font_size: {}", tw, th, rich_data.font_size);
+        //
+        // let width = min(w, tw);
+        // let mut text_output = MultilineOutput::new(0, *self.total_height.borrow(), width, th, None);
+        // text_output.set_frame(FrameType::FlatBox);
+        // text_output.set_text_font(rich_data.font);
+        // text_output.set_text_size(rich_data.font_size);
+        // text_output.set_text_color(rich_data.fg_color);
+        // if let Some(bg) = rich_data.bg_color {
+        //     text_output.set_color(bg);
+        // } else {
+        //     text_output.set_color(Color::Black);
+        // }
+        // text_output.set_wrap(true);
+        // text_output.set_value(rich_data.text.as_str());
+        //
+        // self.panel.add(&text_output);
+        //
+        // self.inner.redraw();
+        // *self.total_height.borrow_mut() += th;
+
+        if let Some(data) = Rc::into_inner(data_rc) {
+            self.data_buffer.borrow_mut().push_back(data);
+        }
+
     }
 
-    // pub fn set_message_receiver(&mut self, mut data_receiver: Receiver<RichData>, global_sender: channel::Sender<GlobalMessage>) {
-    //     let mut buffer = self.data_buffer.clone();
-    //     let mut panel = self.panel.clone();
-    //     tokio::spawn(async move {
-    //         while let Some(data) = data_receiver.recv().await {
-    //             println!("Received data: {:?}", data.text);
-    //             {
-    //                 if let Ok(mut dvr) = buffer.lock() {
-    //                     dvr.push_back(data);
-    //                 }
-    //             }
-    //             global_sender.send(GlobalMessage::UpdatePanel);
-    //         }
-    //         println!("Receiver closed");
-    //     });
-    // }
+    pub fn calculate_width_and_height(&self, rich_data: Rc<RichData>) {
+
+    }
 
     pub fn set_background_color(&mut self, background_color: Color) {
         self.background_color.replace(background_color);
@@ -812,15 +821,14 @@ impl RichText {
     /// ```
     pub fn set_padding(&mut self, padding: Padding) {
         self.padding.replace(padding);
-
     }
 
-    pub fn scroll_to_bottom(&mut self) {
-        let mut y = self.panel.height();
-        y = y - self.inner.height() + self.padding.borrow().bottom;
-        println!("scroll to bottom, height {}, y {}", self.panel.height(), y);
-        self.inner.scroll_to(0, y);
-    }
+    // pub fn scroll_to_bottom(&mut self) {
+    //     let mut y = self.panel.height();
+    //     y = y - self.inner.height() + self.padding.borrow().bottom;
+    //     println!("scroll to bottom, height {}, y {}", self.panel.height(), y);
+    //     self.inner.scroll_to(0, y);
+    // }
 }
 
 pub enum GlobalMessage {
@@ -896,7 +904,6 @@ mod tests {
                 match msg {
                     GlobalMessage::UpdatePanel => {
                         rich_text.redraw();
-                        // rich_text.scroll_to_bottom();
                     }
                     GlobalMessage::ContentData(data) => {
                         rich_text.append(data);

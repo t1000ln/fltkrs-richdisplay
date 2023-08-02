@@ -18,22 +18,12 @@ pub struct Coordinates(i32, i32, i32, i32);
 
 
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Padding {
     left: i32,
     top: i32,
     right: i32,
     bottom: i32,
-}
-impl Default for Padding {
-    fn default() -> Self {
-        Self {
-            left: 1,
-            top: 1,
-            right: 1,
-            bottom: 1,
-        }
-    }
 }
 impl Padding {
     pub fn new(left: i32, top: i32, right: i32, bottom: i32) -> Self {
@@ -59,19 +49,28 @@ pub struct LineCoord {
 
 impl LineCoord {
     /// 计算换行操作，增加行号计数。
-    pub fn next_line(&mut self, total_height: Rc<RefCell<i32>>) {
+    pub fn next_line(&mut self) {
         self.line_no += 1;
-        self.next_line_for_wrap(total_height);
+        self.next_line_for_wrap();
 
         // 恢复行高到默认值，使得下一个行可以应用自己的行高。
         self.line_height = 1;
     }
 
     /// 计算换行操作，用于文本数据超宽时的计算。
-    pub fn next_line_for_wrap(&mut self, total_height: Rc<RefCell<i32>>) {
+    pub fn next_line_for_wrap(&mut self) {
         self.x = self.padding.left;
-        self.y += self.line_height;
-        *total_height.borrow_mut() += self.line_height;
+        self.y += self.line_height
+    }
+
+    pub fn previous_line(&mut self) {
+        self.previous_line_for_wrap();
+        self.line_height = 1;
+    }
+
+    pub fn previous_line_for_wrap(&mut self) {
+        self.x = self.padding.left;
+        self.y -= self.line_height;
     }
 }
 
@@ -127,9 +126,6 @@ pub trait LinedData: Ord + Clone {
 
     // /// 获取当前数据段结束位置右下角坐标。
     // fn get_end_point(&self) -> Coord<i32>;
-
-    /// 指示当前数据绘制过程中是否溢出右边界，进行了换行处理。
-    fn wrapped(&self) -> bool;
 
     /// 获取数据段的矩形占位，从左上角到右下角，若出现换行绘制，则可能有多个矩形区域。
     fn get_bounds(&self) -> &Vec<Coordinates>;
@@ -235,7 +231,9 @@ pub trait LinedData: Ord + Clone {
     /// ```
     ///
     /// ```
-    fn draw(&mut self, suggested: &mut LineCoord, max_width: i32, max_height: i32, ctx: Rc<RefCell<i32>>);
+    fn draw(&mut self, suggested: &mut LineCoord, max_width: i32, max_height: i32);
+
+    fn estimate(&self, blow_line: &mut LineCoord, max_width: i32);
 
     /// 擦除内容，但保留占位。
     fn erase(&mut self);
@@ -266,8 +264,8 @@ pub enum DataType {
 #[derive(Clone, Debug)]
 pub struct RichData {
     text: String,
-    font: Font,
-    font_size: i32,
+    pub font: Font,
+    pub font_size: i32,
     fg_color: Color,
     bg_color: Option<Color>,
     underline: bool,
@@ -277,7 +275,6 @@ pub struct RichData {
     col_no: u16,
     start_point: Option<LineCoord>,
     bounds: Vec<Coordinates>,
-    wrapped: bool,
     data_type: DataType,
     image: Option<Vec<u8>>,
     image_width: i32,
@@ -299,7 +296,6 @@ impl RichData {
             col_no: 0,
             start_point: None,
             bounds: vec![],
-            wrapped: false,
             data_type: DataType::Text,
             image: None,
             image_width: 0,
@@ -321,7 +317,6 @@ impl RichData {
             col_no: 0,
             start_point: None,
             bounds: vec![],
-            wrapped: false,
             data_type: DataType::Image,
             image: Some(image),
             image_width: width,
@@ -374,7 +369,7 @@ impl RichData {
     /// ```
     ///
     /// ```
-    pub fn wrap_text(&mut self, text: &str, suggested: &mut LineCoord, current_line_height: i32, current_line_spacing: i32, max_width: i32, max_height: i32, measure_width: i32, total_height: Rc<RefCell<i32>>) {
+    pub fn wrap_text(&mut self, text: &str, suggested: &mut LineCoord, current_line_height: i32, current_line_spacing: i32, max_width: i32, max_height: i32, measure_width: i32) {
         /*
         先对传入内容进行计算，得出可以绘制在边界内的部分内容，将超出边界的部分内容放入缓存中再进行下一步处理。
          */
@@ -390,28 +385,27 @@ impl RichData {
         }
 
         // 本行内顶宽文本
+        let draw_width = min(max_width - suggested.x, measure_width);
         let line_text: String = char_vec.iter().collect();
-
         if suggested.y + current_line_height > 0 && suggested.y - current_line_spacing < max_height {
             if let Some(bg_color) = &self.bg_color {
                 // 绘制背景色
                 set_draw_color(*bg_color);
-                draw_rounded_rectf(suggested.x, suggested.y - current_line_spacing, measure_width, current_line_height, 4);
+                draw_rounded_rectf(suggested.x, suggested.y - current_line_spacing, draw_width, current_line_height, 4);
             }
 
             set_draw_color(self.fg_color);
             if self.underline {
                 // 绘制下划线
                 let line_y = suggested.y + self.font_size;
-                draw_line(suggested.x, line_y, suggested.x + measure_width, line_y);
+                draw_line(suggested.x, line_y, suggested.x + draw_width, line_y);
             }
 
             // 绘制文本
-            draw_text2(line_text.as_str(), suggested.x, suggested.y, measure_width, self.font_size, Align::Left);
+            draw_text2(line_text.as_str(), suggested.x, suggested.y, draw_width, self.font_size, Align::Left);
         }
 
-
-        suggested.next_line_for_wrap(total_height.clone());
+        suggested.next_line_for_wrap();
 
         /*
         处理剩余部分内容。
@@ -422,7 +416,7 @@ impl RichData {
         let (rw, _) = measure(rt, false);
         if rw > max_width {
             // 余下部分内容仍超出整行宽度，继续进行换行处理
-            self.wrap_text(rt, suggested, current_line_height, current_line_spacing, max_width, max_height, rw, total_height);
+            self.wrap_text(rt, suggested, current_line_height, current_line_spacing, max_width, max_height, rw);
         } else {
             // 余下部分未超宽
             if suggested.y + current_line_height > 0 && suggested.y - current_line_spacing < max_height {
@@ -445,9 +439,47 @@ impl RichData {
 
             if rt.ends_with("\n") {
                 self.line_no = suggested.line_no;
-                suggested.next_line(total_height);
+                suggested.next_line();
             } else {
                 suggested.x += rw;
+            }
+        }
+    }
+
+    pub fn wrap_text_for_estimate(&self, text: &str, below_line: &mut LineCoord, max_width: i32) {
+        /*
+        先对传入内容进行计算，得出可以绘制在边界内的部分内容，将超出边界的部分内容放入缓存中再进行下一步处理。
+         */
+        let chars = text.chars();
+        let mut char_vec: Vec<char> = chars.collect();
+        let mut remaining_vec: Vec<char> = Vec::new();
+        while let Some(c) = char_vec.pop() {
+            // 每次从字符串末尾移除一个字符，看看是否不超宽。
+            remaining_vec.push(c);
+            let (tw, _) = measure(char_vec.iter().collect::<String>().as_str(), false);
+            if below_line.x + tw <= max_width {
+                break;
+            }
+        }
+
+        below_line.previous_line_for_wrap();
+
+        /*
+        处理剩余部分内容。
+         */
+        remaining_vec.reverse();
+        let remaining_text: String = remaining_vec.iter().collect();
+        let rt = remaining_text.as_str();
+        let (rw, _) = measure(rt, false);
+        if rw > max_width {
+            // 余下部分内容仍超出整行宽度，继续进行换行处理
+            self.wrap_text_for_estimate(rt, below_line, max_width);
+        } else {
+            // 余下部分未超宽
+            if rt.ends_with("\n") {
+                below_line.previous_line();
+            } else {
+                below_line.x += rw;
             }
         }
     }
@@ -510,11 +542,6 @@ impl LinedData for RichData {
         self.start_point = Some(start_point);
     }
 
-
-    fn wrapped(&self) -> bool {
-        self.wrapped
-    }
-
     fn get_bounds(&self) -> &Vec<Coordinates> {
         &self.bounds
     }
@@ -557,9 +584,8 @@ impl LinedData for RichData {
         }
     }
 
-    fn draw(&mut self, suggested: &mut LineCoord, max_width: i32, max_height: i32, total_height: Rc<RefCell<i32>>) {
+    fn draw(&mut self, suggested: &mut LineCoord, max_width: i32, max_height: i32) {
         set_font(self.font, self.font_size);
-        let font_height = (self.font_size as f32 * 1.3).ceil() as i32;
 
         let (_, th) = measure(self.text.as_str(), false);
         let current_line_height = th;
@@ -571,30 +597,29 @@ impl LinedData for RichData {
 
         let text = self.text.replace("\r", "");
         text.split_inclusive("\n").for_each(|line| {
-            let (tw, th) = measure(line, false);
+            let (mw, _) = measure(line, false);
             // let current_line_height = max(th, font_height);
 
-            if suggested.x + tw > max_width {
+            if suggested.x + mw > max_width {
                 // 超出横向右边界
-                self.wrapped = true;
-                self.wrap_text(line, suggested, current_line_height, current_line_spacing, max_width, max_height, tw, total_height.clone());
+                self.wrap_text(line, suggested, current_line_height, current_line_spacing, max_width, max_height, mw);
             } else {
                 if suggested.y + current_line_height > 0 && suggested.y - current_line_spacing < max_height {
                     if let Some(bg_color) = &self.bg_color {
                         // 绘制背景色
                         set_draw_color(*bg_color);
-                        draw_rounded_rectf(suggested.x, suggested.y - current_line_spacing, tw, current_line_height, 4);
+                        draw_rounded_rectf(suggested.x, suggested.y - current_line_spacing, mw, current_line_height, 4);
                     }
 
                     set_draw_color(self.fg_color);
                     if self.underline {
                         // 绘制下划线
                         let line_y = suggested.y + self.font_size;
-                        draw_line(suggested.x, line_y, suggested.x + tw, line_y);
+                        draw_line(suggested.x, line_y, suggested.x + mw, line_y);
                     }
 
                     // 绘制文本
-                    draw_text2(line, suggested.x, suggested.y, tw, self.font_size, Align::Left);
+                    draw_text2(line, suggested.x, suggested.y, mw, self.font_size, Align::Left);
                 }
 
                 if line.ends_with("\n") {
@@ -603,14 +628,47 @@ impl LinedData for RichData {
                     只有遇到数据中包含的换行符'\n'才会增加行标号。
                      */
                     self.set_line_no(suggested.line_no);
-                    suggested.next_line(total_height.clone());
+                    suggested.next_line();
                 } else {
-                    suggested.x += tw;
+                    suggested.x += mw;
                 }
             }
         });
     }
 
+    fn estimate(&self, below_line: &mut LineCoord, max_width: i32) {
+        set_font(self.font, self.font_size);
+        // let font_height = (self.font_size as f32 * 1.3).ceil() as i32;
+
+        let (_, th) = measure(self.text.as_str(), false);
+        let current_line_height = th;
+        if current_line_height > below_line.line_height {
+            below_line.line_height = current_line_height;
+        }
+        let current_line_spacing = min(below_line.line_spacing, descent());
+        below_line.line_spacing = current_line_spacing;
+
+        let text = self.text.replace("\r", "");
+        text.split_inclusive("\n").for_each(|line| {
+            let (tw, th) = measure(line, false);
+            // let current_line_height = max(th, font_height);
+
+            if below_line.x + tw > max_width {
+                // 超出横向右边界
+                self.wrap_text_for_estimate(line, below_line, max_width);
+            } else {
+                if line.ends_with("\n") {
+                    /*
+                    为当前处理的行数据设置行号。这个行号是对整体数据流而言，并非窗口上看到的行。因为窗口上的行会跟随窗口宽度调整而变化。
+                    只有遇到数据中包含的换行符'\n'才会增加行标号。
+                     */
+                    below_line.previous_line();
+                } else {
+                    below_line.x += tw;
+                }
+            }
+        });
+    }
 
 
     fn erase(&mut self) {
@@ -680,31 +738,78 @@ impl RichText {
                 draw_rect_fill(0, 0, window_width, window_height, *bg_rc.borrow());
 
                 let mut data = data_buffer_rc.borrow_mut();
-                let mut suggested = LineCoord {
+
+                // *total_height_rc.borrow_mut() = padding_rc.borrow().top;
+
+                /*
+                先试算出可显示的行，再真正绘制可显示的行。
+                试算从数据队列的尾部向头部取数，试算位置从窗口底部向顶部堆积。
+                 */
+                let mut below_line = LineCoord {
                     x: padding_rc.borrow().left,
-                    y: padding_rc.borrow().top - base_y,
+                    y: ctx.height() - padding_rc.borrow().bottom - base_y,
                     line_height: 0,
                     line_spacing: 0,
                     padding: padding_rc.borrow().clone(),
                     line_no: 0,
                     line_count: 0
                 };
-                *total_height_rc.borrow_mut() = padding_rc.borrow().top;
-                for (seq, rich_data) in data.iter_mut().enumerate() {
+                let (mut from_index, mut to_index, total_len) = (0, data.len(), data.len());
+                let mut is_first_estimated = true;
+                let mut set_to_index = false;
+                for (seq, rich_data) in data.iter_mut().rev().enumerate() {
                     // rich_data.set_line_no(seq);
-                    if seq == 0 {
+                    if is_first_estimated {
+                        set_font(rich_data.font, rich_data.font_size);
+                        below_line.line_spacing = descent();
+                        below_line.y += below_line.line_spacing;
+                        is_first_estimated = false;
+                    }
+
+                    // 试算当前数据所占高度，得出前一行数据的末尾y坐标。
+                    rich_data.estimate(&mut below_line, drawable_max_width);
+
+                    if !set_to_index && below_line.y < window_height - padding_rc.borrow().bottom {
+                        // 待绘制的内容超出窗口底部边界
+                        to_index = total_len - seq;
+                        set_to_index = true;
+                    }
+
+                    if below_line.y < 0 {
+                        // 待绘制内容已经向上超出窗口顶部边界，可以停止处理前面的数据了。
+                        from_index = total_len - seq;
+                        break;
+                    }
+                }
+                println!("from_index: {}, to_index: {}", from_index, to_index);
+
+                let mut suggested = LineCoord {
+                    x: padding_rc.borrow().left,
+                    y: padding_rc.borrow().top,
+                    line_height: 0,
+                    line_spacing: 0,
+                    padding: padding_rc.borrow().clone(),
+                    line_no: 0,
+                    line_count: 0
+                };
+
+                let mut is_first_draw = true;
+                for rich_data in data.range_mut(from_index..to_index) {
+                    // rich_data.set_line_no(seq);
+                    if is_first_draw {
                         set_font(rich_data.font, rich_data.font_size);
                         suggested.line_spacing = descent();
                         suggested.y += suggested.line_spacing;
+                        is_first_draw = false;
                     }
-                    rich_data.draw(&mut suggested, drawable_max_width, drawable_max_height, total_height_rc.clone());
-                }
 
-                let content_height = *total_height_rc.borrow() + padding_rc.borrow().bottom;
-                if content_height > ctx.height() {
-                    ctx.resize(ctx.x(), ctx.y(), ctx.width(), content_height);
-                    // *panel_current_height_rc.borrow_mut() = content_height;
+                    rich_data.draw(&mut suggested, drawable_max_width, window_width);
                 }
+                // let content_height = *total_height_rc.borrow() + padding_rc.borrow().bottom;
+                // if content_height > ctx.height() {
+                //     ctx.resize(ctx.x(), ctx.y(), ctx.width(), content_height);
+                //     // *panel_current_height_rc.borrow_mut() = content_height;
+                // }
             }
         });
 
@@ -770,8 +875,28 @@ impl RichText {
     }
 
     pub fn append(&mut self, rich_data: RichData) {
-        // println!("append {:?}", rich_data);
-        self.data_buffer.borrow_mut().push_back(rich_data);
+        println!("append {:?}", rich_data);
+        self.data_buffer.borrow_mut().push_back(rich_data.clone());
+
+        let window_width = self.inner.width();
+        let drawable_max_width = window_width - self.padding.borrow().left - self.padding.borrow().right;
+        let mut below_line = LineCoord {
+            x: self.padding.borrow().left,
+            y: 0,
+            line_height: 0,
+            line_spacing: 0,
+            padding: self.padding.borrow().clone(),
+            line_no: 0,
+            line_count: 0
+        };
+        rich_data.estimate(&mut below_line, drawable_max_width);
+        let increased_height = -below_line.y;
+        *self.total_height.borrow_mut() += increased_height;
+        let new_height = *self.total_height.borrow() + self.padding.borrow().bottom + self.padding.borrow().top;
+        if new_height > self.panel.height() {
+            self.panel.resize(self.panel.x(), self.y(), self.panel.width(), new_height);
+        }
+
         self.inner.redraw();
         // println!("current panel height {}", self.panel.height());
     }
@@ -811,8 +936,9 @@ impl RichText {
     ///
     /// ```
     pub fn set_padding(&mut self, padding: Padding) {
+        let right = padding.right;
         self.padding.replace(padding);
-
+        self.inner.set_scrollbar_size(right);
     }
 
     pub fn scroll_to_bottom(&mut self) {

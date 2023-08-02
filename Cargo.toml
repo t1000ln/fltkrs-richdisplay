@@ -6,7 +6,6 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-#fltk = { version = "^1.4", features = ["fltk-bundled"] }
-fltk = "^1.4"
-#tokio = { version = "1.29.1", features = ["rt", "macros", "rt-multi-thread", "sync", "time"] }
+fltk = "^1.4.9"
 tokio = { version = "1.29.1", features = ["full"] }
+fltk-flow = "0.2.1"

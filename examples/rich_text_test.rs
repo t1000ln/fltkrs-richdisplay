@@ -5,7 +5,7 @@ use std::time::Duration;
 use fltk::{app, window};
 use fltk::enums::{Color, Font};
 use fltk::prelude::{GroupExt, WidgetExt, WindowExt};
-use fltkrs_richtext::rich_text::{GlobalMessage, Padding, RichData, RichText};
+use fltkrs_richdisplay::rich_text::{GlobalMessage, Padding, RichData, RichText};
 
 
 #[tokio::main]
@@ -22,7 +22,7 @@ async fn main() {
 
     let (global_sender, mut global_receiver) = app::channel::<GlobalMessage>();
 
-    let (data_sender, mut data_receiver) = tokio::sync::mpsc::channel::<RichData>(64);
+    // let (data_sender, mut data_receiver) = tokio::sync::mpsc::channel::<RichData>(64);
     // rich_text.set_message_receiver(data_receiver, global_sender);
 
     tokio::spawn(async move {

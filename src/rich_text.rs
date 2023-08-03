@@ -3,7 +3,7 @@
 
 
 use std::cell::RefCell;
-use std::cmp::{min, Ordering};
+use std::cmp::{max, min, Ordering};
 use std::collections::VecDeque;
 use std::rc::Rc;
 use fltk::draw::{descent, draw_line, draw_rect_fill, draw_rounded_rectf, draw_text2, measure, set_draw_color, set_font};
@@ -586,9 +586,9 @@ impl LinedData for RichData {
 
     fn draw(&mut self, suggested: &mut LineCoord, max_width: i32, max_height: i32) {
         set_font(self.font, self.font_size);
-
+        let ref_line_height = (self.font_size as f64 * 1.3).ceil() as i32;
         let (_, th) = measure(self.text.as_str(), false);
-        let current_line_height = th;
+        let current_line_height = max(ref_line_height, th);
         if current_line_height > suggested.line_height {
             suggested.line_height = current_line_height;
         }
@@ -781,7 +781,7 @@ impl RichText {
                         break;
                     }
                 }
-                println!("from_index: {}, to_index: {}", from_index, to_index);
+                // println!("from_index: {}, to_index: {}", from_index, to_index);
 
                 let mut suggested = LineCoord {
                     x: padding_rc.borrow().left,
@@ -875,7 +875,6 @@ impl RichText {
     }
 
     pub fn append(&mut self, rich_data: RichData) {
-        println!("append {:?}", rich_data);
         self.data_buffer.borrow_mut().push_back(rich_data.clone());
 
         let window_width = self.inner.width();

@@ -20,10 +20,10 @@ pub struct Coordinates(i32, i32, i32, i32);
 
 #[derive(Debug, Clone, Default)]
 pub struct Padding {
-    left: i32,
-    top: i32,
-    right: i32,
-    bottom: i32,
+    pub(crate) left: i32,
+    pub(crate) top: i32,
+    pub(crate) right: i32,
+    pub(crate) bottom: i32,
 }
 impl Padding {
     pub fn new(left: i32, top: i32, right: i32, bottom: i32) -> Self {
@@ -43,14 +43,11 @@ pub struct LineCoord {
     pub line_height: i32,
     pub line_spacing: i32,
     pub padding: Padding,
-    pub line_no: usize,
-    pub line_count: usize,
 }
 
 impl LineCoord {
     /// 计算换行操作，增加行号计数。
     pub fn next_line(&mut self) {
-        self.line_no += 1;
         self.next_line_for_wrap();
 
         // 恢复行高到默认值，使得下一个行可以应用自己的行高。
@@ -65,47 +62,15 @@ impl LineCoord {
 
     pub fn previous_line(&mut self) {
         self.previous_line_for_wrap();
-        self.line_height = 1;
     }
 
     pub fn previous_line_for_wrap(&mut self) {
         self.x = self.padding.left;
-        self.y -= self.line_height;
+        self.y -= self.line_height - self.line_spacing;
     }
 }
 
-pub trait LinedData: Ord + Clone {
-    /// 获取当前数据段所在行号。
-    ///
-    /// # Arguments
-    ///
-    /// returns: u32
-    ///
-    /// # Examples
-    ///
-    /// ```
-    ///
-    /// ```
-    fn get_line_no(&self) -> usize;
-
-    /// 设置当前数据段所在行号。
-    ///
-    /// # Arguments
-    ///
-    /// * `line_no` - 当前数据段所在行号。
-    ///
-    /// returns: ()
-    ///
-    /// # Examples
-    ///
-    /// ```
-    ///
-    /// ```
-    fn set_line_no(&mut self, line_no: usize);
-
-    fn get_col_no(&self) -> u16;
-
-    fn set_col_no(&mut self, col_no: u16);
+pub trait LinedData {
 
     /// 设置起始坐标原点。
     ///
@@ -233,22 +198,7 @@ pub trait LinedData: Ord + Clone {
     /// ```
     fn draw(&mut self, suggested: &mut LineCoord, max_width: i32, max_height: i32);
 
-    /// 试算当前内容将会占用的高度。
-    /// 整体计算过程是从下向上倒推的。
-    ///
-    /// # Arguments
-    ///
-    /// * `below_line`: 下面的行坐标信息。
-    /// * `max_width`: 当前窗口可绘制内容的最大宽度。
-    ///
-    /// returns: ()
-    ///
-    /// # Examples
-    ///
-    /// ```
-    ///
-    /// ```
-    fn estimate(&self, below_line: &mut LineCoord, max_width: i32);
+    fn estimate(&self, blow_line: &mut LineCoord, max_width: i32);
 
     /// 擦除内容，但保留占位。
     fn erase(&mut self);
@@ -286,8 +236,6 @@ pub struct RichData {
     underline: bool,
     clickable: bool,
     expired: bool,
-    line_no: usize,
-    col_no: u16,
     start_point: Option<LineCoord>,
     bounds: Vec<Coordinates>,
     data_type: DataType,
@@ -307,8 +255,6 @@ impl RichData {
             underline: false,
             clickable: false,
             expired: false,
-            line_no: 0,
-            col_no: 0,
             start_point: None,
             bounds: vec![],
             data_type: DataType::Text,
@@ -328,8 +274,6 @@ impl RichData {
             underline: false,
             clickable: false,
             expired: false,
-            line_no: 0,
-            col_no: 0,
             start_point: None,
             bounds: vec![],
             data_type: DataType::Image,
@@ -453,7 +397,6 @@ impl RichData {
             }
 
             if rt.ends_with("\n") {
-                self.line_no = suggested.line_no;
                 suggested.next_line();
             } else {
                 suggested.x += rw;
@@ -500,58 +443,43 @@ impl RichData {
     }
 }
 
-impl Ord for RichData {
-    fn cmp(&self, other: &Self) -> Ordering {
-        let o = self.line_no.cmp(&other.line_no);
-        if o != Ordering::Equal {
-            o
-        } else {
-            self.col_no.cmp(&other.col_no)
-        }
-    }
-}
-
-impl Eq for RichData {}
-
-impl PartialEq<RichData> for RichData {
-    fn eq(&self, other: &Self) -> bool {
-        self.line_no == other.line_no && self.col_no == other.col_no && self.text.eq(&other.text)
-    }
-}
-
-impl PartialOrd<RichData> for RichData {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        let o = self.line_no.cmp(&other.line_no);
-        if o != Ordering::Equal {
-            Some(o)
-        } else {
-            let o2 = self.col_no.cmp(&other.col_no);
-            if o2 != Ordering::Equal {
-                Some(o2)
-            } else {
-                self.text.partial_cmp(&other.text)
-            }
-        }
-    }
-}
+// impl Ord for RichData {
+//     fn cmp(&self, other: &Self) -> Ordering {
+//         let o = self.line_no.cmp(&other.line_no);
+//         if o != Ordering::Equal {
+//             o
+//         } else {
+//             self.col_no.cmp(&other.col_no)
+//         }
+//     }
+// }
+//
+// impl Eq for RichData {}
+//
+// impl PartialEq<RichData> for RichData {
+//     fn eq(&self, other: &Self) -> bool {
+//         self.line_no == other.line_no && self.col_no == other.col_no && self.text.eq(&other.text)
+//     }
+// }
+//
+// impl PartialOrd<RichData> for RichData {
+//     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+//         let o = self.line_no.cmp(&other.line_no);
+//         if o != Ordering::Equal {
+//             Some(o)
+//         } else {
+//             let o2 = self.col_no.cmp(&other.col_no);
+//             if o2 != Ordering::Equal {
+//                 Some(o2)
+//             } else {
+//                 self.text.partial_cmp(&other.text)
+//             }
+//         }
+//     }
+// }
 
 
 impl LinedData for RichData {
-    fn get_line_no(&self) -> usize {
-        self.line_no
-    }
-
-    fn set_line_no(&mut self, line_no: usize) {
-        self.line_no = line_no;
-    }
-
-    fn get_col_no(&self) -> u16 {
-        self.col_no
-    }
-
-    fn set_col_no(&mut self, col_no: u16) {
-        self.col_no = col_no;
-    }
 
     fn set_start_point(&mut self, start_point: LineCoord) {
         self.start_point = Some(start_point);
@@ -601,7 +529,7 @@ impl LinedData for RichData {
 
     fn draw(&mut self, suggested: &mut LineCoord, max_width: i32, max_height: i32) {
         set_font(self.font, self.font_size);
-        let ref_line_height = (self.font_size as f64 * 1.3).ceil() as i32;
+        let ref_line_height = (self.font_size as f64 * 1.4).ceil() as i32;
         let (_, th) = measure(self.text.as_str(), false);
         let current_line_height = max(ref_line_height, th);
         if current_line_height > suggested.line_height {
@@ -639,10 +567,9 @@ impl LinedData for RichData {
 
                 if line.ends_with("\n") {
                     /*
-                    为当前处理的行数据设置行号。这个行号是对整体数据流而言，并非窗口上看到的行，因为窗口上的行会跟随窗口缩放调整而变化。
+                    为当前处理的行数据设置行号。这个行号是对整体数据流而言，并非窗口上看到的行。因为窗口上的行会跟随窗口宽度调整而变化。
                     只有遇到数据中包含的换行符'\n'才会增加行标号。
                      */
-                    self.set_line_no(suggested.line_no);
                     suggested.next_line();
                 } else {
                     suggested.x += mw;
@@ -651,38 +578,68 @@ impl LinedData for RichData {
         });
     }
 
+    /// 试算当前内容绘制后所占高度信息。
+    /// 试算逻辑考虑了窗口宽度自动换行的情形。
+    ///
+    /// # Arguments
+    ///
+    /// * `below_line`: 给定一个参考位置。
+    /// * `max_width`: 可视区域最大宽度，不含padding宽度。
+    ///
+    /// returns: ()
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
     fn estimate(&self, below_line: &mut LineCoord, max_width: i32) {
         set_font(self.font, self.font_size);
-        // let font_height = (self.font_size as f32 * 1.3).ceil() as i32;
+        let ref_line_height = (self.font_size as f32 * 1.4).ceil() as i32;
 
-        let (_, th) = measure(self.text.as_str(), false);
-        let current_line_height = th;
-        if current_line_height > below_line.line_height {
-            below_line.line_height = current_line_height;
-        }
         let current_line_spacing = min(below_line.line_spacing, descent());
         below_line.line_spacing = current_line_spacing;
 
+        /*
+        对含有换行符和不含换行符的文本进行不同处理。
+         */
         let text = self.text.replace("\r", "");
-        text.split_inclusive("\n").for_each(|line| {
+        if text.contains('\n') {
+            // 以换行符为节点拆分成多段处理。
+            text.split_inclusive("\n").for_each(|line| {
+                let (tw, th) = measure(line, false);
+                let current_line_height = max(ref_line_height, th);
+                // 检测行高时，不能在行内出现换行符（但可以出现在文本末尾）。如果行内出现换行符，则通过measure函数获得的高度就是换行后多行高度之和，这不符合计算要求。
+                if current_line_height > below_line.line_height {
+                    below_line.line_height = current_line_height;
+                }
+                if below_line.x + tw > max_width {
+                    // 超出横向右边界
+                    self.wrap_text_for_estimate(line, below_line, max_width);
+                } else {
+                    // 最后一段可能带有换行符'\n'。
+                    if line.ends_with("\n") {
+                        below_line.previous_line();
+                    } else {
+                        below_line.x += tw;
+                    }
+                }
+            });
+        } else {
+            let (_, th) = measure(self.text.as_str(), false);
+            let current_line_height = max(ref_line_height, th);
+            if current_line_height > below_line.line_height {
+                below_line.line_height = current_line_height;
+            }
+            let line = text.as_str();
             let (tw, th) = measure(line, false);
-            // let current_line_height = max(th, font_height);
-
             if below_line.x + tw > max_width {
                 // 超出横向右边界
                 self.wrap_text_for_estimate(line, below_line, max_width);
             } else {
-                if line.ends_with("\n") {
-                    /*
-                    为当前处理的行数据设置行号。这个行号是对整体数据流而言，并非窗口上看到的行。因为窗口上的行会跟随窗口宽度调整而变化。
-                    只有遇到数据中包含的换行符'\n'才会增加行标号。
-                     */
-                    below_line.previous_line();
-                } else {
-                    below_line.x += tw;
-                }
+                below_line.x += tw;
             }
-        });
+        }
     }
 
 
@@ -696,15 +653,20 @@ impl LinedData for RichData {
 }
 
 pub struct RichText {
-    inner: Scroll,
+    scroller: Scroll,
     panel: Frame,
     // data_buffer: Arc<Mutex<VecDeque<RichData>>>,
     data_buffer: Rc<RefCell<VecDeque<RichData>>>,
     background_color: Rc<RefCell<Color>>,
     padding: Rc<RefCell<Padding>>,
-    total_height: Rc<RefCell<i32>>
+
+    /// 可视内容总高度，不含padding高度。
+    total_height: Rc<RefCell<i32>>,
+
+    /// 记录绘制结束后的坐标信息。
+    last_line_coord: Rc<RefCell<LineCoord>>
 }
-widget_extends!(RichText, Scroll, inner);
+widget_extends!(RichText, Scroll, scroller);
 
 
 impl RichText {
@@ -712,19 +674,26 @@ impl RichText {
     pub const PANEL_MAX_HEIGHT: i32 = 10000;
     pub fn new<T>(x: i32, y: i32, w: i32, h: i32, title: T) -> Self
         where T: Into<Option<&'static str>> + Clone {
-        let mut inner = Scroll::new(x, y, w, h, title);
-        inner.set_type(ScrollType::Vertical);
-        inner.set_scrollbar_size(Self::SCROLL_BAR_WIDTH);
+        let mut scroller = Scroll::new(x, y, w, h, title);
+        scroller.set_type(ScrollType::Vertical);
+        scroller.set_scrollbar_size(Self::SCROLL_BAR_WIDTH);
 
         // let mut panel = Frame::new(x, y, w - Self::SCROLL_BAR_WIDTH, h - Self::SCROLL_BAR_WIDTH, None);
         let mut panel = Frame::default().size_of_parent().center_of_parent();
 
-        inner.end();
-        inner.resizable(&panel);
-        inner.set_clip_children(true);
+        scroller.end();
+        scroller.resizable(&panel);
+        scroller.set_clip_children(true);
 
         let padding = Rc::new(RefCell::new(Padding::default()));
 
+        let last_line_coord = Rc::new(RefCell::new(LineCoord {
+            x: padding.borrow().left,
+            y: padding.borrow().top,
+            line_height: 0,
+            line_spacing: 0,
+            padding: padding.borrow().clone(),
+        }));
         let total_height = Rc::new(RefCell::new(0));
         // 缓存面板高度的当前值和历史值，用于辅助检测面板高度是否发生变化。
         // let panel_last_height = Rc::new(RefCell::new(0));
@@ -739,10 +708,11 @@ impl RichText {
         let data_buffer_rc = data_buffer.clone();
 
         panel.draw({
-            let mut scroll_rc = inner.clone();
+            let mut scroll_rc = scroller.clone();
             let padding_rc = padding.clone();
             // let panel_current_height_rc = panel_current_height.clone();
             let total_height_rc = total_height.clone();
+            let last_line_coord_rc = last_line_coord.clone();
             move |ctx| {
                 let base_y = scroll_rc.yposition();
                 let window_width = scroll_rc.width();
@@ -766,8 +736,6 @@ impl RichText {
                     line_height: 0,
                     line_spacing: 0,
                     padding: padding_rc.borrow().clone(),
-                    line_no: 0,
-                    line_count: 0
                 };
                 let (mut from_index, mut to_index, total_len) = (0, data.len(), data.len());
                 let mut is_first_estimated = true;
@@ -781,7 +749,7 @@ impl RichText {
                         is_first_estimated = false;
                     }
 
-                    // 试算当前数据所占高度，得出前一行数据的末尾y坐标。
+                    // 试算当前数据所占高度，得出当前行的顶部y坐标，就是below_line.y。
                     rich_data.estimate(&mut below_line, drawable_max_width);
 
                     if !set_to_index && below_line.y < window_height - padding_rc.borrow().bottom {
@@ -790,7 +758,7 @@ impl RichText {
                         set_to_index = true;
                     }
 
-                    if below_line.y < 0 {
+                    if below_line.y < padding_rc.borrow().top {
                         // 待绘制内容已经向上超出窗口顶部边界，可以停止处理前面的数据了。
                         from_index = total_len - seq;
                         break;
@@ -798,14 +766,13 @@ impl RichText {
                 }
                 // println!("from_index: {}, to_index: {}", from_index, to_index);
 
+                // todo: 待处理单挑数据部分超出或进入可视范围的逻辑
                 let mut suggested = LineCoord {
                     x: padding_rc.borrow().left,
                     y: padding_rc.borrow().top,
                     line_height: 0,
                     line_spacing: 0,
                     padding: padding_rc.borrow().clone(),
-                    line_no: 0,
-                    line_count: 0
                 };
 
                 let mut is_first_draw = true;
@@ -820,6 +787,8 @@ impl RichText {
 
                     rich_data.draw(&mut suggested, drawable_max_width, window_width);
                 }
+                last_line_coord_rc.replace(suggested);
+                println!("panel height: {}, total height: {}", ctx.height(), *total_height_rc.borrow());
                 // let content_height = *total_height_rc.borrow() + padding_rc.borrow().bottom;
                 // if content_height > ctx.height() {
                 //     ctx.resize(ctx.x(), ctx.y(), ctx.width(), content_height);
@@ -846,7 +815,7 @@ impl RichText {
         /*
         跟随新增行自动滚动到最底部。
          */
-        inner.handle({
+        scroller.handle({
             // let panel_last_height_rc = panel_last_height.clone();
             // let panel_current_height_rc = panel_current_height.clone();
             let total_height_rc = total_height.clone();
@@ -860,58 +829,58 @@ impl RichText {
                         //     scroll.scroll_to(0, *total_height_rc.borrow() - scroll.height());
                         //     *panel_last_height_rc.borrow_mut() = current_height;
                         // }
-                        if *total_height_rc.borrow() > scroll.height() {
-                            scroll.scroll_to(0, *total_height_rc.borrow() - scroll.height() + padding_rc.borrow().bottom);
-                        }
+                        println!("total height: {}, scroll height: {}", *total_height_rc.borrow(), scroll.height());
+                        // if *total_height_rc.borrow() > scroll.height() {
+                        //     let scroll_to_y = *total_height_rc.borrow() - scroll.height() + padding_rc.borrow().bottom;
+                        //     println!("Scroll to bottom, y = {}", scroll_to_y);
+                        //     scroll.scroll_to(0, scroll_to_y);
+                        // }
                     }
-                    _ => {}
+                    _ => { }
                 }
                 false
             }
         });
 
         // panel.handle({
-        //     let mut scroll_rc = inner.clone();
+        //     let mut scroll_rc = scroller.clone();
         //     move |ctx, evt| {
         //         match evt {
-        //             // Event::Resize => {
-        //             //     println!("resize, height {}", ctx.height());
-        //             //     // scroll_rc.scroll_to(0, ctx.height());
-        //             // }
+        //             Event::Resize => {
+        //                 println!("resize, height {}", ctx.height());
+        //                 // scroll_rc.scroll_to(0, ctx.height());
+        //             }
         //             _ => {
-        //                 println!("event {:?}", evt);
+        //                 println!("panel event {:?}", evt);
         //             }
         //         }
         //         false
         //     }
         // });
 
-        Self { inner, panel, data_buffer, background_color, padding, total_height }
+        Self { scroller, panel, data_buffer, background_color, padding, total_height, last_line_coord }
     }
 
     pub fn append(&mut self, rich_data: RichData) {
         self.data_buffer.borrow_mut().push_back(rich_data.clone());
 
-        let window_width = self.inner.width();
+        let window_width = self.scroller.width();
         let drawable_max_width = window_width - self.padding.borrow().left - self.padding.borrow().right;
-        let mut below_line = LineCoord {
-            x: self.padding.borrow().left,
-            y: 0,
-            line_height: 0,
-            line_spacing: 0,
-            padding: self.padding.borrow().clone(),
-            line_no: 0,
-            line_count: 0
-        };
+        let mut below_line = self.last_line_coord.borrow().clone();
+        let from_y = below_line.y;
         rich_data.estimate(&mut below_line, drawable_max_width);
-        let increased_height = -below_line.y;
+        let increased_height = from_y - below_line.y;
         *self.total_height.borrow_mut() += increased_height;
         let new_height = *self.total_height.borrow() + self.padding.borrow().bottom + self.padding.borrow().top;
         if new_height > self.panel.height() {
             self.panel.resize(self.panel.x(), self.y(), self.panel.width(), new_height);
+            println!("resize panel to new height: {}", new_height);
+            // let scroll_to_y = new_height - self.scroller.height() + self.padding.borrow().top;
+            // println!("Scroll to bottom, y = {}", scroll_to_y);
+            // self.scroller.scroll_to(0, scroll_to_y);
         }
 
-        self.inner.redraw();
+        self.scroller.redraw();
         // println!("current panel height {}", self.panel.height());
     }
 
@@ -952,15 +921,15 @@ impl RichText {
     pub fn set_padding(&mut self, padding: Padding) {
         let right = padding.right;
         self.padding.replace(padding);
-        self.inner.set_scrollbar_size(right);
+        self.scroller.set_scrollbar_size(right);
     }
 
-    pub fn scroll_to_bottom(&mut self) {
-        let mut y = self.panel.height();
-        y = y - self.inner.height() + self.padding.borrow().bottom;
-        println!("scroll to bottom, height {}, y {}", self.panel.height(), y);
-        self.inner.scroll_to(0, y);
-    }
+    // pub fn scroll_to_bottom(&mut self) {
+    //     let mut y = self.panel.height();
+    //     y = y - self.scroller.height() + self.padding.borrow().bottom;
+    //     println!("scroll to bottom, height {}, y {}", self.panel.height(), y);
+    //     self.scroller.scroll_to(0, y);
+    // }
 }
 
 pub enum GlobalMessage {
@@ -1048,4 +1017,6 @@ mod tests {
             app::awake();
         }
     }
+
+
 }

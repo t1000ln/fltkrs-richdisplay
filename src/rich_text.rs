@@ -233,7 +233,22 @@ pub trait LinedData: Ord + Clone {
     /// ```
     fn draw(&mut self, suggested: &mut LineCoord, max_width: i32, max_height: i32);
 
-    fn estimate(&self, blow_line: &mut LineCoord, max_width: i32);
+    /// 试算当前内容将会占用的高度。
+    /// 整体计算过程是从下向上倒推的。
+    ///
+    /// # Arguments
+    ///
+    /// * `below_line`: 下面的行坐标信息。
+    /// * `max_width`: 当前窗口可绘制内容的最大宽度。
+    ///
+    /// returns: ()
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
+    fn estimate(&self, below_line: &mut LineCoord, max_width: i32);
 
     /// 擦除内容，但保留占位。
     fn erase(&mut self);
@@ -624,7 +639,7 @@ impl LinedData for RichData {
 
                 if line.ends_with("\n") {
                     /*
-                    为当前处理的行数据设置行号。这个行号是对整体数据流而言，并非窗口上看到的行。因为窗口上的行会跟随窗口宽度调整而变化。
+                    为当前处理的行数据设置行号。这个行号是对整体数据流而言，并非窗口上看到的行，因为窗口上的行会跟随窗口缩放调整而变化。
                     只有遇到数据中包含的换行符'\n'才会增加行标号。
                      */
                     self.set_line_no(suggested.line_no);

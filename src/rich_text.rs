@@ -5,16 +5,17 @@
 use std::cell::RefCell;
 use std::cmp::{max, min, Ordering};
 use std::collections::VecDeque;
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use fltk::draw::{descent, draw_line, draw_rect_fill, draw_rounded_rectf, draw_text2, measure, set_draw_color, set_font};
 use fltk::enums::{Align, Color, Event, Font};
 use fltk::frame::Frame;
 use fltk::group::{Scroll, ScrollType};
-use fltk::prelude::{GroupExt, WidgetBase, WidgetExt};
-use fltk::widget_extends;
+use fltk::prelude::{GroupExt, ValuatorExt, WidgetBase, WidgetExt};
+use fltk::{app, widget_extends};
 
 #[derive(Debug, Clone)]
 pub struct Coordinates(i32, i32, i32, i32);
@@ -85,10 +86,13 @@ pub struct LinePiece {
     pub next_x: i32,
     /// 建议下一个数据分片绘制起点y坐标
     pub next_y: i32,
+
+    /// 字体渲染高度，不同于行高。
+    pub font_height: i32,
 }
 
 impl LinePiece {
-    pub fn new(line: String, x: i32, y: i32, w: i32, h: i32, spacing: i32, next_x: i32, next_y: i32) -> Self {
+    pub fn new(line: String, x: i32, y: i32, w: i32, h: i32, spacing: i32, next_x: i32, next_y: i32, font_height: i32) -> Self {
         Self {
             line,
             x,
@@ -98,6 +102,7 @@ impl LinePiece {
             spacing,
             next_x,
             next_y,
+            font_height,
         }
     }
 
@@ -214,7 +219,7 @@ pub trait LinedData {
     /// ```
     ///
     /// ```
-    fn draw(&mut self, offset_y: i32, max_width: i32, max_height: i32);
+    fn draw(&mut self, offset_y: i32);
 
     fn estimate(&mut self, blow_line: &mut LinePiece, max_width: i32, padding: &Padding);
 
@@ -489,30 +494,34 @@ impl RichData {
         }
     }
 
-    pub fn wrap_text_for_estimate(&mut self, text: &str, last_piece: &mut LinePiece, max_width: i32, padding: &Padding, measure_width: i32) {
-        /*
-        先对传入内容进行计算，得出可以绘制在边界内的部分内容，将超出边界的部分内容放入缓存中再进行下一步处理。
-         */
-        // let chars = text.chars();
-        // let mut char_vec: Vec<char> = chars.collect();
-        // char_vec.reverse();
-        // let mut current_line_chars: Vec<char> = Vec::new();
-        // while let Some(c) = char_vec.pop() {
-        //     // 每次从字符串末尾移除一个字符，看看是否不超宽。
-        //     current_line_chars.push(c);
-        //     let (tw, _) = measure(char_vec.iter().collect::<String>().as_str(), false);
-        //     if last_piece.x + tw <= max_width {
-        //         break;
-        //     }
-        // }
-
+    /// 处理超宽的数据单元，自动换行。
+    ///
+    /// # Arguments
+    ///
+    /// * `text`:
+    /// * `last_piece`:
+    /// * `max_width`:
+    /// * `padding`:
+    /// * `measure_width`:
+    ///
+    /// returns: ()
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
+    pub fn wrap_text_for_estimate(&mut self, text: &str, last_piece: &mut LinePiece, max_width: i32, padding: &Padding, measure_width: i32, font_height: i32) {
+        let mut last_piece = last_piece;
+        if let Some(lp) = self.line_pieces.last_mut() {
+            last_piece = lp;
+        }
         let tw = Rc::new(RefCell::new(0));
         let text_len = text.len();
         if let Ok(stop_pos) = (0..text_len).collect::<Vec<usize>>().binary_search_by({
             let x = last_piece.next_x;
             let tw_rc = tw.clone();
             move |pos| {
-                println!("pos: {}, x: {}", pos, x);
                 let (tw1, _) = measure(text.chars().take(*pos).collect::<String>().as_str(), false);
                 if x + tw1 <= max_width {
                     if *pos == text_len - 1 {
@@ -540,17 +549,23 @@ impl RichData {
             let w = *tw.borrow();
             // 换行处理
             let next_x = padding.left;
-            let next_y = last_piece.next_y + last_piece.h + last_piece.spacing;
-            let mut new_piece = LinePiece::new(text.chars().take(stop_pos).collect::<String>(), last_piece.next_x, last_piece.next_y, w, last_piece.h, last_piece.spacing, next_x, next_y);
+            let max_h = if last_piece.line.ends_with('\n') {
+                font_height
+            } else {
+                max(last_piece.h, font_height)
+            };
+            let next_y = last_piece.next_y + max_h + last_piece.spacing;
+            let mut new_piece = LinePiece::new(text.chars().take(stop_pos).collect::<String>(), last_piece.next_x, last_piece.next_y, w, max_h, last_piece.spacing, next_x, next_y, font_height);
             self.line_pieces.push(new_piece.clone());
 
+            new_piece.h = font_height;
             let last_piece = &mut new_piece;
             let rest_str = text.chars().skip(stop_pos).collect::<String>();
             let rest_width = measure_width - w;
 
             if rest_width > max_width {
                 // 剩余部分的宽度仍然大于一整行宽度
-                self.wrap_text_for_estimate(rest_str.as_str(), last_piece, max_width, padding, rest_width);
+                self.wrap_text_for_estimate(rest_str.as_str(), last_piece, max_width, padding, rest_width, font_height);
             } else {
                 let x = last_piece.next_x;
                 let y = last_piece.next_y;
@@ -560,62 +575,10 @@ impl RichData {
                     next_x = padding.left;
                     next_y += last_piece.h + last_piece.spacing;
                 }
-                let new_piece = LinePiece::new(rest_str, x, y, rest_width, last_piece.h, last_piece.spacing, next_x, next_y);
+                let new_piece = LinePiece::new(rest_str, x, y, rest_width, last_piece.h, last_piece.spacing, next_x, next_y, font_height);
                 self.line_pieces.push(new_piece);
             }
-
-
-            // let piece = self.line_pieces.last_mut().unwrap();
-
         }
-        // else {
-        //     // 未超宽
-        //     let (width, _) = measure(text, false);
-        //     let next_y = if text.ends_with("\n") {
-        //         last_piece.next_y + last_piece.h + last_piece.spacing
-        //     } else {
-        //         last_piece.next_y
-        //     };
-        //     if text.ends_with('\n') {
-        //         last_piece.next_x = padding.left;
-        //         last_piece.next_y + last_piece.h + last_piece.spacing
-        //     } else {
-        //         last_piece.next_x += width;
-        //     }
-        //     let new_piece = LinePiece::new(text.to_string(), last_piece.next_x, last_piece.next_y, width, last_piece.h, last_piece.spacing, padding.left, next_y);
-        //     self.line_pieces.push(new_piece);
-        // }
-
-
-        // if stop_pos == -1 {
-        //     // 到达末尾
-        // } else {
-        //     // let mut new_piece = LinePiece::new(slice.to_string(), last_piece.next_x, last_piece.next_y, tw, last_piece.h, last_piece.spacing, padding.left, last_piece.next_y + last_piece.h);
-        //
-        //     // let rest_slice = &text[..stop_pos];
-        //     // self.wrap_text_for_estimate(rest_slice, &mut new_piece, max_width, padding);
-        // }
-
-        // last_piece.next_line(padding);
-
-        /*
-        处理剩余部分内容。
-         */
-        // current_line_chars.reverse();
-        // let remaining_text: String = current_line_chars.iter().collect();
-        // let rt = remaining_text.as_str();
-        // let (rw, _) = measure(rt, false);
-        // if rw > max_width {
-        //     // 余下部分内容仍超出整行宽度，继续进行换行处理
-        //     self.wrap_text_for_estimate(rt, last_piece, max_width, padding);
-        // } else {
-        //     // 余下部分未超宽
-        //     if rt.ends_with("\n") {
-        //         last_piece.next_line(padding);
-        //     } else {
-        //         last_piece.x += rw;
-        //     }
-        // }
     }
 }
 
@@ -703,79 +666,26 @@ impl LinedData for RichData {
         }
     }
 
-    fn draw(&mut self, offset_y: i32, max_width: i32, max_height: i32) {
-        // todo: 待处理上下边界超出时的绘制效果
+    fn draw(&mut self, offset_y: i32) {
         set_font(self.font, self.font_size);
         for piece in self.line_pieces.iter_mut() {
+            let (up, down) = calc_v_center_offset(piece.h, piece.font_height);
             if let Some(bg_color) = &self.bg_color {
                 // 绘制背景色
                 set_draw_color(*bg_color);
-                draw_rounded_rectf(piece.x, piece.y - offset_y - piece.spacing, piece.w, piece.h, 4);
+                draw_rounded_rectf(piece.x, piece.y - offset_y - piece.spacing + up, piece.w, piece.font_height, 4);
             }
 
             set_draw_color(self.fg_color);
             if self.underline {
                 // 绘制下划线
-                let line_y = piece.y - offset_y + self.font_size;
+                let line_y = piece.y - offset_y + self.font_size + up + 2;
                 draw_line(piece.x, line_y, piece.x + piece.w, line_y);
             }
 
             // 绘制文本
             draw_text2(piece.line.as_str(), piece.x, piece.y - offset_y, piece.w, piece.h, Align::Left);
         }
-
-
-        // let ref_line_height = (self.font_size as f64 * 1.4).ceil() as i32;
-        // let (_, th) = measure(self.text.as_str(), false);
-        // let current_line_height = max(ref_line_height, th);
-        // if current_line_height > suggested.line_height {
-        //     suggested.line_height = current_line_height;
-        // }
-        // let current_line_spacing = min(suggested.line_spacing, descent());
-        // suggested.line_spacing = current_line_spacing;
-        //
-        // if let Some((start_y, _, start_x)) = self.v_bounds {
-        //     let text = self.text.replace("\r", "");
-        //     text.split_inclusive("\n").for_each(|line| {
-        //         let (mw, _) = measure(line, false);
-        //         // let current_line_height = max(th, font_height);
-        //
-        //         if start_x + mw > max_width {
-        //             // 超出横向右边界
-        //             self.wrap_text(line, suggested, current_line_height, current_line_spacing, max_width, max_height, mw);
-        //         } else {
-        //             if start_y + current_line_height > 0 && start_y - current_line_spacing < max_height {
-        //                 if let Some(bg_color) = &self.bg_color {
-        //                     // 绘制背景色
-        //                     set_draw_color(*bg_color);
-        //                     draw_rounded_rectf(start_x, start_y - current_line_spacing, mw, current_line_height, 4);
-        //                 }
-        //
-        //                 set_draw_color(self.fg_color);
-        //                 if self.underline {
-        //                     // 绘制下划线
-        //                     let line_y = start_y + self.font_size;
-        //                     draw_line(start_x, line_y, suggested.x + mw, line_y);
-        //                 }
-        //
-        //                 // 绘制文本
-        //                 draw_text2(line, start_x, start_y, mw, self.font_size, Align::Left);
-        //             }
-        //
-        //             if line.ends_with("\n") {
-        //                 /*
-        //                 为当前处理的行数据设置行号。这个行号是对整体数据流而言，并非窗口上看到的行。因为窗口上的行会跟随窗口宽度调整而变化。
-        //                 只有遇到数据中包含的换行符'\n'才会增加行标号。
-        //                  */
-        //                 suggested.next_line();
-        //             } else {
-        //                 suggested.x += mw;
-        //             }
-        //         }
-        //     });
-        // } else {
-        //     println!("待绘制的数据坐标为空！");
-        // }
     }
 
     /// 试算当前内容绘制后所占高度信息。
@@ -796,7 +706,9 @@ impl LinedData for RichData {
     fn estimate(&mut self, last_piece: &mut LinePiece, max_width: i32, padding: &Padding) {
         let (top_y, start_x) = (last_piece.next_y, last_piece.next_x);
         set_font(self.font, self.font_size);
-        let ref_line_height = (self.font_size as f32 * 1.4).ceil() as i32;
+
+        // 字体渲染高度，小于等于行高度。
+        let ref_font_height = (self.font_size as f32 * 1.4).ceil() as i32;
 
         let current_line_spacing = min(last_piece.spacing, descent());
         // last_piece.spacing = current_line_spacing;
@@ -807,38 +719,48 @@ impl LinedData for RichData {
         let text = self.text.replace("\r", "");
         if text.contains('\n') {
             // 以换行符为节点拆分成多段处理。
-            // text.split_inclusive("\n").for_each(|line| {
-            //     let (tw, th) = measure(line, false);
-            //     let current_line_height = max(ref_line_height, th);
-            //     self.line_height = current_line_height;
-            //
-            //     // 检测行高时，不能在行内出现换行符（但可以出现在文本末尾）。如果行内出现换行符，则通过measure函数获得的高度就是换行后多行高度之和，这不符合计算要求。
-            //     if current_line_height > last_piece.line_height {
-            //         last_piece.line_height = current_line_height;
-            //     }
-            //     if last_piece.x + tw > max_width {
-            //         // 超出横向右边界
-            //         self.wrap_text_for_estimate(line, last_piece, max_width);
-            //     } else {
-            //         // 最后一段可能带有换行符'\n'。
-            //         if line.ends_with("\n") {
-            //             last_piece.next_line();
-            //         } else {
-            //             last_piece.x += tw;
-            //         }
-            //     }
-            //
-            // });
-            // if text.ends_with('\n') {
-            //     let bottom_y = last_piece.y - last_piece.line_spacing;
-            //     self.set_v_bounds(top_y, bottom_y, start_x);
-            // } else {
-            //     let bottom_y = last_piece.y + last_piece.line_height;
-            //     self.set_v_bounds(top_y, bottom_y, start_x);
-            // }
+            for line in text.split_inclusive("\n") {
+                let (tw, th) = measure(line, false);
+                let mut current_line_height = max(ref_font_height, th);
+                self.line_height = current_line_height;
+
+                if !last_piece.line.ends_with('\n') && current_line_height > last_piece.h {
+                    last_piece.h = current_line_height;
+                }
+
+                let mut next_x = last_piece.next_x + tw;
+                if next_x > max_width {
+                    // 超出横向右边界
+                    self.wrap_text_for_estimate(line, last_piece, max_width, padding, tw, ref_font_height);
+                } else {
+                    if let Some(lp) = self.line_pieces.last_mut() {
+                        let mut next_y = lp.next_y;
+                        // 最后一段可能带有换行符'\n'。
+                        if line.ends_with("\n") {
+                            next_y += current_line_height;
+                            next_x = padding.left;
+                        }
+                        let new_piece = LinePiece::new(line.to_string(), lp.next_x, lp.next_y, tw, current_line_height, lp.spacing, next_x, next_y, ref_font_height);
+                        self.line_pieces.push(new_piece);
+                    } else {
+                        let mut next_y = last_piece.next_y;
+                        // 最后一段可能带有换行符'\n'。
+                        if line.ends_with("\n") {
+                            if !last_piece.line.ends_with("\n") {
+                                current_line_height = max(current_line_height, last_piece.h);
+                            }
+                            next_y += current_line_height;
+                            next_x = padding.left;
+                        }
+                        let new_piece = LinePiece::new(line.to_string(), last_piece.next_x, last_piece.next_y, tw, current_line_height, last_piece.spacing, next_x, next_y, ref_font_height);
+                        self.line_pieces.push(new_piece);
+                    }
+                }
+            }
+
         } else {
             let (_, th) = measure("A", false);
-            let mut current_line_height = max(ref_line_height, th);
+            let mut current_line_height = max(ref_font_height, th);
             self.line_height = current_line_height;
 
             // 如果当前分片与上一个分片在同一行绘制，但是行高不同时，取最大的行高作为本行统一行高标准。
@@ -851,23 +773,18 @@ impl LinedData for RichData {
             let (tw, _) = measure(line, false);
             if last_piece.next_x + tw > max_width {
                 // 超出横向右边界
-                self.wrap_text_for_estimate(line, last_piece, max_width, padding, tw);
+                self.wrap_text_for_estimate(line, last_piece, max_width, padding, tw, ref_font_height);
             } else {
-                // last_piece.x += tw;
-
-                // 最简单的文本行，自身等同一个分片。
-                // if let Some(lps) = self.line_pieces.as_mut() {
-                //     lps.push(LinePiece::new(self.text.clone(), start_x, top_y, tw, current_line_height, current_line_spacing));
-                // }
-                self.line_pieces.push(LinePiece::new(self.text.clone(), start_x, top_y, tw, current_line_height, current_line_spacing, start_x + tw, top_y));
+                self.line_pieces.push(LinePiece::new(self.text.clone(), start_x, top_y, tw, current_line_height, current_line_spacing, start_x + tw, top_y, ref_font_height));
             }
-
-
-            let bottom_y = last_piece.y + last_piece.h;
-            self.set_v_bounds(top_y, bottom_y, start_x);
         }
-    }
 
+        let mut bottom_y = top_y;
+        if let Some(last_piece) = self.line_pieces.last_mut() {
+            bottom_y = last_piece.y + last_piece.h;
+        }
+        self.set_v_bounds(top_y, bottom_y, start_x);
+    }
 
     fn erase(&mut self) {
         todo!()
@@ -878,6 +795,26 @@ impl LinedData for RichData {
     }
 }
 
+/// 计算两个重叠垂线居中对齐后，短线相对于长线的上端和下端的偏移量。
+///
+/// # Arguments
+///
+/// * `line_height`:
+/// * `font_height`:
+///
+/// returns: (i32, i32)
+///
+/// # Examples
+///
+/// ```
+///
+/// ```
+pub fn calc_v_center_offset(line_height: i32, font_height: i32) -> (i32, i32) {
+    let up = (line_height - font_height) / 2;
+    let down = (line_height + font_height) / 2;
+    (up, down)
+}
+
 pub struct RichText {
     scroller: Scroll,
     panel: Frame,
@@ -886,17 +823,17 @@ pub struct RichText {
     padding: Rc<RefCell<Padding>>,
 
     /// 可视内容总高度，不含padding高度。
-    total_height: Rc<RefCell<i32>>,
+    total_height: Arc<Mutex<i32>>,
 
-    /// 记录绘制结束后的坐标信息。
-    last_line_coord: Rc<RefCell<LineCoord>>,
+    /// 自动滚动到底部的标记
+    auto_scroll: Rc<RefCell<bool>>,
 }
 widget_extends!(RichText, Scroll, scroller);
 
 
 impl RichText {
     pub const SCROLL_BAR_WIDTH: i32 = 10;
-    pub const PANEL_MAX_HEIGHT: i32 = 10000;
+    pub const PANEL_MAX_HEIGHT: i32 = 10;
     pub fn new<T>(x: i32, y: i32, w: i32, h: i32, title: T) -> Self
         where T: Into<Option<&'static str>> + Clone {
         let mut scroller = Scroll::new(x, y, w, h, title);
@@ -910,49 +847,60 @@ impl RichText {
         scroller.resizable(&panel);
         scroller.set_clip_children(true);
 
+        let auto_scroll = Rc::new(RefCell::new(false));
+
         let padding = Rc::new(RefCell::new(Padding::default()));
 
-        let last_line_coord = Rc::new(RefCell::new(LineCoord {
-            x: padding.borrow().left,
-            y: padding.borrow().top,
-            line_height: 0,
-            line_spacing: 0,
-            padding: Arc::new(padding.borrow().clone()),
-        }));
-
-        // 缓存面板高度的当前值和历史值，用于辅助检测面板高度是否发生变化。
-        // let panel_last_height = Rc::new(RefCell::new(0));
-        // let panel_current_height = Rc::new(RefCell::new(0));
-
-        let total_height = Rc::new(RefCell::new(0));
+        let total_height = Arc::new(Mutex::new(0));
         let data_buffer = Rc::new(RefCell::new(VecDeque::<RichData>::with_capacity(200)));
         let background_color = Rc::new(RefCell::new(Color::Black));
 
+        /*
+        利用tokio::spawn的协程特性，在app主线程中异步执行滚动操作。
+        在非主线程的其他独立线程中，是无法执行滚动操作的。
+         */
+        let (sender, mut receiver) = tokio::sync::mpsc::channel::<()>(10);
+        let total_height_rc = total_height.clone();
+        let mut scroll_rc = scroller.clone();
+        tokio::spawn(async move {
+            while receiver.recv().await.is_some() {
+                let mut current_height = 0;
+                if let Ok(height) = total_height_rc.lock() {
+                    current_height = *height.deref();
+                }
+                let scroll_y = current_height - scroll_rc.height();
+                scroll_rc.scroll_to(0, scroll_y);
+            }
+        });
+
         panel.draw({
             let data_buffer_rc = data_buffer.clone();
-            let scroll_rc = scroller.clone();
+            let mut scroll_rc = scroller.clone();
             let padding_rc = padding.clone();
             let bg_rc = background_color.clone();
-            // let panel_current_height_rc = panel_current_height.clone();
-            // let total_height_rc = total_height.clone();
-            let last_line_coord_rc = last_line_coord.clone();
+            let auto_scroll_rc = auto_scroll.clone();
             move |ctx| {
+                // 滚动条滚动的高度在0到(panel.height - scroll.height)之间。
                 let base_y = scroll_rc.yposition();
                 let window_width = scroll_rc.width();
                 let window_height = scroll_rc.height();
                 let padding = padding_rc.borrow();
                 let padding = padding.deref();
-                let drawable_max_width = window_width - padding.left - padding.right;
-                // let drawable_max_height = window_height - padding_rc.borrow().top - padding_rc.borrow().bottom;
+                let panel_height = ctx.height();
 
-                let (top_y, bottom_y) = if base_y > window_height {
-                    (base_y - window_height + padding.top, base_y - padding.bottom)
-                } else {
-                    (padding.top, window_height - padding.bottom)
-                };
+                let (mut top_y, mut bottom_y) = (base_y, base_y + window_height);
+
+                if auto_scroll_rc.replace(false) {
+                    bottom_y = panel_height;
+                    top_y = panel_height - window_height;
+                    let sender = sender.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = sender.send(()).await {
+                            println!("发送滚动信号失败！{:?}", e);
+                        }
+                    });
+                }
                 let offset_y = top_y - padding.top;
-
-                println!("top_y:{}, bottom_y:{}", top_y, bottom_y);
 
                 // 填充黑色背景
                 draw_rect_fill(0, 0, window_width, window_height, *bg_rc.borrow());
@@ -981,12 +929,9 @@ impl RichText {
                     }
                 }
 
-                // let mut is_first_draw = true;
                 for rich_data in data.range_mut(from_index..to_index) {
-                    println!("rich_data: {:?}", rich_data);
-                    rich_data.draw(offset_y, drawable_max_width, window_width);
+                    rich_data.draw(offset_y);
                 }
-                // last_line_coord_rc.replace(suggested);
             }
         });
 
@@ -994,52 +939,85 @@ impl RichText {
         跟随新增行自动滚动到最底部。
          */
         scroller.handle({
-            // let panel_last_height_rc = panel_last_height.clone();
-            // let panel_current_height_rc = panel_current_height.clone();
+            let mut panel_rc = panel.clone();
             let total_height_rc = total_height.clone();
             let padding_rc = padding.clone();
             let buffer_rc = data_buffer.clone();
+            let last_window_size = Rc::new(RefCell::new((0, 0)));
             move |scroller, evt| {
                 match evt {
                     Event::Resize => {
-                        total_height_rc.replace(0);
-                        let window_width = scroller.width();
-                        let padding = padding_rc.borrow();
-                        let padding = padding.deref();
-                        let drawable_max_width = window_width - padding.left - padding.right;
-                        let mut init_piece = LinePiece {
-                            line: "".to_string(),
-                            x: padding.left,
-                            y: padding.top,
-                            w: 0,
-                            h: 1,
-                            spacing: 0,
-                            next_x: padding.left,
-                            next_y: padding.top,
-                        };
-                        let mut last_piece = &mut init_piece;
-                        let mut is_first_row = true;
-                        for rich_data in buffer_rc.borrow_mut().iter_mut() {
-                            println!("缩放时有数据");
-                            rich_data.estimate(last_piece, drawable_max_width, padding);
-                            let increased_height = rich_data.height() + last_piece.spacing;
-                            *total_height_rc.borrow_mut() += increased_height;
-
-                            if is_first_row {
-                                is_first_row = false;
+                        let (current_width, current_height) = (scroller.width(), scroller.height());
+                        let (last_width, last_height) = *last_window_size.borrow();
+                        if last_width != current_width || last_height != current_height {
+                            last_window_size.replace((current_width, current_height));
+                            let window_width = scroller.width();
+                            let window_height = scroller.height();
+                            let padding = padding_rc.borrow();
+                            let padding = padding.deref();
+                            let drawable_max_width = window_width - padding.left - padding.right;
+                            let mut init_piece = LinePiece {
+                                line: "".to_string(),
+                                x: padding.left,
+                                y: padding.top,
+                                w: 0,
+                                h: 1,
+                                spacing: 0,
+                                next_x: padding.left,
+                                next_y: padding.top,
+                                font_height: 1,
+                            };
+                            let mut last_piece = &mut init_piece;
+                            for rich_data in buffer_rc.borrow_mut().iter_mut() {
+                                rich_data.line_pieces.clear();
+                                rich_data.estimate(last_piece, drawable_max_width, padding);
                                 if let Some(piece) = rich_data.line_pieces.iter_mut().last() {
                                     last_piece = piece;
                                 }
                             }
+
+                            if let Some(rich_data) = buffer_rc.borrow().iter().last() {
+                                if let Some(piece) = rich_data.line_pieces.last() {
+                                    let new_content_height = piece.y + piece.h + piece.spacing;
+                                    // total_height_rc.replace(piece.y + piece.h + piece.spacing);
+                                    let new_total_height = new_content_height + padding.top + padding.bottom;
+
+                                    if new_total_height > window_height {
+                                        panel_rc.resize(panel_rc.x(), scroller.y(), window_width, new_total_height);
+                                    } else {
+                                        panel_rc.resize(panel_rc.x(), scroller.y(), window_width, window_height);
+                                    }
+
+                                    // let yp = scroller.yposition();
+                                    // println!("yposition = {}", yp);
+                                    // if yp > new_total_height - window_height {
+                                    //     let scroll_y = if new_total_height > window_height {
+                                    //         new_total_height - window_height
+                                    //     } else {
+                                    //         0
+                                    //     };
+                                    //     scroller.scroll_to(0, scroll_y);
+                                    // } else if yp < 0 {
+                                    //     scroller.scroll_to(0, 0);
+                                    // }
+                                    // scroller.redraw();
+
+                                    if let Ok(mut height) = total_height_rc.lock() {
+                                        *height.deref_mut() = new_content_height;
+                                    }
+                                }
+                            }
                         }
                     }
+
                     _ => {}
                 }
                 false
             }
         });
 
-        Self { scroller, panel, data_buffer, background_color, padding, total_height, last_line_coord }
+
+        Self { scroller, panel, data_buffer, background_color, padding, total_height, auto_scroll, }
     }
 
     /// 向数据缓冲区中添加新的数据。新增数据时会计算其绘制所需信息，包括起始坐标和高度等。
@@ -1058,6 +1036,7 @@ impl RichText {
     pub fn append(&mut self, user_data: UserData) {
         let mut rich_data: RichData = user_data.into();
         let window_width = self.scroller.width();
+        let window_height = self.scroller.height();
         let drawable_max_width = window_width - self.padding.borrow().left - self.padding.borrow().right;
 
         let padding = self.padding.borrow();
@@ -1066,13 +1045,10 @@ impl RichText {
         /*
         试算单元绘制信息
          */
-        let mut increased_height= 0;
         if !self.data_buffer.borrow().is_empty() {
             if let Some(rd) = self.data_buffer.borrow_mut().iter_mut().last() {
                 if let Some(last_piece) = rd.line_pieces.iter_mut().last() {
                     rich_data.estimate(last_piece, drawable_max_width, padding);
-                    increased_height = rich_data.height() + last_piece.spacing;
-                    *self.total_height.borrow_mut() += increased_height;
                 }
             }
         } else {
@@ -1086,21 +1062,43 @@ impl RichText {
                 spacing: 0,
                 next_x: padding.left,
                 next_y: padding.top,
+                font_height: 1,
             };
             rich_data.estimate(&mut last_piece, drawable_max_width, padding);
-            increased_height = rich_data.height();
-            *self.total_height.borrow_mut() += increased_height;
+        }
+
+        if let Some(piece) = rich_data.line_pieces.last() {
+            let new_content_height = piece.y + piece.h + piece.spacing;
+            let new_total_height = new_content_height + padding.top + padding.bottom;
+            if new_total_height > window_height {
+                self.panel.resize(self.panel.x(), self.y(), self.panel.width(), new_total_height);
+                self.auto_scroll.replace(true);
+                // let scroll_y = new_height - window_height;
+                // self.scroller.scrollbar().set_value(new_height as f64);
+                // self.scroller.scroll_to(0, scroll_y);
+
+                if let Ok(mut height) = self.total_height.lock() {
+                    *height.deref_mut() = new_content_height;
+                }
+            }
         }
 
         self.data_buffer.borrow_mut().push_back(rich_data);
 
-        let new_height = *self.total_height.borrow() + padding.bottom + padding.top;
-        if new_height > self.panel.height() {
-            self.panel.resize(self.panel.x(), self.y(), self.panel.width(), new_height);
-        }
-
         self.scroller.redraw();
-        // println!("current panel height {}", self.panel.height());
+    }
+
+    pub fn scroll_to_bottom(&mut self) {
+
+        // let window_height = self.scroller.height();
+        // let new_height = *self.total_height.borrow() + self.padding.borrow().bottom + self.padding.borrow().top;
+        // if new_height > window_height {
+        //
+        //     let scroll_y = new_height - window_height;
+        //     println!("滚动 {}", scroll_y);
+        //     self.scroller.scroll_to(0, scroll_y);
+        //     // self.scroller.redraw();
+        // }
     }
 
     pub fn set_background_color(&mut self, background_color: Color) {
@@ -1126,12 +1124,6 @@ impl RichText {
         self.scroller.set_scrollbar_size(right);
     }
 
-    // pub fn scroll_to_bottom(&mut self) {
-    //     let mut y = self.panel.height();
-    //     y = y - self.scroller.height() + self.padding.borrow().bottom;
-    //     println!("scroll to bottom, height {}, y {}", self.panel.height(), y);
-    //     self.scroller.scroll_to(0, y);
-    // }
 }
 
 pub enum GlobalMessage {

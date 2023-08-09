@@ -6,7 +6,8 @@ use std::time::Duration;
 use fltk::{app, window};
 use fltk::enums::{Color, Font};
 use fltk::prelude::{GroupExt, WidgetExt, WindowExt};
-use fltkrs_richdisplay::rich_text::{GlobalMessage, RichText, UserData};
+use fltkrs_richdisplay::rich_text::{GlobalMessage, RichText};
+use fltkrs_richdisplay::UserData;
 
 
 #[tokio::main]
@@ -24,7 +25,7 @@ async fn main() {
 
     tokio::spawn(async move {
 
-        for i in 0..3 {
+        for i in 0..1000 {
             let turn = i * 13;
             let mut data: VecDeque<UserData> = VecDeque::from([
                 UserData::new_text(format!("{}安全并且高效地处理并发编程是Rust的另一个主要目标。并发编程和并行编程这两种概念随着计算机设备的多核a优化而变得越来越重要。并发编程允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 1)).set_underline(true),
@@ -43,7 +44,7 @@ async fn main() {
             ]);
             while let Some(data_unit) = data.pop_front() {
                 global_sender.send(GlobalMessage::ContentData(data_unit));
-                tokio::time::sleep(Duration::from_millis(10)).await;
+                tokio::time::sleep(Duration::from_millis(30)).await;
             }
         }
 

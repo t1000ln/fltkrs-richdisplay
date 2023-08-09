@@ -9,8 +9,7 @@ use fltk::frame::Frame;
 use fltk::group::{Scroll, ScrollType};
 use fltk::prelude::{GroupExt, WidgetBase, WidgetExt};
 use fltk::widget_extends;
-use crate::{LinedData, LinePiece, PADDING};
-use crate::rich_text::RichData;
+use crate::{LinedData, LinePiece, PADDING, RichData};
 
 pub struct RichSnapshot {
     scroller: Scroll,

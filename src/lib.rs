@@ -1,8 +1,8 @@
 use std::cell::RefCell;
 use std::cmp::{max, min, Ordering};
 use std::rc::Rc;
-use fltk::draw::{descent, draw_line, draw_rounded_rectf, draw_text2, measure, set_draw_color, set_font};
-use fltk::enums::{Align, Color, Font};
+use fltk::draw::{descent, draw_image, draw_line, draw_rounded_rectf, draw_text2, measure, set_draw_color, set_font};
+use fltk::enums::{Align, Color, ColorDepth, Font};
 
 pub mod rich_text;
 pub mod rich_snapshot;
@@ -519,24 +519,37 @@ impl LinedData for RichData {
     }
 
     fn draw(&mut self, offset_y: i32) {
-        set_font(self.font, self.font_size);
-        for piece in self.line_pieces.iter_mut() {
-            let (up, _) = calc_v_center_offset(piece.h, piece.font_height);
-            if let Some(bg_color) = &self.bg_color {
-                // 绘制背景色
-                set_draw_color(*bg_color);
-                draw_rounded_rectf(piece.x, piece.y - offset_y - piece.spacing + up, piece.w, piece.font_height, 4);
-            }
+        match self.data_type {
+            DataType::Text => {
+                set_font(self.font, self.font_size);
+                for piece in self.line_pieces.iter_mut() {
+                    let (up, _) = calc_v_center_offset(piece.h, piece.font_height);
+                    if let Some(bg_color) = &self.bg_color {
+                        // 绘制背景色
+                        set_draw_color(*bg_color);
+                        draw_rounded_rectf(piece.x, piece.y - offset_y - piece.spacing + up, piece.w, piece.font_height, 4);
+                    }
 
-            set_draw_color(self.fg_color);
-            if self.underline {
-                // 绘制下划线
-                let line_y = piece.y - offset_y + self.font_size + up + 2;
-                draw_line(piece.x, line_y, piece.x + piece.w, line_y);
-            }
+                    set_draw_color(self.fg_color);
+                    if self.underline {
+                        // 绘制下划线
+                        let line_y = piece.y - offset_y + self.font_size + up + 2;
+                        draw_line(piece.x, line_y, piece.x + piece.w, line_y);
+                    }
 
-            // 绘制文本
-            draw_text2(piece.line.as_str(), piece.x, piece.y - offset_y, piece.w, piece.h, Align::Left);
+                    // 绘制文本
+                    draw_text2(piece.line.as_str(), piece.x, piece.y - offset_y, piece.w, piece.h, Align::Left);
+                }
+            },
+            DataType::Image => {
+                if let Some(piece) = self.line_pieces.last_mut() {
+                    if let Some(img) = &self.image {
+                        if let Err(e) = draw_image(img.as_slice(), piece.x, piece.y - offset_y, piece.w, piece.h, ColorDepth::Rgb8) {
+                            eprintln!("draw image error: {:?}", e);
+                        }
+                    }
+                }
+            },
         }
     }
 
@@ -557,76 +570,113 @@ impl LinedData for RichData {
     /// ```
     fn estimate(&mut self, last_piece: &mut LinePiece, max_width: i32) {
         let (top_y, start_x) = (last_piece.next_y, last_piece.next_x);
-        set_font(self.font, self.font_size);
 
-        // 字体渲染高度，小于等于行高度。
-        let ref_font_height = (self.font_size as f32 * 1.4).ceil() as i32;
+        match self.data_type {
+            DataType::Text => {
+                set_font(self.font, self.font_size);
 
-        let current_line_spacing = min(last_piece.spacing, descent());
+                // 字体渲染高度，小于等于行高度。
+                let ref_font_height = (self.font_size as f32 * 1.4).ceil() as i32;
 
-        /*
-        对含有换行符和不含换行符的文本进行不同处理。
-         */
-        let text = self.text.replace("\r", "");
-        if text.contains('\n') {
-            // 以换行符为节点拆分成多段处理。
-            for line in text.split_inclusive("\n") {
-                let (tw, th) = measure(line, false);
-                let mut current_line_height = max(ref_font_height, th);
-                self.line_height = current_line_height;
+                let current_line_spacing = min(last_piece.spacing, descent());
 
-                if !last_piece.line.ends_with('\n') && current_line_height > last_piece.h {
-                    last_piece.h = current_line_height;
-                }
+                /*
+                对含有换行符和不含换行符的文本进行不同处理。
+                 */
+                let text = self.text.replace("\r", "");
+                if text.contains('\n') {
+                    // 以换行符为节点拆分成多段处理。
+                    for line in text.split_inclusive("\n") {
+                        let (tw, th) = measure(line, false);
+                        let mut current_line_height = max(ref_font_height, th);
+                        self.line_height = current_line_height;
 
-                let mut next_x = last_piece.next_x + tw;
-                if next_x > max_width {
-                    // 超出横向右边界
-                    self.wrap_text_for_estimate(line, last_piece, max_width, tw, ref_font_height);
-                } else {
-                    if let Some(lp) = self.line_pieces.last_mut() {
-                        let mut next_y = lp.next_y;
-                        // 最后一段可能带有换行符'\n'。
-                        if line.ends_with("\n") {
-                            next_y += current_line_height;
-                            next_x = PADDING.left;
+                        if !last_piece.line.ends_with('\n') && current_line_height > last_piece.h {
+                            last_piece.h = current_line_height;
                         }
-                        let new_piece = LinePiece::new(line.to_string(), lp.next_x, lp.next_y, tw, current_line_height, lp.spacing, next_x, next_y, ref_font_height);
-                        self.line_pieces.push(new_piece);
-                    } else {
-                        let mut next_y = last_piece.next_y;
-                        // 最后一段可能带有换行符'\n'。
-                        if line.ends_with("\n") {
-                            if !last_piece.line.ends_with("\n") {
-                                current_line_height = max(current_line_height, last_piece.h);
+
+                        let mut next_x = last_piece.next_x + tw;
+                        if next_x > max_width {
+                            // 超出横向右边界
+                            self.wrap_text_for_estimate(line, last_piece, max_width, tw, ref_font_height);
+                        } else {
+                            if let Some(lp) = self.line_pieces.last_mut() {
+                                let mut next_y = lp.next_y;
+                                // 最后一段可能带有换行符'\n'。
+                                if line.ends_with("\n") {
+                                    next_y += current_line_height;
+                                    next_x = PADDING.left;
+                                }
+                                let new_piece = LinePiece::new(line.to_string(), lp.next_x, lp.next_y, tw, current_line_height, lp.spacing, next_x, next_y, ref_font_height);
+                                self.line_pieces.push(new_piece);
+                            } else {
+                                let mut next_y = last_piece.next_y;
+                                // 最后一段可能带有换行符'\n'。
+                                if line.ends_with("\n") {
+                                    if !last_piece.line.ends_with("\n") {
+                                        current_line_height = max(current_line_height, last_piece.h);
+                                    }
+                                    next_y += current_line_height;
+                                    next_x = PADDING.left;
+                                }
+                                let new_piece = LinePiece::new(line.to_string(), last_piece.next_x, last_piece.next_y, tw, current_line_height, last_piece.spacing, next_x, next_y, ref_font_height);
+                                self.line_pieces.push(new_piece);
                             }
-                            next_y += current_line_height;
-                            next_x = PADDING.left;
                         }
-                        let new_piece = LinePiece::new(line.to_string(), last_piece.next_x, last_piece.next_y, tw, current_line_height, last_piece.spacing, next_x, next_y, ref_font_height);
-                        self.line_pieces.push(new_piece);
+                    }
+
+                } else {
+                    let (_, th) = measure("A", false);
+                    let mut current_line_height = max(ref_font_height, th);
+                    self.line_height = current_line_height;
+
+                    // 如果当前分片与上一个分片在同一行绘制，但是行高不同时，取最大的行高作为本行统一行高标准。
+                    if !last_piece.line.ends_with("\n") {
+                        current_line_height = max(last_piece.h, current_line_height);
+                    }
+                    last_piece.h = current_line_height;
+
+                    let line = text.as_str();
+                    let (tw, _) = measure(line, false);
+                    if last_piece.next_x + tw > max_width {
+                        // 超出横向右边界
+                        self.wrap_text_for_estimate(line, last_piece, max_width, tw, ref_font_height);
+                    } else {
+                        self.line_pieces.push(LinePiece::new(self.text.clone(), start_x, top_y, tw, current_line_height, current_line_spacing, start_x + tw, top_y, ref_font_height));
                     }
                 }
             }
-
-        } else {
-            let (_, th) = measure("A", false);
-            let mut current_line_height = max(ref_font_height, th);
-            self.line_height = current_line_height;
-
-            // 如果当前分片与上一个分片在同一行绘制，但是行高不同时，取最大的行高作为本行统一行高标准。
-            if !last_piece.line.ends_with("\n") {
-                current_line_height = max(last_piece.h, current_line_height);
-            }
-            last_piece.h = current_line_height;
-
-            let line = text.as_str();
-            let (tw, _) = measure(line, false);
-            if last_piece.next_x + tw > max_width {
-                // 超出横向右边界
-                self.wrap_text_for_estimate(line, last_piece, max_width, tw, ref_font_height);
-            } else {
-                self.line_pieces.push(LinePiece::new(self.text.clone(), start_x, top_y, tw, current_line_height, current_line_spacing, start_x + tw, top_y, ref_font_height));
+            DataType::Image => {
+                if start_x + self.image_width > max_width {
+                    // 本行超宽，直接定位到下一行
+                    let x = PADDING.left;
+                    let y = top_y + last_piece.h;
+                    let next_x = PADDING.left + self.image_width;
+                    let next_y = y + self.image_height + descent();
+                    let new_piece = LinePiece::new("".to_string(), x, y, self.image_width, self.image_height, last_piece.spacing, next_x, next_y, 1);
+                    self.line_pieces.push(new_piece);
+                } else {
+                    let next_x = PADDING.left + self.image_width;
+                    if last_piece.line.ends_with("\n") {
+                        // 定位在行首
+                        let new_piece = LinePiece::new("".to_string(), start_x, top_y, self.image_width, self.image_height, last_piece.spacing, next_x, top_y, 1);
+                        self.line_pieces.push(new_piece);
+                    } else {
+                        // 在本行已有其他内容，需要与前一个片段协调行高
+                        let current_line_height = max(last_piece.h, self.image_height);
+                        let mut y = top_y;
+                        if current_line_height > last_piece.h {
+                            // 图形比前一个分片行高要高
+                            last_piece.h = current_line_height;
+                        } else {
+                            // 图形的高度小于等于前一个分片的行高，需要计算垂直居中位置
+                            let (up, _) = calc_v_center_offset(current_line_height, self.image_height);
+                            y += up;
+                        }
+                        let new_piece = LinePiece::new("".to_string(), start_x, y, self.image_width, self.image_height, last_piece.spacing, next_x, top_y, 1);
+                        self.line_pieces.push(new_piece);
+                    }
+                }
             }
         }
 

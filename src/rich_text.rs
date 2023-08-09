@@ -6,12 +6,11 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
 
-use fltk::draw::draw_rect_fill;
-use fltk::enums::{Color, Font};
+use fltk::draw::{draw_rect_fill};
+use fltk::enums::{Color};
 use fltk::frame::Frame;
-use fltk::prelude::{GroupExt, WidgetBase, WidgetExt};
+use fltk::prelude::{WidgetBase, WidgetExt};
 use fltk::{widget_extends};
-use fltk::surface::ImageSurface;
 use crate::{LinedData, LinePiece, PADDING, RichData, UserData};
 
 
@@ -33,7 +32,6 @@ impl RichText {
         let data_buffer = Rc::new(RefCell::new(VecDeque::<RichData>::with_capacity(buffer_max_lines + 1)));
         let background_color = Rc::new(RefCell::new(Color::Black));
 
-        // todo: 待检查内存泄漏原因，尝试用ImageSurface测试
         panel.draw({
             let data_buffer_rc = data_buffer.clone();
             let bg_rc = background_color.clone();
@@ -118,6 +116,7 @@ impl RichText {
     pub fn append(&mut self, user_data: UserData) {
         let mut rich_data: RichData = user_data.into();
         let window_width = self.panel.width();
+        // let window_height = self.panel.height();
         let drawable_max_width = window_width - PADDING.left - PADDING.right;
 
         /*
@@ -139,8 +138,6 @@ impl RichText {
         if self.data_buffer.borrow().len() > self.buffer_max_lines {
             self.data_buffer.borrow_mut().pop_front();
         }
-
-
 
         self.panel.redraw();
     }
@@ -166,6 +163,7 @@ mod tests {
     use std::time::Duration;
 
     use fltk::{app, window};
+    use fltk::enums::Font;
     use fltk::prelude::{GroupExt, WidgetExt, WindowExt};
     use super::*;
 

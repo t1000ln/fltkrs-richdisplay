@@ -7,9 +7,8 @@ pub fn add(left: usize, right: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use std::cmp::Ordering;
-    use std::sync::Arc;
     use fltk::enums::Font;
-    use crate::rich_text::{LineCoord, LinedData, LinePiece, Padding, RichData, UserData};
+    use crate::rich_text::{LinedData, LinePiece, Padding, RichData, UserData};
     use super::*;
 
     #[test]
@@ -34,20 +33,21 @@ mod tests {
             spacing: 0,
             next_x: 5,
             next_y: 5,
+            font_height: 1,
         };
-        rich_text.estimate(&mut last_piece, 785, &padding);
+        rich_text.estimate(&mut last_piece, 785);
         println!("last_line: {:?}", last_piece);
         let increased_height = rich_text.height();
         println!("increased_height: {}", increased_height);
 
         let mut rich_text: RichData = UserData::new_text("asdfh\nasdf\n".to_string()).set_font(Font::HelveticaBold, 32).into();
-        rich_text.estimate(&mut last_piece, 785, &padding);
+        rich_text.estimate(&mut last_piece, 785);
         println!("last_line: {:?}", last_piece);
         let increased_height = rich_text.height();
         println!("increased_height: {}", increased_height);
 
         let mut rich_text: RichData = UserData::new_text("asdfh\nasdf\n".to_string()).set_font(Font::HelveticaBold, 16).into();
-        rich_text.estimate(&mut last_piece, 785, &padding);
+        rich_text.estimate(&mut last_piece, 785);
         println!("last_line: {:?}", last_piece);
         let increased_height = rich_text.height();
         println!("increased_height: {}", increased_height);

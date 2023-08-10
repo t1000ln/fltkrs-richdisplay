@@ -7,7 +7,7 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 
 use fltk::draw::{draw_rect_fill};
-use fltk::enums::{Color};
+use fltk::enums::{Color, Event};
 use fltk::frame::Frame;
 use fltk::prelude::{WidgetBase, WidgetExt};
 use fltk::{widget_extends};
@@ -63,38 +63,38 @@ impl RichText {
             }
         });
 
-        // /*
-        // 跟随新增行自动滚动到最底部。
-        //  */
-        // panel.handle({
-        //     // let total_height_rc = total_height.clone();
-        //     let buffer_rc = data_buffer.clone();
-        //     let last_window_size = Rc::new(RefCell::new((0, 0)));
-        //     move |ctx, evt| {
-        //         match evt {
-        //             Event::Resize => {
-        //                 let (current_width, current_height) = (ctx.width(), ctx.height());
-        //                 let (last_width, last_height) = *last_window_size.borrow();
-        //                 if last_width != current_width || last_height != current_height {
-        //                     last_window_size.replace((current_width, current_height));
-        //                     let drawable_max_width = current_width - PADDING.left - PADDING.right;
-        //                     let mut init_piece = LinePiece::init_piece();
-        //                     let mut last_piece = &mut init_piece;
-        //                     for rich_data in buffer_rc.borrow_mut().iter_mut() {
-        //                         rich_data.line_pieces.clear();
-        //                         rich_data.estimate(last_piece, drawable_max_width);
-        //                         if let Some(piece) = rich_data.line_pieces.iter_mut().last() {
-        //                             last_piece = piece;
-        //                         }
-        //                     }
-        //                 }
-        //             }
-        //
-        //             _ => {}
-        //         }
-        //         false
-        //     }
-        // });
+        /*
+        跟随新增行自动滚动到最底部。
+         */
+        panel.handle({
+            // let total_height_rc = total_height.clone();
+            let buffer_rc = data_buffer.clone();
+            let last_window_size = Rc::new(RefCell::new((0, 0)));
+            move |ctx, evt| {
+                match evt {
+                    Event::Resize => {
+                        let (current_width, current_height) = (ctx.width(), ctx.height());
+                        let (last_width, last_height) = *last_window_size.borrow();
+                        if last_width != current_width || last_height != current_height {
+                            last_window_size.replace((current_width, current_height));
+                            let drawable_max_width = current_width - PADDING.left - PADDING.right;
+                            let mut init_piece = LinePiece::init_piece();
+                            let mut last_piece = &mut init_piece;
+                            for rich_data in buffer_rc.borrow_mut().iter_mut() {
+                                rich_data.line_pieces.clear();
+                                rich_data.estimate(last_piece, drawable_max_width);
+                                if let Some(piece) = rich_data.line_pieces.iter_mut().last() {
+                                    last_piece = piece;
+                                }
+                            }
+                        }
+                    }
+
+                    _ => {}
+                }
+                false
+            }
+        });
 
 
         Self { panel, data_buffer, background_color, buffer_max_lines }

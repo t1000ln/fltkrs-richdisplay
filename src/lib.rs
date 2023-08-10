@@ -7,7 +7,15 @@ use fltk::enums::{Align, Color, ColorDepth, Font};
 pub mod rich_text;
 pub mod rich_snapshot;
 
+/// 默认内容边界到窗口之间的空白距离。
 pub const PADDING: Padding = Padding { left: 5, top: 5, right: 5, bottom: 5 };
+
+/// 图片与其他内容之间的垂直间距。
+pub const IMAGE_PADDING_H: i32 = 2;
+
+/// 图片与其他内容之间的水平间距。
+pub const IMAGE_PADDING_V: i32 = 2;
+
 #[derive(Debug, Clone)]
 pub struct Coordinates(i32, i32, i32, i32);
 
@@ -207,7 +215,7 @@ pub trait LinedData {
     fn truncate(&mut self, rtl: bool, length: Option<i32>) -> LinePiece;
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum DataType {
     Text,
     Image,
@@ -399,10 +407,10 @@ impl RichData {
     ///
     /// ```
     pub fn wrap_text_for_estimate(&mut self, text: &str, last_piece: &mut LinePiece, max_width: i32, measure_width: i32, font_height: i32) {
-        let mut last_piece = last_piece;
-        if let Some(lp) = self.line_pieces.last_mut() {
-            last_piece = lp;
-        }
+        // let mut last_piece = last_piece;
+        // if let Some(lp) = self.line_pieces.last_mut() {
+        //     last_piece = lp;
+        // }
         let tw = Rc::new(RefCell::new(0));
         let text_len = text.len();
         if let Ok(stop_pos) = (0..text_len).collect::<Vec<usize>>().binary_search_by({
@@ -527,13 +535,13 @@ impl LinedData for RichData {
                     if let Some(bg_color) = &self.bg_color {
                         // 绘制背景色
                         set_draw_color(*bg_color);
-                        draw_rounded_rectf(piece.x, piece.y - offset_y - piece.spacing + up, piece.w, piece.font_height, 4);
+                        draw_rounded_rectf(piece.x, piece.y - offset_y - piece.spacing + up + 1, piece.w, piece.font_height, 4);
                     }
 
                     set_draw_color(self.fg_color);
                     if self.underline {
                         // 绘制下划线
-                        let line_y = piece.y - offset_y + self.font_size + up + 2;
+                        let line_y = piece.y - offset_y + self.font_size + up + 4;
                         draw_line(piece.x, line_y, piece.x + piece.w, line_y);
                     }
 
@@ -634,7 +642,10 @@ impl LinedData for RichData {
                     if !last_piece.line.ends_with("\n") {
                         current_line_height = max(last_piece.h, current_line_height);
                     }
-                    last_piece.h = current_line_height;
+
+                    if current_line_height > last_piece.h {
+                        last_piece.h = current_line_height;
+                    }
 
                     let line = text.as_str();
                     let (tw, _) = measure(line, false);
@@ -649,17 +660,19 @@ impl LinedData for RichData {
             DataType::Image => {
                 if start_x + self.image_width > max_width {
                     // 本行超宽，直接定位到下一行
-                    let x = PADDING.left;
-                    let y = top_y + last_piece.h;
-                    let next_x = PADDING.left + self.image_width;
-                    let next_y = y + self.image_height + descent();
+                    let x = PADDING.left + IMAGE_PADDING_H;
+                    let y = top_y + last_piece.h + IMAGE_PADDING_V;
+                    let next_x = x + self.image_width + IMAGE_PADDING_H;
+                    let next_y = y + self.image_height + IMAGE_PADDING_V;
                     let new_piece = LinePiece::new("".to_string(), x, y, self.image_width, self.image_height, last_piece.spacing, next_x, next_y, 1);
                     self.line_pieces.push(new_piece);
                 } else {
-                    let next_x = PADDING.left + self.image_width;
+                    let x = start_x + IMAGE_PADDING_H;
+                    let next_x = start_x + self.image_width + IMAGE_PADDING_H * 2;
                     if last_piece.line.ends_with("\n") {
                         // 定位在行首
-                        let new_piece = LinePiece::new("".to_string(), start_x, top_y, self.image_width, self.image_height, last_piece.spacing, next_x, top_y, 1);
+                        let y = top_y + IMAGE_PADDING_V;
+                        let new_piece = LinePiece::new("".to_string(), x, y, self.image_width, self.image_height, last_piece.spacing, next_x, y, 1);
                         self.line_pieces.push(new_piece);
                     } else {
                         // 在本行已有其他内容，需要与前一个片段协调行高
@@ -673,7 +686,7 @@ impl LinedData for RichData {
                             let (up, _) = calc_v_center_offset(current_line_height, self.image_height);
                             y += up;
                         }
-                        let new_piece = LinePiece::new("".to_string(), start_x, y, self.image_width, self.image_height, last_piece.spacing, next_x, top_y, 1);
+                        let new_piece = LinePiece::new("".to_string(), x, y, self.image_width, self.image_height, last_piece.spacing, next_x, top_y, 1);
                         self.line_pieces.push(new_piece);
                     }
                 }

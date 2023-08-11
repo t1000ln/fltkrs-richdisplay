@@ -161,7 +161,7 @@ impl RichSnapshot {
 
                             if let Some(rich_data) = buffer_rc.borrow().iter().last() {
                                 if let Some(piece) = rich_data.line_pieces.last() {
-                                    let new_content_height = piece.y + piece.h + piece.spacing;
+                                    let new_content_height = *piece.y.borrow() + piece.h + piece.spacing;
                                     let new_total_height = new_content_height + PADDING.top + PADDING.bottom;
 
                                     if new_total_height > window_height {

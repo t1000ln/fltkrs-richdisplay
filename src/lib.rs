@@ -1,5 +1,6 @@
 use std::cell::{RefCell};
 use std::cmp::{max, min, Ordering};
+use std::ops::DerefMut;
 use std::rc::{Rc, Weak};
 use fltk::draw::{descent, draw_image, draw_line, draw_rounded_rectf, draw_text2, measure, set_draw_color, set_font};
 use fltk::enums::{Align, Color, ColorDepth, Font};
@@ -14,7 +15,10 @@ pub const PADDING: Padding = Padding { left: 5, top: 5, right: 5, bottom: 5 };
 pub const IMAGE_PADDING_H: i32 = 2;
 
 /// 图片与其他内容之间的水平间距。
-pub const IMAGE_PADDING_V: i32 = 1;
+pub const IMAGE_PADDING_V: i32 = 2;
+
+/// 同一行内多个文字分片之间的水平间距。
+pub const PIECE_SPACING: i32 = 2;
 
 #[derive(Debug, Clone)]
 pub struct Coordinates(i32, i32, i32, i32);
@@ -23,7 +27,7 @@ pub struct Coordinates(i32, i32, i32, i32);
 #[derive(Debug, Clone)]
 pub struct ThroughLine {
     pub max_h: i32,
-    pub ys: RefCell<Vec<Weak<RefCell<i32>>>>,
+    pub ys: RefCell<Vec<Weak<RefCell<LinePiece>>>>,
     pub exist_image: bool,
 }
 
@@ -39,8 +43,8 @@ impl Default for ThroughLine {
 
 impl ThroughLine {
 
-    pub fn new(max_h: i32, exist_image: bool, y: Rc<RefCell<i32>>) -> Rc<RefCell<ThroughLine>> {
-        Rc::new(RefCell::new(ThroughLine { max_h, exist_image, ys: RefCell::new(vec![Rc::downgrade(&y)]) }))
+    pub fn new(max_h: i32, exist_image: bool) -> Rc<RefCell<ThroughLine>> {
+        Rc::new(RefCell::new(ThroughLine { max_h, exist_image, ys: RefCell::new(vec![]) }))
     }
 
     /// 如果传入的高度大于已记录高度，则替换为传入高度。
@@ -65,12 +69,14 @@ impl ThroughLine {
     }
 
     pub fn set_exist_image(&mut self, exist_image: bool) -> &mut Self {
-        self.exist_image = exist_image;
+        if exist_image == true {
+            self.exist_image = true;
+        }
         self
     }
 
-    pub fn set_y(&mut self, y: i32) -> &mut Self {
-        // todo: implement
+    pub fn add_piece(&mut self, lp: Rc<RefCell<LinePiece>>) -> &mut Self {
+        self.ys.borrow_mut().push(Rc::downgrade(&lp));
         self
     }
 
@@ -91,12 +97,14 @@ impl ThroughLine {
     /// ```
     ///
     /// ```
-    pub fn get_or_create(x_ref: i32, start_x: i32, current_line_height: i32, last_piece: &mut LinePiece, image: bool, y: Rc<RefCell<i32>>) -> Rc<RefCell<ThroughLine>> {
+    pub fn create_or_update(x_ref: i32, start_x: i32, current_line_height: i32, last_piece: Rc<RefCell<LinePiece>>, image: bool) -> Rc<RefCell<ThroughLine>> {
         if start_x == x_ref {
-            ThroughLine::new(current_line_height, image, y)
+            ThroughLine::new(current_line_height, image)
         } else {
-            last_piece.through_line.borrow_mut().set_max_h(current_line_height);
-            last_piece.through_line.clone()
+            if image {
+                last_piece.borrow_mut().through_line.borrow_mut().exist_image = true;
+            }
+            last_piece.borrow().through_line.clone()
         }
     }
 }
@@ -117,11 +125,13 @@ pub struct LinePiece {
     /// 起点x坐标
     pub x: i32,
     /// 起点y坐标
-    pub y: Rc<RefCell<i32>>,
+    pub y: i32,
     /// 分片宽度，小于等于行宽
     pub w: i32,
     /// 行高
     pub h: i32,
+    /// 虚拟行高顶部y坐标
+    pub top_y: i32,
     /// 额外的行间距
     pub spacing: i32,
     /// 建议下一个数据分片绘制起点x坐标
@@ -137,40 +147,42 @@ pub struct LinePiece {
 }
 
 impl LinePiece {
-    pub fn new(line: String, x: i32, y: Rc<RefCell<i32>>, w: i32, h: i32, spacing: i32, next_x: i32, next_y: i32, font_height: i32, through_line: Rc<RefCell<ThroughLine>>) -> Self {
-        Self {
+    pub fn new(line: String, x: i32, y: i32, w: i32, h: i32, top_y: i32, spacing: i32, next_x: i32, next_y: i32, font_height: i32, through_line: Rc<RefCell<ThroughLine>>) -> Rc<RefCell<LinePiece>> {
+        let new_piece = Rc::new(RefCell::new(Self {
             line,
             x,
             y,
             w,
             h,
+            top_y,
             spacing,
             next_x,
             next_y,
             font_height,
-            through_line,
-        }
+            through_line: through_line.clone(),
+        }));
+        through_line.borrow_mut().add_piece(new_piece.clone());
+        new_piece
     }
 
-    pub fn init_piece() -> LinePiece {
-        Self {
+    pub fn init_piece() -> Rc<RefCell<LinePiece>> {
+        let through_line = Rc::new(RefCell::new(Default::default()));
+        let init_piece = Rc::new(RefCell::new(Self {
             line: "".to_string(),
             x: PADDING.left,
-            y: Rc::new(RefCell::new(PADDING.top)),
+            y: PADDING.top,
             w: 0,
             h: 1,
+            top_y: PADDING.top,
             spacing: 0,
             next_x: PADDING.left,
             next_y: PADDING.top,
             font_height: 1,
-            through_line: Rc::new(RefCell::new(Default::default())),
-        }
+            through_line: through_line.clone(),
+        }));
+        through_line.borrow_mut().add_piece(init_piece.clone());
+        init_piece
     }
-
-    // pub fn next_line(&mut self, padding: &Padding) {
-    //     self.next_x = padding.left;
-    //     self.next_y = self.y + self.h + self.spacing;
-    // }
 }
 
 pub trait LinedData {
@@ -279,7 +291,7 @@ pub trait LinedData {
     /// ```
     fn draw(&mut self, offset_y: i32);
 
-    fn estimate(&mut self, blow_line: &mut LinePiece, max_width: i32);
+    fn estimate(&mut self, blow_line: Rc<RefCell<LinePiece>>, max_width: i32) -> Rc<RefCell<LinePiece>>;
 
     /// 擦除内容，但保留占位。
     fn erase(&mut self);
@@ -467,7 +479,7 @@ pub(crate) struct RichData {
     v_bounds: Option<(i32, i32, i32)>,
 
     /// 对当前数据进行试算后，分割成适配单行宽度的分片保存起来。由于无需跨线程传输，因此也不考虑线程安全问题。
-    pub(crate) line_pieces:Vec<LinePiece>,
+    pub(crate) line_pieces: Vec<Rc<RefCell<LinePiece>>>,
     data_type: DataType,
     image: Option<Vec<u8>>,
     image_width: i32,
@@ -492,15 +504,13 @@ impl RichData {
     /// ```
     ///
     /// ```
-    pub fn wrap_text_for_estimate(&mut self, text: &str, last_piece: &mut LinePiece, max_width: i32, measure_width: i32, font_height: i32) {
-        // let mut last_piece = last_piece;
-        // if let Some(lp) = self.line_pieces.last_mut() {
-        //     last_piece = lp;
-        // }
+    pub fn wrap_text_for_estimate(&mut self, text: &str, last_piece: Rc<RefCell<LinePiece>>, max_width: i32, measure_width: i32, font_height: i32) -> Rc<RefCell<LinePiece>> {
+        let original = last_piece.clone();
+        let mut last_piece = last_piece.borrow().clone();
         let tw = Rc::new(RefCell::new(0));
-        let text_len = text.len();
+        let text_len = text.chars().count();
         if let Ok(stop_pos) = (0..text_len).collect::<Vec<usize>>().binary_search_by({
-            let x = last_piece.next_x;
+            let x = last_piece.next_x + PIECE_SPACING;
             let tw_rc = tw.clone();
             move |pos| {
                 let (tw1, _) = measure(text.chars().take(*pos).collect::<String>().as_str(), false);
@@ -530,40 +540,48 @@ impl RichData {
             let w = *tw.borrow();
             // 换行处理
             let next_x = PADDING.left;
-            let max_h = if last_piece.line.ends_with('\n') {
-                font_height
-            } else {
-                max(last_piece.h, font_height)
-            };
-            let next_y = last_piece.next_y + max_h + last_piece.spacing;
+            let through_line = ThroughLine::create_or_update(PADDING.left, last_piece.next_x, font_height, original.clone(), false);
+            let line_max_h = through_line.borrow().max_h;
+            let max_h = max(line_max_h, font_height);
+            let mut next_y = last_piece.next_y + max_h + last_piece.spacing;
+            if through_line.borrow().exist_image {
+                next_y += IMAGE_PADDING_V * 2;
+            }
 
-            let y = Rc::new(RefCell::new(last_piece.next_y));
-            let through_line = ThroughLine::get_or_create(PADDING.left, last_piece.next_x, max_h, last_piece, false, y.clone());
-            let mut new_piece = LinePiece::new(text.chars().take(stop_pos).collect::<String>(), last_piece.next_x, y, w, max_h, last_piece.spacing, next_x, next_y, font_height, through_line);
+            let y = last_piece.next_y;
+            let top_y = last_piece.next_y;
+
+            let new_piece = LinePiece::new(text.chars().take(stop_pos).collect::<String>(), last_piece.next_x, y, w, font_height, top_y, last_piece.spacing, next_x, next_y, font_height, through_line.clone());
             self.line_pieces.push(new_piece.clone());
 
-            new_piece.h = font_height;
-            let last_piece = &mut new_piece;
             let rest_str = text.chars().skip(stop_pos).collect::<String>();
             let rest_width = measure_width - w;
 
             if rest_width > max_width {
                 // 剩余部分的宽度仍然大于一整行宽度
-                self.wrap_text_for_estimate(rest_str.as_str(), last_piece, max_width, rest_width, font_height);
+                self.wrap_text_for_estimate(rest_str.as_str(), new_piece.clone(), max_width, rest_width, font_height)
             } else {
-                let x = last_piece.next_x;
-                let mut next_x = x + rest_width;
-                let mut next_y = last_piece.next_y;
+                let rest_x = next_x;
+                let rest_y = next_y;
+                let top_y = next_y;
+                let mut rest_next_x = rest_x + rest_width + PIECE_SPACING;
+                let mut rest_next_y = next_y;
                 if rest_str.ends_with("\n") {
-                    next_x = PADDING.left;
-                    next_y += last_piece.h + last_piece.spacing;
+                    rest_next_x = PADDING.left;
+                    rest_next_y += font_height + last_piece.spacing;
                 }
 
-                let y = Rc::new(RefCell::new(last_piece.next_y));
-                let through_line = ThroughLine::get_or_create(PADDING.left, x, last_piece.h, last_piece, false, y.clone());
-                let new_piece = LinePiece::new(rest_str, x, y, rest_width, last_piece.h, last_piece.spacing, next_x, next_y, font_height, through_line);
-                self.line_pieces.push(new_piece);
+                let through_line = ThroughLine::create_or_update(PADDING.left, rest_x, self.line_height, original.clone(), false);
+                let new_piece = LinePiece::new(rest_str, rest_x, rest_y, rest_width, self.line_height, top_y, last_piece.spacing, rest_next_x, rest_next_y, font_height, through_line);
+                self.line_pieces.push(new_piece.clone());
+                new_piece
             }
+        } else {
+            // 从行首开始
+            let through_line = ThroughLine::create_or_update(PADDING.left, PADDING.left, self.line_height, original.clone(), false);
+            let y = last_piece.next_y + last_piece.through_line.borrow().max_h + last_piece.spacing;
+            let new_piece = LinePiece::new(text.to_string(), PADDING.left, y, measure_width, self.line_height, y, last_piece.spacing, PADDING.left, y, font_height, through_line);
+            self.wrap_text_for_estimate(text, new_piece, max_width, measure_width, font_height)
         }
     }
 }
@@ -621,42 +639,39 @@ impl LinedData for RichData {
         match self.data_type {
             DataType::Text => {
                 let bg_offset = 1;
-                let mut line_offset = 2;
+                let mut line_offset = 3;
                 #[cfg(not(target_os = "windows"))]
                 {
                     line_offset = 4;
                 }
 
                 set_font(self.font, self.font_size);
-                for piece in self.line_pieces.iter_mut() {
-                    let y = *piece.y.borrow();
-                    if piece.line.starts_with("24") {
-                        debug_assert!(true);
-                    }
-                    let draw_h = piece.through_line.borrow().max_h;
-                    let (up, _) = if draw_h == piece.font_height { (0, 0) } else { calc_v_center_offset(draw_h, piece.font_height) };
-                    // println!("up: {}, draw_h: {}, piece.font_height: {}, piece.h: {}", up, draw_h, piece.font_height, piece.h);
+                for piece in self.line_pieces.iter() {
+                    let piece = &*piece.borrow();
+                    let y = piece.y - offset_y;
                     if let Some(bg_color) = &self.bg_color {
                         // 绘制背景色
                         set_draw_color(*bg_color);
-                        draw_rounded_rectf(piece.x, y - offset_y - piece.spacing + up + bg_offset, piece.w, piece.font_height, 4);
+                        draw_rounded_rectf(piece.x, y - piece.spacing, piece.w, piece.font_height, 4);
                     }
 
                     set_draw_color(self.fg_color);
                     if self.underline {
                         // 绘制下划线
-                        let line_y = y - offset_y + self.font_size + up + line_offset;
+                        // let line_y = y + self.font_size + line_offset;
+                        let line_y = y + piece.font_height - line_offset;
                         draw_line(piece.x, line_y, piece.x + piece.w, line_y);
                     }
 
                     // 绘制文本
-                    draw_text2(piece.line.as_str(), piece.x, y - offset_y + bg_offset, piece.w, piece.h, Align::Left);
+                    draw_text2(piece.line.as_str(), piece.x, y + bg_offset, piece.w, piece.h, Align::Left);
                 }
             },
             DataType::Image => {
                 if let Some(piece) = self.line_pieces.last_mut() {
+                    let piece = &*piece.borrow();
                     if let Some(img) = &self.image {
-                        if let Err(e) = draw_image(img.as_slice(), piece.x, *piece.y.borrow() - offset_y, piece.w, piece.h, ColorDepth::Rgb8) {
+                        if let Err(e) = draw_image(img.as_slice(), piece.x, piece.y - offset_y, piece.w, piece.h, ColorDepth::Rgb8) {
                             eprintln!("draw image error: {:?}", e);
                         }
                     }
@@ -680,9 +695,10 @@ impl LinedData for RichData {
     /// ```
     ///
     /// ```
-    fn estimate(&mut self, last_piece: &mut LinePiece, max_width: i32) {
+    fn estimate(&mut self, last_piece: Rc<RefCell<LinePiece>>, max_width: i32) -> Rc<RefCell<LinePiece>> {
+        let mut ret = last_piece.clone();
+        let last_piece = last_piece.borrow().clone();
         let (top_y, start_x) = (last_piece.next_y, last_piece.next_x);
-
         match self.data_type {
             DataType::Text => {
                 set_font(self.font, self.font_size);
@@ -703,27 +719,25 @@ impl LinedData for RichData {
                         let mut current_line_height = max(ref_font_height, th);
                         self.line_height = current_line_height;
 
-                        if !last_piece.line.ends_with('\n') && current_line_height > last_piece.h {
-                            last_piece.through_line.borrow_mut().set_max_h(current_line_height);
-                            // last_piece.h = last_piece.through_line.borrow().max_h;
-                        }
-
                         let mut next_x = last_piece.next_x + tw;
                         if next_x > max_width {
                             // 超出横向右边界
-                            self.wrap_text_for_estimate(line, last_piece, max_width, tw, ref_font_height);
+                            ret = self.wrap_text_for_estimate(line, ret.clone(), max_width, tw, ref_font_height);
                         } else {
+                            let new_piece: Rc<RefCell<LinePiece>>;
                             if let Some(lp) = self.line_pieces.last_mut() {
+                                let lp = &mut *lp.borrow_mut();
                                 let mut next_y = lp.next_y;
                                 // 最后一段可能带有换行符'\n'。
                                 if line.ends_with("\n") {
                                     next_y += current_line_height;
                                     next_x = PADDING.left;
                                 }
-                                let y = Rc::new(RefCell::new(lp.next_y));
-                                let through_line = ThroughLine::get_or_create(PADDING.left, lp.next_x, current_line_height, lp, false, y.clone());
-                                let new_piece = LinePiece::new(line.to_string(), lp.next_x, y, tw, current_line_height, lp.spacing, next_x, next_y, ref_font_height, through_line);
-                                self.line_pieces.push(new_piece);
+                                let y = lp.next_y;
+                                let piece_top_y = lp.next_y;
+                                let through_line = ThroughLine::create_or_update(PADDING.left, lp.next_x, current_line_height, ret.clone(), false);
+                                new_piece = LinePiece::new(line.to_string(), lp.next_x, y, tw, current_line_height, piece_top_y, lp.spacing, next_x, next_y, ref_font_height, through_line);
+
                             } else {
                                 let mut next_y = last_piece.next_y;
                                 // 最后一段可能带有换行符'\n'。
@@ -734,11 +748,13 @@ impl LinedData for RichData {
                                     next_y += current_line_height;
                                     next_x = PADDING.left;
                                 }
-                                let y = Rc::new(RefCell::new(last_piece.next_y));
-                                let through_line = ThroughLine::get_or_create(PADDING.left, last_piece.next_x, current_line_height, last_piece, false, y.clone());
-                                let new_piece = LinePiece::new(line.to_string(), last_piece.next_x, y, tw, current_line_height, last_piece.spacing, next_x, next_y, ref_font_height, through_line);
-                                self.line_pieces.push(new_piece);
+                                let y = last_piece.next_y;
+                                let piece_top_y = last_piece.next_y;
+                                let through_line = ThroughLine::create_or_update(PADDING.left, last_piece.next_x, current_line_height, ret.clone(), false);
+                                new_piece = LinePiece::new(line.to_string(), last_piece.next_x, y, tw, self.line_height, piece_top_y, last_piece.spacing, next_x, next_y, ref_font_height, through_line);
                             }
+                            self.line_pieces.push(new_piece.clone());
+                            ret = new_piece;
                         }
                     }
 
@@ -752,21 +768,17 @@ impl LinedData for RichData {
                         current_line_height = max(last_piece.h, current_line_height);
                     }
 
-                    if current_line_height > last_piece.h {
-                        last_piece.through_line.borrow_mut().set_max_h(current_line_height);
-                        // last_piece.h = last_piece.through_line.borrow().max_h;
-                    }
-
                     let line = text.as_str();
                     let (tw, _) = measure(line, false);
                     if last_piece.next_x + tw > max_width {
                         // 超出横向右边界
-                        self.wrap_text_for_estimate(line, last_piece, max_width, tw, ref_font_height);
+                        ret = self.wrap_text_for_estimate(line, ret.clone(), max_width, tw, ref_font_height);
                     } else {
-                        let y = Rc::new(RefCell::new(top_y));
-                        let through_line = ThroughLine::get_or_create(PADDING.left, start_x, current_line_height, last_piece, false, y.clone());
-                        let new_piece = LinePiece::new(self.text.clone(), start_x, y, tw, current_line_height, current_line_spacing, start_x + tw, top_y, ref_font_height, through_line);
-                        self.line_pieces.push(new_piece);
+                        let y = top_y;
+                        let through_line = ThroughLine::create_or_update(PADDING.left, start_x, current_line_height, ret, false);
+                        let new_piece = LinePiece::new(self.text.clone(), start_x, y, tw, current_line_height, top_y, current_line_spacing, start_x + tw + PIECE_SPACING, top_y, ref_font_height, through_line);
+                        self.line_pieces.push(new_piece.clone());
+                        ret = new_piece;
                     }
                 }
             }
@@ -775,21 +787,24 @@ impl LinedData for RichData {
                 if start_x + self.image_width > max_width {
                     // 本行超宽，直接定位到下一行
                     let x = PADDING.left + IMAGE_PADDING_H;
+                    let piece_top_y = top_y + IMAGE_PADDING_V;
                     let next_x = x + self.image_width + IMAGE_PADDING_H;
                     let next_y = top_y + last_piece.through_line.borrow().max_h + IMAGE_PADDING_V;
-                    let y = Rc::new(RefCell::new(next_y));
-                    let through_line = ThroughLine::new(self.image_height * IMAGE_PADDING_V * 2, true, y.clone());
-                    let new_piece = LinePiece::new("".to_string(), x, y, self.image_width, self.image_height, last_piece.spacing, next_x, next_y, 1, through_line);
-                    self.line_pieces.push(new_piece);
+                    let through_line = ThroughLine::new(self.image_height * IMAGE_PADDING_V * 2, true);
+                    let new_piece = LinePiece::new("".to_string(), x, next_y, self.image_width, self.image_height, piece_top_y, last_piece.spacing, next_x, next_y, 1, through_line);
+                    self.line_pieces.push(new_piece.clone());
+                    ret = new_piece;
                 } else {
                     let x = start_x + IMAGE_PADDING_H;
                     let next_x = start_x + self.image_width + IMAGE_PADDING_H * 2;
                     if last_piece.line.ends_with("\n") {
                         // 定位在行首
-                        let y = Rc::new(RefCell::new(top_y + IMAGE_PADDING_V));
-                        let through_line = ThroughLine::new(self.image_height * IMAGE_PADDING_V * 2, true, y.clone());
-                        let new_piece = LinePiece::new("".to_string(), x, y, self.image_width, self.image_height, last_piece.spacing, next_x, top_y, 1, through_line);
-                        self.line_pieces.push(new_piece);
+                        let y = top_y + IMAGE_PADDING_V;
+                        let piece_top_y = y;
+                        let through_line = ThroughLine::new(self.image_height * IMAGE_PADDING_V * 2, true);
+                        let new_piece = LinePiece::new("".to_string(), x, y, self.image_width, self.image_height, piece_top_y, last_piece.spacing, next_x, top_y, 1, through_line);
+                        self.line_pieces.push(new_piece.clone());
+                        ret = new_piece;
                     } else {
                         // 在本行已有其他内容，需要与前一个片段协调行高
                         let current_line_height = max(last_piece.h, h);
@@ -803,20 +818,70 @@ impl LinedData for RichData {
                             let (up, _) = calc_v_center_offset(current_line_height, h);
                             raw_y += up;
                         }
-                        let y = Rc::new(RefCell::new(raw_y));
-                        let through_line = ThroughLine::get_or_create(PADDING.left + IMAGE_PADDING_H, x, self.image_height * IMAGE_PADDING_V * 2, last_piece, true, y.clone());
-                        let new_piece = LinePiece::new("".to_string(), x, y, self.image_width, self.image_height, last_piece.spacing, next_x, top_y + IMAGE_PADDING_V, 1, through_line);
-                        self.line_pieces.push(new_piece);
+                        let y = raw_y;
+                        let piece_top_y = y;
+                        let through_line = ThroughLine::create_or_update(PADDING.left + IMAGE_PADDING_H, x, self.image_height * IMAGE_PADDING_V * 2, ret, true);
+                        let new_piece = LinePiece::new("".to_string(), x, y, self.image_width, self.image_height, piece_top_y, last_piece.spacing, next_x, top_y + IMAGE_PADDING_V, 1, through_line);
+                        self.line_pieces.push(new_piece.clone());
+                        ret = new_piece;
                     }
                 }
             }
         }
 
+        let mut to_be_updated: Vec<(Rc<RefCell<LinePiece>>, i32)> = Vec::new();
+        for line_piece in self.line_pieces.iter() {
+            let lp = &*line_piece.borrow();
+            let tl = &mut *lp.through_line.borrow_mut();
+            let ys = &*tl.ys.borrow_mut();
+            let mut max_h = 1;
+            // 找出最大的行高
+            for l in ys.iter() {
+                if let Some(l) = l.upgrade() {
+                    if l.borrow().h > max_h {
+                        max_h = l.borrow().h;
+                    }
+                }
+            }
+            tl.max_h = max_h;
+            // 收集同一行内低于最大高度的分片。因为borrow作用域的问题，无法在一个for循环内直接处理，只能先收集再处理。
+            for one_piece in ys.iter() {
+                if let Some(p) = one_piece.upgrade() {
+                    let lh = p.borrow().h;
+                    if lh < max_h {
+                        to_be_updated.push((p.clone(), max_h));
+                    }
+                }
+            }
+        }
+        // 重新计算同一行内低于最大行高的片段的y坐标
+        for (lp, max_h) in to_be_updated {
+            let y = lp.borrow().y;
+            let piece_top_y = lp.borrow().top_y;
+            let h = lp.borrow().h;
+
+            if lp.borrow().line.ends_with("\n") {
+                let mut padding_v = 0;
+                if lp.borrow().through_line.borrow().exist_image {
+                    padding_v = IMAGE_PADDING_V;
+                }
+                lp.borrow_mut().next_y = y + max_h + padding_v;
+            }
+
+
+            let next_y = lp.borrow().next_y;
+
+            let (up_offset, _) = calc_v_center_offset(max_h, h);
+            lp.borrow_mut().y = piece_top_y + up_offset;
+        }
+
         let mut bottom_y = top_y;
         if let Some(last_piece) = self.line_pieces.last_mut() {
-            bottom_y = *last_piece.y.borrow() + last_piece.through_line.borrow().max_h;
+            let last_piece = &*last_piece.borrow();
+            bottom_y = last_piece.y + last_piece.through_line.borrow().max_h;
         }
         self.set_v_bounds(top_y, bottom_y, start_x);
+        ret
     }
 
     fn erase(&mut self) {
@@ -838,34 +903,23 @@ mod tests {
     #[test]
     pub fn test_estimate() {
         // let rich_text = RichData::new_text("安全并且高效地处理并发编程是Rust的另一个主要目标。并发编程和并行编程这两种概念随着计算机设备的多核优化而变得越来越重要。并发编程允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。".to_string());
-        let padding = Padding::new(5, 5, 5, 5);
         let mut rich_text: RichData = UserData::new_text("asdfh\nasdf\n".to_string()).into();
-        let from_y = Rc::new(RefCell::new(5));
-        let mut last_piece = LinePiece {
-            line: "".to_string(),
-            x: 5,
-            y: from_y,
-            w: 0,
-            h: 0,
-            spacing: 0,
-            next_x: 5,
-            next_y: 5,
-            font_height: 1,
-            through_line: Rc::new(RefCell::new(Default::default())),
-        };
-        rich_text.estimate(&mut last_piece, 785);
+        let from_y = 5;
+        let top_y = from_y;
+        let mut last_piece = LinePiece::new("".to_string(), 5, from_y, 0, 0, top_y, 0, 5, 5, 1, Rc::new(RefCell::new(Default::default())));
+        last_piece = rich_text.estimate(last_piece, 785);
         println!("last_line: {:?}", last_piece);
         let increased_height = rich_text.height();
         println!("increased_height: {}", increased_height);
 
         let mut rich_text: RichData = UserData::new_text("asdfh\nasdf\n".to_string()).set_font(Font::HelveticaBold, 32).into();
-        rich_text.estimate(&mut last_piece, 785);
+        last_piece = rich_text.estimate(last_piece, 785);
         println!("last_line: {:?}", last_piece);
         let increased_height = rich_text.height();
         println!("increased_height: {}", increased_height);
 
         let mut rich_text: RichData = UserData::new_text("asdfh\nasdf\n".to_string()).set_font(Font::HelveticaBold, 16).into();
-        rich_text.estimate(&mut last_piece, 785);
+        last_piece = rich_text.estimate(last_piece, 785);
         println!("last_line: {:?}", last_piece);
         let increased_height = rich_text.height();
         println!("increased_height: {}", increased_height);

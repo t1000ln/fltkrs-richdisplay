@@ -149,19 +149,19 @@ impl RichSnapshot {
                             let window_width = scroller.width();
                             let window_height = scroller.height();
                             let drawable_max_width = window_width - PADDING.left - PADDING.right;
-                            let mut init_piece = LinePiece::init_piece();
-                            let mut last_piece = &mut init_piece;
+                            let mut last_piece = LinePiece::init_piece();
                             for rich_data in buffer_rc.borrow_mut().iter_mut() {
                                 rich_data.line_pieces.clear();
-                                rich_data.estimate(last_piece, drawable_max_width);
-                                if let Some(piece) = rich_data.line_pieces.iter_mut().last() {
-                                    last_piece = piece;
-                                }
+                                last_piece = rich_data.estimate(last_piece, drawable_max_width);
+                                // if let Some(piece) = rich_data.line_pieces.iter_mut().last() {
+                                //     last_piece = piece.get_mut();
+                                // }
                             }
 
                             if let Some(rich_data) = buffer_rc.borrow().iter().last() {
                                 if let Some(piece) = rich_data.line_pieces.last() {
-                                    let new_content_height = *piece.y.borrow() + piece.h + piece.spacing;
+                                    let piece = &*piece.borrow();
+                                    let new_content_height = piece.y + piece.h + piece.spacing;
                                     let new_total_height = new_content_height + PADDING.top + PADDING.bottom;
 
                                     if new_total_height > window_height {

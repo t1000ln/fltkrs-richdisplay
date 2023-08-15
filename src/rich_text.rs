@@ -64,10 +64,9 @@ impl RichText {
         });
 
         /*
-        跟随新增行自动滚动到最底部。
+        缩放窗口后重新计算分片绘制信息。
          */
         panel.handle({
-            // let total_height_rc = total_height.clone();
             let buffer_rc = data_buffer.clone();
             let last_window_size = Rc::new(RefCell::new((0, 0)));
             move |ctx, evt| {
@@ -78,14 +77,10 @@ impl RichText {
                         if last_width != current_width || last_height != current_height {
                             last_window_size.replace((current_width, current_height));
                             let drawable_max_width = current_width - PADDING.left - PADDING.right;
-                            let mut init_piece = LinePiece::init_piece();
-                            let mut last_piece = &mut init_piece;
+                            let mut last_piece = LinePiece::init_piece();
                             for rich_data in buffer_rc.borrow_mut().iter_mut() {
                                 rich_data.line_pieces.clear();
-                                rich_data.estimate(last_piece, drawable_max_width);
-                                if let Some(piece) = rich_data.line_pieces.iter_mut().last() {
-                                    last_piece = piece;
-                                }
+                                last_piece = rich_data.estimate(last_piece, drawable_max_width);
                             }
                         }
                     }
@@ -124,14 +119,14 @@ impl RichText {
          */
         if !self.data_buffer.borrow().is_empty() {
             if let Some(rd) = self.data_buffer.borrow_mut().iter_mut().last() {
-                if let Some(last_piece) = rd.line_pieces.iter_mut().last() {
-                    rich_data.estimate(last_piece, drawable_max_width);
+                if let Some(last_piece) = rd.line_pieces.iter().last() {
+                    rich_data.estimate(last_piece.clone(), drawable_max_width);
                 }
             }
         } else {
             // 首次添加数据
-            let mut last_piece = LinePiece::init_piece();
-            rich_data.estimate(&mut last_piece, drawable_max_width);
+            let last_piece = LinePiece::init_piece();
+            rich_data.estimate(last_piece, drawable_max_width);
         }
 
         self.data_buffer.borrow_mut().push_back(rich_data);

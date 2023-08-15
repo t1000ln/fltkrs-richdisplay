@@ -432,8 +432,8 @@ impl UserData {
         self
     }
 
-    pub fn set_underline(mut self) -> Self {
-        self.underline = true;
+    pub fn set_underline(mut self, u: bool) -> Self {
+        self.underline = u;
         self
     }
 
@@ -508,7 +508,7 @@ impl RichData {
         let original = last_piece.clone();
         let mut last_piece = last_piece.borrow().clone();
         let tw = Rc::new(RefCell::new(0));
-        let text_len = text.chars().count();
+        let text_len = text.len(); // 不能使用text.chars().count()，会有bug，暂时未知原因。
         if let Ok(stop_pos) = (0..text_len).collect::<Vec<usize>>().binary_search_by({
             let x = last_piece.next_x + PIECE_SPACING;
             let tw_rc = tw.clone();
@@ -571,8 +571,8 @@ impl RichData {
                     rest_next_y += font_height + last_piece.spacing;
                 }
 
-                let through_line = ThroughLine::create_or_update(PADDING.left, rest_x, self.line_height, original.clone(), false);
-                let new_piece = LinePiece::new(rest_str, rest_x, rest_y, rest_width, self.line_height, top_y, last_piece.spacing, rest_next_x, rest_next_y, font_height, through_line);
+                let through_line = ThroughLine::create_or_update(PADDING.left, rest_x, font_height, original.clone(), false);
+                let new_piece = LinePiece::new(rest_str, rest_x, rest_y, rest_width, font_height, top_y, last_piece.spacing, rest_next_x, rest_next_y, font_height, through_line);
                 self.line_pieces.push(new_piece.clone());
                 new_piece
             }
@@ -639,10 +639,10 @@ impl LinedData for RichData {
         match self.data_type {
             DataType::Text => {
                 let bg_offset = 1;
-                let mut line_offset = 3;
+                let mut bg_height_modifier = 0;
                 #[cfg(not(target_os = "windows"))]
                 {
-                    line_offset = 4;
+                    bg_height_modifier = 2;
                 }
 
                 set_font(self.font, self.font_size);
@@ -652,15 +652,14 @@ impl LinedData for RichData {
                     if let Some(bg_color) = &self.bg_color {
                         // 绘制背景色
                         set_draw_color(*bg_color);
-                        draw_rounded_rectf(piece.x, y - piece.spacing, piece.w, piece.font_height, 4);
+                        draw_rounded_rectf(piece.x, y - piece.spacing + bg_height_modifier, piece.w, piece.font_height, 4);
                     }
 
                     set_draw_color(self.fg_color);
                     if self.underline {
                         // 绘制下划线
-                        // let line_y = y + self.font_size + line_offset;
-                        let line_y = y + piece.font_height - line_offset;
-                        draw_line(piece.x, line_y, piece.x + piece.w, line_y);
+                        let line_y = y + piece.font_height - ((piece.font_height as f32 / 10f32).floor() as i32 - 1);
+                        draw_line(piece.x, line_y, piece.x + piece.w - 4, line_y);
                     }
 
                     // 绘制文本
@@ -764,9 +763,9 @@ impl LinedData for RichData {
                     self.line_height = current_line_height;
 
                     // 如果当前分片与上一个分片在同一行绘制，但是行高不同时，取最大的行高作为本行统一行高标准。
-                    if !last_piece.line.ends_with("\n") && !last_piece.line.is_empty() {
-                        current_line_height = max(last_piece.h, current_line_height);
-                    }
+                    // if !last_piece.line.ends_with("\n") && !last_piece.line.is_empty() {
+                    //     current_line_height = max(last_piece.h, current_line_height);
+                    // }
 
                     let line = text.as_str();
                     let (tw, _) = measure(line, false);
@@ -775,8 +774,8 @@ impl LinedData for RichData {
                         ret = self.wrap_text_for_estimate(line, ret.clone(), max_width, tw, ref_font_height);
                     } else {
                         let y = top_y;
-                        let through_line = ThroughLine::create_or_update(PADDING.left, start_x, current_line_height, ret, false);
-                        let new_piece = LinePiece::new(self.text.clone(), start_x, y, tw, current_line_height, top_y, current_line_spacing, start_x + tw + PIECE_SPACING, top_y, ref_font_height, through_line);
+                        let through_line = ThroughLine::create_or_update(PADDING.left, start_x, ref_font_height, ret, false);
+                        let new_piece = LinePiece::new(self.text.clone(), start_x, y, tw, ref_font_height, top_y, current_line_spacing, start_x + tw + PIECE_SPACING, top_y, ref_font_height, through_line);
                         self.line_pieces.push(new_piece.clone());
                         ret = new_piece;
                     }
@@ -796,7 +795,7 @@ impl LinedData for RichData {
                     ret = new_piece;
                 } else {
                     let x = start_x + IMAGE_PADDING_H;
-                    let next_x = start_x + self.image_width + IMAGE_PADDING_H * 2;
+                    let next_x = start_x + self.image_width + IMAGE_PADDING_H * 2 + PIECE_SPACING;
                     if last_piece.line.ends_with("\n") {
                         // 定位在行首
                         let y = top_y + IMAGE_PADDING_V;
@@ -812,7 +811,6 @@ impl LinedData for RichData {
                         if current_line_height > last_piece.h {
                             // 图形比前一个分片行高要高
                             last_piece.through_line.borrow_mut().set_max_h(current_line_height);
-                            // last_piece.h = last_piece.through_line.borrow().max_h;
                         } else {
                             // 图形的高度小于等于前一个分片的行高，需要计算垂直居中位置
                             let (up, _) = calc_v_center_offset(current_line_height, h);

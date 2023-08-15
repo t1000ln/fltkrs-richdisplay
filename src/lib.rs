@@ -508,7 +508,7 @@ impl RichData {
         let original = last_piece.clone();
         let mut last_piece = last_piece.borrow().clone();
         let tw = Rc::new(RefCell::new(0));
-        let text_len = text.len(); // 不能使用text.chars().count()，会有bug，暂时未知原因。
+        let text_len = text.chars().count();
         if let Ok(stop_pos) = (0..text_len).collect::<Vec<usize>>().binary_search_by({
             let x = last_piece.next_x + PIECE_SPACING;
             let tw_rc = tw.clone();
@@ -516,12 +516,8 @@ impl RichData {
                 let (tw1, _) = measure(text.chars().take(*pos).collect::<String>().as_str(), false);
                 if x + tw1 <= max_width {
                     if *pos == text_len - 1 {
-                        if x + tw1 == max_width {
-                            tw_rc.replace(tw1);
-                            Ordering::Equal
-                        } else {
-                            Ordering::Less
-                        }
+                        tw_rc.replace(tw1);
+                        Ordering::Equal
                     } else {
                         let (tw2, _) = measure(text.chars().take(*pos + 1).collect::<String>().as_str(), false);
                         if x + tw2 > max_width {
@@ -658,7 +654,7 @@ impl LinedData for RichData {
                     set_draw_color(self.fg_color);
                     if self.underline {
                         // 绘制下划线
-                        let line_y = y + piece.font_height - ((piece.font_height as f32 / 10f32).floor() as i32 - 1);
+                        let line_y = y + piece.font_height - ((piece.font_height as f32 / 10f32).floor() as i32 + 1);
                         draw_line(piece.x, line_y, piece.x + piece.w - 4, line_y);
                     }
 
@@ -759,13 +755,7 @@ impl LinedData for RichData {
 
                 } else {
                     let (_, th) = measure("A", false);
-                    let mut current_line_height = max(ref_font_height, th);
-                    self.line_height = current_line_height;
-
-                    // 如果当前分片与上一个分片在同一行绘制，但是行高不同时，取最大的行高作为本行统一行高标准。
-                    // if !last_piece.line.ends_with("\n") && !last_piece.line.is_empty() {
-                    //     current_line_height = max(last_piece.h, current_line_height);
-                    // }
+                    self.line_height = max(ref_font_height, th);
 
                     let line = text.as_str();
                     let (tw, _) = measure(line, false);
@@ -866,9 +856,6 @@ impl LinedData for RichData {
                 lp.borrow_mut().next_y = y + max_h + padding_v;
             }
 
-
-            let next_y = lp.borrow().next_y;
-
             let (up_offset, _) = calc_v_center_offset(max_h, h);
             lp.borrow_mut().y = piece_top_y + up_offset;
         }
@@ -950,5 +937,11 @@ mod tests {
         } else {
             println!("tw: {:?}", tw);
         }
+    }
+
+    #[test]
+    pub fn test_collect() {
+        let cl = (0..66).collect::<Vec<i32>>();
+        println!("cl: {:?}", cl);
     }
 }

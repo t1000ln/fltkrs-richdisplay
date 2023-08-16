@@ -126,7 +126,7 @@ impl RichSnapshot {
                 }
 
                 for rich_data in data.range_mut(from_index..to_index) {
-                    rich_data.draw(offset_y);
+                    // rich_data.draw(offset_y);
                 }
             }
         });

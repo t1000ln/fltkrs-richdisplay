@@ -1,9 +1,11 @@
 use std::cell::{RefCell};
 use std::cmp::{max, min, Ordering};
-use std::ops::DerefMut;
+use std::collections::HashMap;
+use std::fmt::{Debug};
 use std::rc::{Rc, Weak};
 use fltk::draw::{descent, draw_image, draw_line, draw_rounded_rectf, draw_text2, measure, set_draw_color, set_font};
 use fltk::enums::{Align, Color, ColorDepth, Font};
+use idgenerator_thin::YitIdHelper;
 
 pub mod rich_text;
 pub mod rich_snapshot;
@@ -20,8 +22,22 @@ pub const IMAGE_PADDING_V: i32 = 2;
 /// 同一行内多个文字分片之间的水平间距。
 pub const PIECE_SPACING: i32 = 2;
 
-#[derive(Debug, Clone)]
+/// 鼠标事件发生的位置，相对于窗口的坐标系。
+#[derive(Debug)]
+pub struct EventPoint(i32, i32);
+
+/// 矩形范围的左上角x/y坐标和宽高。
+#[derive(Debug, Clone, Eq, Hash, PartialEq)]
 pub struct Coordinates(i32, i32, i32, i32);
+impl Coordinates {
+    pub fn new(x: i32, y: i32, w: i32, h: i32) -> Self {
+        Coordinates(x, y, w, h)
+    }
+
+    pub fn to_rect(&self) -> (i32, i32, i32, i32) {
+        (self.0, self.1, self.2, self.3)
+    }
+}
 
 /// 同一行内多个分片之间共享的信息。通过Rc<RefCell<ThroughLine>>进行链接。
 #[derive(Debug, Clone)]
@@ -289,7 +305,7 @@ pub trait LinedData {
     /// ```
     ///
     /// ```
-    fn draw(&mut self, offset_y: i32);
+    fn draw(&self, offset_y: i32, idx: usize, visible_lines_mapper: Rc<RefCell<HashMap<Coordinates, usize>>>);
 
     fn estimate(&mut self, blow_line: Rc<RefCell<LinePiece>>, max_width: i32) -> Rc<RefCell<LinePiece>>;
 
@@ -312,7 +328,6 @@ pub trait LinedData {
     /// ```
     fn truncate(&mut self, rtl: bool, length: Option<i32>) -> LinePiece;
 }
-
 #[derive(Clone, Debug, PartialEq)]
 pub enum DataType {
     Text,
@@ -322,61 +337,38 @@ pub enum DataType {
 /// 用户提供的数据单元。
 #[derive(Clone, Debug)]
 pub struct UserData {
-    text: String,
+    /// 数据ID，在初始化新实例时可随意赋值。当源自RichData时，为RichData的ID值。
+    pub id: i64,
+    pub text: String,
     pub font: Font,
     pub font_size: i32,
-    fg_color: Color,
-    bg_color: Option<Color>,
-    underline: bool,
-    clickable: bool,
-    expired: bool,
-    data_type: DataType,
-    image: Option<Vec<u8>>,
-    image_width: i32,
-    image_height: i32,
+    pub fg_color: Color,
+    pub bg_color: Option<Color>,
+    pub underline: bool,
+    pub clickable: bool,
+    pub expired: bool,
+    pub data_type: DataType,
+    pub image: Option<Vec<u8>>,
+    pub image_width: i32,
+    pub image_height: i32,
 }
 
-impl Into<RichData> for UserData {
-    fn into(self) -> RichData {
-        match self.data_type {
-            DataType::Text => {
-                RichData {
-                    text: self.text,
-                    font: self.font,
-                    font_size: self.font_size,
-                    fg_color: self.fg_color,
-                    bg_color: self.bg_color,
-                    underline: self.underline,
-                    clickable: self.clickable,
-                    expired: self.expired,
-                    line_height: 1,
-                    v_bounds: None,
-                    line_pieces: vec![],
-                    data_type: DataType::Text,
-                    image: None,
-                    image_width: 0,
-                    image_height: 0,
-                }
-            },
-            DataType::Image => {
-                RichData {
-                    text: self.text,
-                    font: self.font,
-                    font_size: self.font_size,
-                    fg_color: self.fg_color,
-                    bg_color: self.bg_color,
-                    underline: self.underline,
-                    clickable: self.clickable,
-                    expired: self.expired,
-                    line_height: 1,
-                    v_bounds: None,
-                    line_pieces: Vec::with_capacity(0),
-                    data_type: DataType::Image,
-                    image: self.image,
-                    image_width: self.image_width,
-                    image_height: self.image_height,
-                }
-            },
+impl From<&RichData> for UserData {
+    fn from(data: &RichData) -> Self {
+        Self {
+            id: data.id,
+            text: data.text.clone(),
+            font: data.font,
+            font_size: data.font_size,
+            fg_color: data.fg_color,
+            bg_color: data.bg_color.clone(),
+            underline: data.underline,
+            clickable: data.clickable,
+            expired: data.expired,
+            data_type: data.data_type.clone(),
+            image: data.image.clone(),
+            image_width: data.image_width,
+            image_height: data.image_height,
         }
     }
 }
@@ -384,6 +376,7 @@ impl Into<RichData> for UserData {
 impl UserData {
     pub fn new_text(text: String) -> Self {
         Self {
+            id: 0,
             text,
             font: Font::Helvetica,
             font_size: 14,
@@ -401,6 +394,7 @@ impl UserData {
 
     pub fn new_image(image: Vec<u8>, width: i32, height: i32) -> Self {
         Self {
+            id: 0,
             text: String::new(),
             font: Font::Helvetica,
             font_size: 14,
@@ -463,14 +457,20 @@ pub fn calc_v_center_offset(line_height: i32, font_height: i32) -> (i32, i32) {
     (up, down)
 }
 
+// pub fn mouse_enter(x: i32, y: i32, area: &Coordinates) -> bool {
+//     x >= area.0 && x <= area.2 && y <= area.1 && y >= area.3
+// }
+
 /// 绘制信息单元。
 #[derive(Debug)]
-pub(crate) struct RichData {
-    text: String,
+pub struct RichData {
+    /// 数据ID。
+    pub id: i64,
+    pub text: String,
     pub font: Font,
     pub font_size: i32,
-    fg_color: Color,
-    bg_color: Option<Color>,
+    pub fg_color: Color,
+    pub bg_color: Option<Color>,
     underline: bool,
     clickable: bool,
     expired: bool,
@@ -484,6 +484,53 @@ pub(crate) struct RichData {
     image: Option<Vec<u8>>,
     image_width: i32,
     image_height: i32,
+}
+
+impl From<UserData> for RichData {
+    fn from(data: UserData) -> Self {
+        match data.data_type {
+            DataType::Text => {
+                RichData {
+                    id: YitIdHelper::next_id(),
+                    text: data.text,
+                    font: data.font,
+                    font_size: data.font_size,
+                    fg_color: data.fg_color,
+                    bg_color: data.bg_color,
+                    underline: data.underline,
+                    clickable: data.clickable,
+                    expired: data.expired,
+                    line_height: 1,
+                    v_bounds: None,
+                    line_pieces: vec![],
+                    data_type: DataType::Text,
+                    image: None,
+                    image_width: 0,
+                    image_height: 0,
+                }
+            },
+            DataType::Image => {
+                RichData {
+                    id: YitIdHelper::next_id(),
+                    text: data.text,
+                    font: data.font,
+                    font_size: data.font_size,
+                    fg_color: data.fg_color,
+                    bg_color: data.bg_color,
+                    underline: data.underline,
+                    clickable: data.clickable,
+                    expired: data.expired,
+                    line_height: 1,
+                    v_bounds: None,
+                    line_pieces: Vec::with_capacity(0),
+                    data_type: DataType::Image,
+                    image: data.image,
+                    image_width: data.image_width,
+                    image_height: data.image_height,
+                }
+            }
+        }
+    }
 }
 
 impl RichData {
@@ -506,7 +553,7 @@ impl RichData {
     /// ```
     pub fn wrap_text_for_estimate(&mut self, text: &str, last_piece: Rc<RefCell<LinePiece>>, max_width: i32, measure_width: i32, font_height: i32) -> Rc<RefCell<LinePiece>> {
         let original = last_piece.clone();
-        let mut last_piece = last_piece.borrow().clone();
+        let last_piece = last_piece.borrow().clone();
         let tw = Rc::new(RefCell::new(0));
         let text_len = text.chars().count();
         if let Ok(stop_pos) = (0..text_len).collect::<Vec<usize>>().binary_search_by({
@@ -631,7 +678,7 @@ impl LinedData for RichData {
         }
     }
 
-    fn draw(&mut self, offset_y: i32) {
+    fn draw(&self, offset_y: i32, idx: usize, visible_lines_mapper: Rc<RefCell<HashMap<Coordinates, usize>>>) {
         match self.data_type {
             DataType::Text => {
                 let bg_offset = 1;
@@ -645,6 +692,11 @@ impl LinedData for RichData {
                 for piece in self.line_pieces.iter() {
                     let piece = &*piece.borrow();
                     let y = piece.y - offset_y;
+                    if self.clickable() {
+                        let map = &mut *visible_lines_mapper.borrow_mut();
+                        map.insert(Coordinates::new(piece.x, y, piece.w, piece.h), idx);
+                    }
+
                     if let Some(bg_color) = &self.bg_color {
                         // 绘制背景色
                         set_draw_color(*bg_color);
@@ -663,8 +715,13 @@ impl LinedData for RichData {
                 }
             },
             DataType::Image => {
-                if let Some(piece) = self.line_pieces.last_mut() {
+                if let Some(piece) = self.line_pieces.last() {
                     let piece = &*piece.borrow();
+                    if self.clickable() {
+                        let map = &mut *visible_lines_mapper.borrow_mut();
+                        map.insert(Coordinates::new(piece.x, piece.y - offset_y, piece.w, piece.h), idx);
+                    }
+
                     if let Some(img) = &self.image {
                         if let Err(e) = draw_image(img.as_slice(), piece.x, piece.y - offset_y, piece.w, piece.h, ColorDepth::Rgb8) {
                             eprintln!("draw image error: {:?}", e);
@@ -676,7 +733,7 @@ impl LinedData for RichData {
     }
 
     /// 试算当前内容绘制后所占高度信息。
-    /// 试算逻辑考虑了窗口宽度自动换行的情形。
+    /// 试算功能自动处理文本超宽时截断换行的逻辑。
     ///
     /// # Arguments
     ///
@@ -875,6 +932,62 @@ impl LinedData for RichData {
 
     fn truncate(&mut self, rtl: bool, length: Option<i32>) -> LinePiece {
         todo!()
+    }
+}
+
+
+#[derive(Debug)]
+pub struct RichDataOptions {
+    pub id: i64,
+    pub clickable: Option<bool>,
+    pub underline: Option<bool>,
+    pub expired: Option<bool>,
+    pub text: Option<String>,
+    pub fg_color: Option<Color>,
+    pub bg_color: Option<Color>,
+}
+
+impl RichDataOptions {
+    pub fn new(id: i64) -> RichDataOptions {
+        RichDataOptions {
+            id,
+            clickable: None,
+            underline: None,
+            expired: None,
+            text: None,
+            fg_color: None,
+            bg_color: None,
+        }
+    }
+
+    pub fn clickable(mut self, clickable: bool) -> RichDataOptions {
+        self.clickable = Some(clickable);
+        self
+    }
+
+    pub fn underline(mut self, underline: bool) -> RichDataOptions {
+        self.underline = Some(underline);
+        self
+    }
+
+    pub fn expired(mut self, expired: bool) -> RichDataOptions {
+        self.expired = Some(expired);
+        self
+    }
+
+    pub fn text(mut self, text: String) -> RichDataOptions {
+        self.text = Some(text);
+        self
+    }
+
+    pub fn fg_color(mut self, fg_color: Color) -> RichDataOptions {
+        self.fg_color = Some(fg_color);
+        self
+    }
+
+    pub fn bg_color(mut self, bg_color: Color) -> RichDataOptions {
+        self.bg_color = Some(bg_color);
+        self
     }
 }
 

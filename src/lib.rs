@@ -78,7 +78,6 @@ impl ThroughLine {
     /// ```
     pub fn set_max_h(&mut self, max_h: i32) -> &mut Self {
         if max_h > self.max_h {
-            // todo: 需要重新计算所有的y
             self.max_h = max_h;
         }
         self
@@ -347,6 +346,7 @@ pub struct UserData {
     pub underline: bool,
     pub clickable: bool,
     pub expired: bool,
+    pub strike_through: bool,
     pub data_type: DataType,
     pub image: Option<Vec<u8>>,
     pub image_width: i32,
@@ -365,6 +365,7 @@ impl From<&RichData> for UserData {
             underline: data.underline,
             clickable: data.clickable,
             expired: data.expired,
+            strike_through: data.strike_through,
             data_type: data.data_type.clone(),
             image: data.image.clone(),
             image_width: data.image_width,
@@ -385,6 +386,7 @@ impl UserData {
             underline: false,
             clickable: false,
             expired: false,
+            strike_through: false,
             data_type: DataType::Text,
             image: None,
             image_width: 0,
@@ -403,6 +405,7 @@ impl UserData {
             underline: false,
             clickable: false,
             expired: false,
+            strike_through: false,
             data_type: DataType::Image,
             image: Some(image),
             image_width: width,
@@ -474,6 +477,7 @@ pub struct RichData {
     underline: bool,
     clickable: bool,
     expired: bool,
+    pub strike_through: bool,
     pub line_height: i32,
     /// 当前内容在面板垂直高度中的起始和截至y坐标，以及起始x坐标。
     v_bounds: Option<(i32, i32, i32)>,
@@ -500,6 +504,7 @@ impl From<UserData> for RichData {
                     underline: data.underline,
                     clickable: data.clickable,
                     expired: data.expired,
+                    strike_through: data.strike_through,
                     line_height: 1,
                     v_bounds: None,
                     line_pieces: vec![],
@@ -520,6 +525,7 @@ impl From<UserData> for RichData {
                     underline: data.underline,
                     clickable: data.clickable,
                     expired: data.expired,
+                    strike_through: data.strike_through,
                     line_height: 1,
                     v_bounds: None,
                     line_pieces: Vec::with_capacity(0),
@@ -712,6 +718,12 @@ impl LinedData for RichData {
 
                     // 绘制文本
                     draw_text2(piece.line.as_str(), piece.x, y + bg_offset, piece.w, piece.h, Align::Left);
+
+                    if self.strike_through {
+                        // 绘制删除线
+                        let line_y = y + ((piece.font_height as f32 / 2f32).floor() as i32);
+                        draw_line(piece.x, line_y, piece.x + piece.w - 4, line_y);
+                    }
                 }
             },
             DataType::Image => {
@@ -945,6 +957,7 @@ pub struct RichDataOptions {
     pub text: Option<String>,
     pub fg_color: Option<Color>,
     pub bg_color: Option<Color>,
+    pub strike_through: Option<bool>,
 }
 
 impl RichDataOptions {
@@ -957,6 +970,7 @@ impl RichDataOptions {
             text: None,
             fg_color: None,
             bg_color: None,
+            strike_through: None,
         }
     }
 
@@ -987,6 +1001,11 @@ impl RichDataOptions {
 
     pub fn bg_color(mut self, bg_color: Color) -> RichDataOptions {
         self.bg_color = Some(bg_color);
+        self
+    }
+
+    pub fn strike_through(mut self, strike_through: bool) -> RichDataOptions {
+        self.strike_through = Some(strike_through);
         self
     }
 }

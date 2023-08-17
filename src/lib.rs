@@ -8,7 +8,7 @@ use fltk::enums::{Align, Color, ColorDepth, Font};
 use idgenerator_thin::YitIdHelper;
 
 pub mod rich_text;
-pub mod rich_snapshot;
+pub mod rich_reviewer;
 
 /// 默认内容边界到窗口之间的空白距离。
 pub const PADDING: Padding = Padding { left: 5, top: 5, right: 5, bottom: 5 };
@@ -688,11 +688,6 @@ impl LinedData for RichData {
         match self.data_type {
             DataType::Text => {
                 let bg_offset = 1;
-                let mut bg_height_modifier = 0;
-                #[cfg(not(target_os = "windows"))]
-                {
-                    bg_height_modifier = 2;
-                }
 
                 set_font(self.font, self.font_size);
                 for piece in self.line_pieces.iter() {
@@ -706,7 +701,12 @@ impl LinedData for RichData {
                     if let Some(bg_color) = &self.bg_color {
                         // 绘制背景色
                         set_draw_color(*bg_color);
-                        draw_rounded_rectf(piece.x, y - piece.spacing + bg_height_modifier, piece.w, piece.font_height, 4);
+
+                        #[cfg(target_os = "linux")]
+                        draw_rounded_rectf(piece.x, y - piece.spacing + 2, piece.w, piece.font_height, 4);
+
+                        #[cfg(not(target_os = "linux"))]
+                        draw_rounded_rectf(piece.x, y - piece.spacing, piece.w, piece.font_height, 4);
                     }
 
                     set_draw_color(self.fg_color);

@@ -6,25 +6,32 @@ use std::rc::Rc;
 use std::sync::OnceLock;
 
 use fltk::draw::{draw_rect_fill};
-use fltk::enums::{Color, ColorDepth, Cursor, Event};
+use fltk::enums::{Color, ColorDepth, Cursor, Event, FrameType};
 use fltk::frame::Frame;
-use fltk::prelude::{ImageExt, WidgetBase, WidgetExt};
+use fltk::prelude::{GroupExt, ImageExt, WidgetBase, WidgetExt};
 use fltk::{app, draw, widget_extends};
+use fltk::app::MouseWheel;
+use fltk::group::Flex;
 use fltk::image::{RgbImage};
 use crate::{Coordinates, DataType, LinedData, LinePiece, PADDING, RichData, RichDataOptions, UserData};
 
 use idgenerator_thin::{IdGeneratorOptions, YitIdHelper};
+use crate::rich_reviewer::RichReviewer;
 
 static ID_GENERATOR_INIT: OnceLock<u8> = OnceLock::new();
+
+const MAIN_PANEL_FIX_HEIGHT: i32 = 200;
 
 pub struct RichText {
     panel: Frame,
     data_buffer: Rc<RefCell<VecDeque<RichData>>>,
     background_color: Rc<RefCell<Color>>,
     buffer_max_lines: usize,
-    notifier: Rc<RefCell<Option<tokio::sync::mpsc::Sender<UserData>>>>
+    notifier: Rc<RefCell<Option<tokio::sync::mpsc::Sender<UserData>>>>,
+    inner: Flex,
+    reviewer: RichReviewer
 }
-widget_extends!(RichText, Frame, panel);
+widget_extends!(RichText, Flex, inner);
 
 
 impl RichText {
@@ -37,7 +44,17 @@ impl RichText {
             0
         });
 
-        let mut panel = Frame::new(x, y, w, h, title);
+        let mut inner = Flex::new(x, y, w, h, title).column();
+        inner.set_pad(3);
+        inner.end();
+
+        let reviewer = RichReviewer::new(x, y, w, h - MAIN_PANEL_FIX_HEIGHT, None);
+        inner.add(&reviewer.scroller);
+
+        let mut panel = Frame::new(x, y + h - MAIN_PANEL_FIX_HEIGHT, w, MAIN_PANEL_FIX_HEIGHT, "滚动内容");
+        inner.add(&panel);
+        inner.fixed(&panel, MAIN_PANEL_FIX_HEIGHT);
+        inner.recalc();
 
         let buffer_max_lines = 100;
         let data_buffer = Rc::new(RefCell::new(VecDeque::<RichData>::with_capacity(buffer_max_lines + 1)));
@@ -50,13 +67,13 @@ impl RichText {
             let bg_rc = background_color.clone();
             let visible_lines_rc = visible_lines.clone();
             move |ctx| {
-                let window_width = ctx.width();
-                let window_height = ctx.height();
-                let mut offset_y = 0;
+                let (x, y, window_width, window_height) = (ctx.x(), ctx.y(), ctx.width(), ctx.height());
+                let mut offset_y = -y;
                 visible_lines_rc.borrow_mut().clear();
+                dbg!(y);
 
                 // 填充背景
-                draw_rect_fill(0, 0, window_width, window_height, *bg_rc.borrow());
+                draw_rect_fill(x, y, window_width, window_height, *bg_rc.borrow());
 
                 let data = data_buffer_rc.borrow();
 
@@ -64,11 +81,13 @@ impl RichText {
                 for (idx, rich_data) in data.iter().enumerate().rev() {
                     if let Some((_, bottom_y, _)) = rich_data.v_bounds {
                         if !set_offset_y && bottom_y > window_height {
-                            offset_y = bottom_y - window_height + PADDING.bottom;
+                            offset_y = bottom_y - window_height + PADDING.bottom - y;
                             set_offset_y = true;
+                            dbg!(offset_y, &rich_data.text);
                         }
 
-                        if bottom_y - offset_y < 0 {
+                        dbg!(bottom_y);
+                        if bottom_y < offset_y {
                             break;
                         }
                         rich_data.draw(offset_y, idx, visible_lines_rc.clone());
@@ -86,6 +105,8 @@ impl RichText {
             let last_window_size = Rc::new(RefCell::new((0, 0)));
             let visible_lines_rc = visible_lines.clone();
             let notifier_rc = notifier.clone();
+            let mut reviewer_rc = reviewer.clone();
+            let mut parent_container_rc = inner.clone();
             move |ctx, evt| {
                 match evt {
                     Event::Resize => {
@@ -138,14 +159,21 @@ impl RichText {
                             }
                         }
                     }
+                    Event::MouseWheel => {
+                        if app::event_dy() == MouseWheel::Down && !reviewer_rc.visible() {
+                            reviewer_rc.show();
+                            // parent_container_rc.insert(&reviewer_rc.scroller, 0);
+                            parent_container_rc.fixed(ctx, MAIN_PANEL_FIX_HEIGHT);
+                            parent_container_rc.recalc();
+                        }
+                    }
                     _ => {}
                 }
                 false
             }
         });
 
-
-        Self { panel, data_buffer, background_color, buffer_max_lines, notifier }
+        Self { panel, data_buffer, background_color, buffer_max_lines, notifier, inner, reviewer }
     }
 
     /// 向数据缓冲区中添加新的数据。新增数据时会计算其绘制所需信息，包括起始坐标和高度等。
@@ -186,7 +214,7 @@ impl RichText {
             self.data_buffer.borrow_mut().pop_front();
         }
 
-        self.panel.redraw();
+        self.inner.redraw();
     }
 
     pub fn set_background_color(&mut self, background_color: Color) {

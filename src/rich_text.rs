@@ -283,6 +283,9 @@ impl RichText {
                 if let Some(bg_color) = options.bg_color {
                     rd.bg_color = Some(bg_color);
                 }
+                if let Some(strike_through) = options.strike_through {
+                    rd.strike_through = strike_through;
+                }
                 self.panel.redraw();
             }
         }
@@ -302,13 +305,18 @@ impl RichText {
                 rd.set_clickable(false);
                 draw::set_cursor(Cursor::Default);
 
-                if rd.data_type == DataType::Image {
-                    if let Some(image) = rd.image.as_mut() {
-                        if let Ok(mut ni) = RgbImage::new(image.as_slice(), rd.image_width, rd.image_height, ColorDepth::Rgb8) {
-                            ni.inactive();
-                            image.clear();
-                            image.append(&mut ni.to_rgb_data());
+                match rd.data_type {
+                    DataType::Image => {
+                        if let Some(image) = rd.image.as_mut() {
+                            if let Ok(mut ni) = RgbImage::new(image.as_slice(), rd.image_width, rd.image_height, ColorDepth::Rgb8) {
+                                ni.inactive();
+                                image.clear();
+                                image.append(&mut ni.to_rgb_data());
+                            }
                         }
+                    }
+                    DataType::Text => {
+                        rd.strike_through = true;
                     }
                 }
 

@@ -465,7 +465,7 @@ pub fn calc_v_center_offset(line_height: i32, font_height: i32) -> (i32, i32) {
 // }
 
 /// 绘制信息单元。
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RichData {
     /// 数据ID。
     pub id: i64,

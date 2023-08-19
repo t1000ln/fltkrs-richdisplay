@@ -1,11 +1,13 @@
 //! 富文本查看器组件。
 
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
+use std::ops::Deref;
 use std::rc::Rc;
 use std::sync::OnceLock;
 
-use fltk::draw::{draw_rect_fill};
+use fltk::draw::{draw_rect_fill, Offscreen};
 use fltk::enums::{Color, ColorDepth, Cursor, Event, FrameType};
 use fltk::frame::Frame;
 use fltk::prelude::{GroupExt, ImageExt, WidgetBase, WidgetExt};
@@ -29,7 +31,9 @@ pub struct RichText {
     buffer_max_lines: usize,
     notifier: Rc<RefCell<Option<tokio::sync::mpsc::Sender<UserData>>>>,
     inner: Flex,
-    reviewer: RichReviewer
+    reviewer: RichReviewer,
+    panel_screen: Rc<RefCell<Offscreen>>,
+    visible_lines: Rc<RefCell<HashMap<Coordinates, usize>>>
 }
 widget_extends!(RichText, Flex, inner);
 
@@ -44,56 +48,37 @@ impl RichText {
             0
         });
 
+        let background_color = Rc::new(RefCell::new(Color::Black));
+
         let mut inner = Flex::new(x, y, w, h, title).column();
         inner.set_pad(3);
         inner.end();
 
-        let reviewer = RichReviewer::new(x, y, w, h - MAIN_PANEL_FIX_HEIGHT, None);
+        let mut reviewer = RichReviewer::new(x, y, w, h, None);
+        reviewer.set_background_color(Color::Black);
+        reviewer.hide();
         inner.add(&reviewer.scroller);
 
-        let mut panel = Frame::new(x, y + h - MAIN_PANEL_FIX_HEIGHT, w, MAIN_PANEL_FIX_HEIGHT, "滚动内容");
+        let mut panel = Frame::new(x, y, w, h, None);
         inner.add(&panel);
-        inner.fixed(&panel, MAIN_PANEL_FIX_HEIGHT);
-        inner.recalc();
+
+        let panel_screen = Rc::new(RefCell::new(Offscreen::new(w, h).unwrap()));
 
         let buffer_max_lines = 100;
         let data_buffer = Rc::new(RefCell::new(VecDeque::<RichData>::with_capacity(buffer_max_lines + 1)));
-        let background_color = Rc::new(RefCell::new(Color::Black));
+
         let visible_lines = Rc::new(RefCell::new(HashMap::<Coordinates, usize>::new()));
         let notifier: Rc<RefCell<Option<tokio::sync::mpsc::Sender<UserData>>>> = Rc::new(RefCell::new(None));
 
         panel.draw({
-            let data_buffer_rc = data_buffer.clone();
-            let bg_rc = background_color.clone();
-            let visible_lines_rc = visible_lines.clone();
+            // let data_buffer_rc = data_buffer.clone();
+            // let bg_rc = background_color.clone();
+            // let visible_lines_rc = visible_lines.clone();
+            let screen_rc = panel_screen.clone();
+            let mut parent_container_rc = inner.clone();
             move |ctx| {
                 let (x, y, window_width, window_height) = (ctx.x(), ctx.y(), ctx.width(), ctx.height());
-                let mut offset_y = -y;
-                visible_lines_rc.borrow_mut().clear();
-                dbg!(y);
-
-                // 填充背景
-                draw_rect_fill(x, y, window_width, window_height, *bg_rc.borrow());
-
-                let data = data_buffer_rc.borrow();
-
-                let mut set_offset_y = false;
-                for (idx, rich_data) in data.iter().enumerate().rev() {
-                    if let Some((_, bottom_y, _)) = rich_data.v_bounds {
-                        if !set_offset_y && bottom_y > window_height {
-                            offset_y = bottom_y - window_height + PADDING.bottom - y;
-                            set_offset_y = true;
-                            dbg!(offset_y, &rich_data.text);
-                        }
-
-                        dbg!(bottom_y);
-                        if bottom_y < offset_y {
-                            break;
-                        }
-                        rich_data.draw(offset_y, idx, visible_lines_rc.clone());
-                    }
-
-                }
+                screen_rc.borrow().copy(x, y, window_width, window_height, 0, parent_container_rc.height() - window_height);
             }
         });
 
@@ -105,6 +90,8 @@ impl RichText {
             let last_window_size = Rc::new(RefCell::new((0, 0)));
             let visible_lines_rc = visible_lines.clone();
             let notifier_rc = notifier.clone();
+            let screen_rc = panel_screen.clone();
+            let bg_rc = background_color.clone();
             let mut reviewer_rc = reviewer.clone();
             let mut parent_container_rc = inner.clone();
             move |ctx, evt| {
@@ -115,11 +102,21 @@ impl RichText {
                         let (last_width, last_height) = *last_window_size.borrow();
                         if last_width != current_width || last_height != current_height {
                             last_window_size.replace((current_width, current_height));
-                            let drawable_max_width = current_width - PADDING.left - PADDING.right;
-                            let mut last_piece = LinePiece::init_piece();
-                            for rich_data in buffer_rc.borrow_mut().iter_mut() {
-                                rich_data.line_pieces.clear();
-                                last_piece = rich_data.estimate(last_piece, drawable_max_width);
+
+                            if last_width != current_width {
+                                // 当窗口宽度发生变化时，需要重新计算数据分片坐标信息。
+                                let drawable_max_width = current_width - PADDING.left - PADDING.right;
+                                let mut last_piece = LinePiece::init_piece();
+                                for rich_data in buffer_rc.borrow_mut().iter_mut() {
+                                    rich_data.line_pieces.clear();
+                                    last_piece = rich_data.estimate(last_piece, drawable_max_width);
+                                }
+                            }
+
+                            // 替换新的离线绘制板
+                            if let Some(offs) = Offscreen::new(current_width, parent_container_rc.height()) {
+                                screen_rc.replace(offs);
+                                Self::draw_offline(screen_rc.clone(), &ctx, visible_lines_rc.clone(), bg_rc.borrow().clone(), buffer_rc.clone());
                             }
                         }
                     }
@@ -160,11 +157,23 @@ impl RichText {
                         }
                     }
                     Event::MouseWheel => {
-                        if app::event_dy() == MouseWheel::Down && !reviewer_rc.visible() {
+                        if app::event_dy() == MouseWheel::Down && !reviewer_rc.visible() && !buffer_rc.borrow().is_empty() {
+                            let snapshot = Vec::from(buffer_rc.borrow().clone());
+                            reviewer_rc.set_data(snapshot);
+
                             reviewer_rc.show();
-                            // parent_container_rc.insert(&reviewer_rc.scroller, 0);
                             parent_container_rc.fixed(ctx, MAIN_PANEL_FIX_HEIGHT);
                             parent_container_rc.recalc();
+                            let (rw, rh) = (reviewer_rc.width(), reviewer_rc.height());
+                            reviewer_rc.renew_screen(rw, rh);
+                            reviewer_rc.redraw();
+
+
+                            // 替换新的离线绘制板
+                            if let Some(offs) = Offscreen::new(parent_container_rc.width(), parent_container_rc.height()) {
+                                screen_rc.replace(offs);
+                                Self::draw_offline(screen_rc.clone(), &ctx, visible_lines_rc.clone(), bg_rc.borrow().clone(), buffer_rc.clone());
+                            }
                         }
                     }
                     _ => {}
@@ -173,7 +182,7 @@ impl RichText {
             }
         });
 
-        Self { panel, data_buffer, background_color, buffer_max_lines, notifier, inner, reviewer }
+        Self { panel, data_buffer, background_color, buffer_max_lines, notifier, inner, reviewer, panel_screen, visible_lines }
     }
 
     /// 向数据缓冲区中添加新的数据。新增数据时会计算其绘制所需信息，包括起始坐标和高度等。
@@ -214,11 +223,43 @@ impl RichText {
             self.data_buffer.borrow_mut().pop_front();
         }
 
-        self.inner.redraw();
+        Self::draw_offline(self.panel_screen.clone(), &self.panel, self.visible_lines.clone(), self.background_color.borrow().clone(), self.data_buffer.clone());
+
+        self.panel.redraw();
+    }
+
+    pub fn draw_offline(offscreen: Rc<RefCell<Offscreen>>, panel: &Frame, visible_lines: Rc<RefCell<HashMap<Coordinates, usize>>>, bg_color: Color, data_buffer: Rc<RefCell<VecDeque<RichData>>>) {
+        offscreen.borrow().begin();
+        let (x, y, window_width, window_height) = (panel.x(), panel.y(), panel.width(), panel.height());
+        let mut offset_y = -y;
+        visible_lines.borrow_mut().clear();
+
+        // 填充背景
+        draw_rect_fill(x, y, window_width, window_height, bg_color);
+
+        let data = data_buffer.borrow();
+
+        let mut set_offset_y = false;
+        for (idx, rich_data) in data.iter().enumerate().rev() {
+            if let Some((_, bottom_y, _)) = rich_data.v_bounds {
+                if !set_offset_y && bottom_y > window_height {
+                    offset_y = bottom_y - window_height + PADDING.bottom - y;
+                    set_offset_y = true;
+                }
+
+                if bottom_y < offset_y {
+                    break;
+                }
+                rich_data.draw(offset_y, idx, visible_lines.clone());
+            }
+
+        }
+        offscreen.borrow().end();
     }
 
     pub fn set_background_color(&mut self, background_color: Color) {
         self.background_color.replace(background_color);
+        self.reviewer.set_background_color(background_color);
     }
 
     /// 设置缓冲区最大数据条数，并非行数。

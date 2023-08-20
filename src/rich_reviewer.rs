@@ -46,6 +46,18 @@ impl RichReviewer {
         let notifier: Rc<RefCell<Option<tokio::sync::mpsc::Sender<UserData>>>> = Rc::new(RefCell::new(None));
         let reviewer_screen = Rc::new(RefCell::new(Offscreen::new(w, h).unwrap()));
 
+        /*
+        利用tokio::spawn的协程特性，在app主线程中异步执行滚动操作。
+        在非主线程的其他独立线程中，是无法执行滚动操作的。
+         */
+        let (sender, mut receiver) = tokio::sync::mpsc::channel::<i32>(10);
+        let mut scroll_rc = scroller.clone();
+        tokio::spawn(async move {
+            while let Some(y) = receiver.recv().await {
+                scroll_rc.scroll_to(0, y);
+            }
+        });
+
         panel.draw({
             let data_buffer_rc = data_buffer.clone();
             let scroll_rc = scroller.clone();
@@ -74,10 +86,12 @@ impl RichReviewer {
                     Event::Resize => {
                         // 缩放窗口后重新计算分片绘制信息。
                         let (current_width, current_height) = (scroller.width(), scroller.height());
+                        let last_panel_height = panel_rc.height();
                         let (last_width, last_height) = *last_window_size.borrow();
                         if last_width != current_width || last_height != current_height {
                             last_window_size.replace((current_width, current_height));
 
+                            let mut new_panel_height = current_height;
                             if last_width != current_width {
                                 // 当窗口宽度发生变化时，需要重新计算数据分片坐标信息。
                                 let drawable_max_width = current_width - PADDING.left - PADDING.right;
@@ -87,24 +101,31 @@ impl RichReviewer {
                                     last_piece = rich_data.estimate(last_piece, drawable_max_width);
                                 }
 
-                                let mut panel_height = current_height;
-                                if let Some(last) = buffer_rc.borrow().last() {
-                                    if let Some((_, bottom_y, _)) = last.v_bounds {
-                                        let max_height = bottom_y + PADDING.bottom + PADDING.top;
-                                        if max_height > panel_height {
-                                            panel_height = max_height;
-                                        }
-                                        panel_rc.resize(scroller.x(), scroller.y(), current_width, panel_height);
-                                    }
-                                }
+                                new_panel_height = Self::calc_panel_height(buffer_rc.clone(), current_height);
+                                panel_rc.resize(scroller.x(), scroller.y(), current_width, new_panel_height);
                             }
 
                             // 按照新的窗口大小重新生成绘图板
                             if let Some(offs) = Offscreen::new(current_width, current_height) {
                                 screen_rc.replace(offs);
-                                // Self::draw_offline(screen_rc.clone(), scroller, buffer_rc.clone(), bg_color_rc.borrow().clone(), visible_lines_rc.clone());
                             } else {
                                 println!("Failed to create Offscreen.");
+                            }
+
+                            let old_scroll_y = scroller.yposition();
+                            println!("更新绘图板，old_scroll_y {old_scroll_y}");
+                            if old_scroll_y > 0 && last_height > 0 {
+                                let pos_percent = old_scroll_y as f64 / (last_panel_height - last_height) as f64;
+                                println!("pos_percent: {}", pos_percent);
+                                let new_scroll_y = ((new_panel_height - current_height) as f64 * pos_percent).round() as i32;
+                                println!("new scroll y: {}", new_scroll_y);
+                                // scroller.scroll_to(0, new_scroll_y);
+                                let sender = sender.clone();
+                                tokio::spawn(async move {
+                                    if let Err(e) = sender.send(new_scroll_y).await {
+                                        println!("发送滚动信号失败！{:?}", e);
+                                    }
+                                });
                             }
                         }
                     }
@@ -159,37 +180,70 @@ impl RichReviewer {
     }
 
     pub fn set_data(&mut self, data: Vec<RichData>) {
-        let (w, mut h) = (self.panel.width(), self.scroller.height());
-
-        // 设置新的窗口尺寸
-        if let Some(last) = data.last() {
-            if let Some((_, bottom_y, _)) = last.v_bounds {
-                let max_height = bottom_y + PADDING.bottom + PADDING.top;
-                if max_height > h {
-                    h = max_height;
-                }
-                self.panel.resize(self.panel.x(), self.panel.y(), w, h);
-            }
-        }
-
         // 更新回看数据
         self.data_buffer.replace(data);
 
-        // 设置新的离线绘图板
-        // let new_screen = Offscreen::new(w, h).unwrap();
-        // self.reviewer_screen.replace(new_screen);
+        let (scroller_width, scroller_height) = (self.panel.width(), self.scroller.height());
 
-        // 离线绘图
-        // Self::draw_offline(self.reviewer_screen.clone(), &self.scroller, self.data_buffer.clone(), self.background_color.borrow().clone(), self.visible_lines.clone());
+        // 设置新的窗口尺寸
+        let panel_height = Self::calc_panel_height(self.data_buffer.clone(), scroller_height);
+        self.panel.resize(self.panel.x(), self.panel.y(), scroller_width, panel_height);
+    }
+
+    /// 计算数据内容所需的面板高度。
+    ///
+    /// # Arguments
+    ///
+    /// * `buffer`:
+    /// * `scroller_height`:
+    ///
+    /// returns: i32
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
+    pub fn calc_panel_height(buffer_rc: Rc<RefCell<Vec<RichData>>>, scroller_height: i32) -> i32 {
+        let buffer = &*buffer_rc.borrow();
+        let (mut top, mut bottom) = (0, 0);
+        if let Some(first) = buffer.first() {
+            if let Some((top_y, _, _)) = first.v_bounds {
+                top = top_y;
+            }
+        }
+        if let Some(last) = buffer.last() {
+            if let Some((_, bottom_y, _)) = last.v_bounds {
+                bottom = bottom_y;
+            }
+        }
+        let mut content_height = bottom - top + PADDING.bottom + PADDING.top;
+        if content_height > scroller_height {
+            content_height
+        } else {
+            scroller_height
+        }
     }
 
     pub fn draw_offline(screen: Rc<RefCell<Offscreen>>, scroller: &Scroll, data_buffer: Rc<RefCell<Vec<RichData>>>, background_color: Color, visible_lines: Rc<RefCell<HashMap<Coordinates, usize>>>) {
         screen.borrow().begin();
         // 滚动条滚动的高度在0到(panel.height - scroll.height)之间。
-        let base_y = scroller.yposition();
+        let mut base_y = scroller.yposition();
+        if base_y < 0 {
+            base_y = 0;
+        }
+
         let window_width = scroller.width();
         let window_height = scroller.height();
-        let (mut top_y, bottom_y) = (base_y, base_y + window_height);
+        let (mut top_y, mut bottom_y) = (base_y, base_y + window_height);
+
+        // 处理数据相对位移
+        if let Some(first) = data_buffer.borrow().first() {
+            if let Some((y, _, _)) = first.v_bounds {
+                top_y += y;
+                bottom_y += y;
+            }
+        }
 
         let offset_y = top_y - PADDING.top;
 
@@ -221,16 +275,31 @@ impl RichReviewer {
         }
 
         for (idx, rich_data) in data[from_index..to_index].iter().enumerate() {
-        // for (idx, rich_data) in data.iter().enumerate() {
             rich_data.draw(offset_y, idx, visible_lines.clone());
         }
 
         screen.borrow().end();
     }
 
-    pub fn renew_screen(&mut self, w: i32, h: i32) {
+    /// 根据当前回顾`scroller`窗口大小创建对应的离线绘图板，并设置滚动条到最底部。
+    ///
+    /// # Arguments
+    ///
+    /// * `w`:
+    /// * `h`:
+    ///
+    /// returns: ()
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
+    pub fn renew_offscreen(&mut self, w: i32, h: i32) {
         if let Some(offs) = Offscreen::new(w, h) {
             self.reviewer_screen.replace(offs);
+            // 滚动到最底部
+            self.scroller.scroll_to(0, self.panel.height() - self.scroller.height());
         }
     }
 }

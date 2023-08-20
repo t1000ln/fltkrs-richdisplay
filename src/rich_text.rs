@@ -158,15 +158,16 @@ impl RichText {
                     }
                     Event::MouseWheel => {
                         if app::event_dy() == MouseWheel::Down && !reviewer_rc.visible() && !buffer_rc.borrow().is_empty() {
-                            let snapshot = Vec::from(buffer_rc.borrow().clone());
-                            reviewer_rc.set_data(snapshot);
-
                             reviewer_rc.show();
                             parent_container_rc.fixed(ctx, MAIN_PANEL_FIX_HEIGHT);
                             parent_container_rc.recalc();
+                            // reviewer_rc.redraw();
+
+                            let snapshot = Vec::from(buffer_rc.borrow().clone());
+                            reviewer_rc.set_data(snapshot);
+
                             let (rw, rh) = (reviewer_rc.width(), reviewer_rc.height());
-                            reviewer_rc.renew_screen(rw, rh);
-                            reviewer_rc.redraw();
+                            reviewer_rc.renew_offscreen(rw, rh);
 
 
                             // 替换新的离线绘制板

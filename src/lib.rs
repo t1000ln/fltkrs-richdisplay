@@ -929,10 +929,16 @@ impl LinedData for RichData {
             lp.borrow_mut().y = piece_top_y + up_offset;
         }
 
+        let mut top_y = top_y;
+        if let Some(first_piece) = self.line_pieces.first() {
+            let fp = &*first_piece.borrow();
+            top_y = fp.top_y;
+        }
         let mut bottom_y = top_y;
-        if let Some(last_piece) = self.line_pieces.last_mut() {
-            let last_piece = &*last_piece.borrow();
-            bottom_y = last_piece.y + last_piece.through_line.borrow().max_h;
+        if let Some(last_piece) = self.line_pieces.last() {
+            let lp = &*last_piece.borrow();
+            // bottom_y = lp.y + lp.through_line.borrow().max_h;
+            bottom_y = lp.top_y + lp.through_line.borrow().max_h;
         }
         self.set_v_bounds(top_y, bottom_y, start_x);
         ret

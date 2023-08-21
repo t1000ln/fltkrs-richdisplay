@@ -4,12 +4,14 @@ use std::cell::RefCell;
 use std::collections::{HashMap};
 use std::ops::Deref;
 use std::rc::Rc;
+use std::time::Duration;
 use fltk::draw::{draw_rect_fill, Offscreen};
 use fltk::enums::{Align, Color, Cursor, Event};
 use fltk::frame::Frame;
 use fltk::group::{Scroll, ScrollType};
 use fltk::prelude::{GroupExt, WidgetBase, WidgetExt};
 use fltk::{app, draw, widget_extends};
+use log::debug;
 use crate::{Coordinates, LinedData, LinePiece, PADDING, RichData, UserData};
 
 #[derive(Clone, Debug)]
@@ -22,6 +24,12 @@ pub struct RichReviewer {
     visible_lines: Rc<RefCell<HashMap<Coordinates, usize>>>,
 }
 widget_extends!(RichReviewer, Scroll, scroller);
+
+enum DelayedAction {
+    Scroll(i32),
+    Resize(i32, i32, i32, i32),
+    Redraw,
+}
 
 impl RichReviewer {
     pub const SCROLL_BAR_WIDTH: i32 = 10;
@@ -50,11 +58,20 @@ impl RichReviewer {
         利用tokio::spawn的协程特性，在app主线程中异步执行滚动操作。
         在非主线程的其他独立线程中，是无法执行滚动操作的。
          */
-        let (sender, mut receiver) = tokio::sync::mpsc::channel::<i32>(10);
+        let (sender, mut receiver) = tokio::sync::mpsc::channel::<DelayedAction>(10);
         let mut scroll_rc = scroller.clone();
+        let mut panel_rc = panel.clone();
         tokio::spawn(async move {
-            while let Some(y) = receiver.recv().await {
-                scroll_rc.scroll_to(0, y);
+            while let Some(action) = receiver.recv().await {
+                match action {
+                    DelayedAction::Scroll(y) => {
+                        debug!("接收到滚动信号:{y}");
+                        scroll_rc.scroll_to(0, y);
+                        scroll_rc.redraw();
+                    },
+                    DelayedAction::Resize(x, y, w, h) => {panel_rc.resize(x, y, w, h)}
+                    DelayedAction::Redraw => {scroll_rc.redraw();}
+                }
             }
         });
 
@@ -65,6 +82,9 @@ impl RichReviewer {
             let bg_rc = background_color.clone();
             let screen_rc = reviewer_screen.clone();
             move |ctx| {
+                /*
+                先离线绘制内容面板，再根据面板大小复制所需区域内容。这样做是为了避免在线绘制时，会出现绘制内容超出面板边界的问题。
+                 */
                 Self::draw_offline(screen_rc.clone(), &scroll_rc, data_buffer_rc.clone(), bg_rc.borrow().clone(), visible_lines_rc.clone());
 
                 // let (x, y, window_width, window_height) = (ctx.x(), ctx.y(), ctx.width(), scroll_rc.height());
@@ -102,6 +122,7 @@ impl RichReviewer {
                                 }
 
                                 new_panel_height = Self::calc_panel_height(buffer_rc.clone(), current_height);
+                                // 同步缩放回顾内容面板
                                 panel_rc.resize(scroller.x(), scroller.y(), current_width, new_panel_height);
                             }
 
@@ -112,17 +133,18 @@ impl RichReviewer {
                                 println!("Failed to create Offscreen.");
                             }
 
+                            /*
+                            该事件执行完毕时会自动重绘并滚动到缩放前的滚动偏移量，但这不合理！
+                            需要获取缩放前的滚动偏移量比例，并按照同比在缩放完成重绘后强制滚动到对应比例处。
+                            这个操作需要延迟到自动滚动完毕后再执行，此处通过异步信号来达成预期效果。
+                             */
                             let old_scroll_y = scroller.yposition();
-                            println!("更新绘图板，old_scroll_y {old_scroll_y}");
                             if old_scroll_y > 0 && last_height > 0 {
                                 let pos_percent = old_scroll_y as f64 / (last_panel_height - last_height) as f64;
-                                println!("pos_percent: {}", pos_percent);
                                 let new_scroll_y = ((new_panel_height - current_height) as f64 * pos_percent).round() as i32;
-                                println!("new scroll y: {}", new_scroll_y);
-                                // scroller.scroll_to(0, new_scroll_y);
                                 let sender = sender.clone();
                                 tokio::spawn(async move {
-                                    if let Err(e) = sender.send(new_scroll_y).await {
+                                    if let Err(e) = sender.send(DelayedAction::Scroll(new_scroll_y)).await {
                                         println!("发送滚动信号失败！{:?}", e);
                                     }
                                 });
@@ -275,6 +297,7 @@ impl RichReviewer {
         }
 
         for (idx, rich_data) in data[from_index..to_index].iter().enumerate() {
+            // todo: 待处理页面滚动后鼠标事件检测区域未更新的问题。
             rich_data.draw(offset_y, idx, visible_lines.clone());
         }
 

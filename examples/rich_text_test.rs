@@ -2,9 +2,10 @@
 
 use std::time::Duration;
 use fltk::{app, window};
+use fltk::button::Button;
 use fltk::enums::{Color, Font};
 use fltk::image::SharedImage;
-use fltk::prelude::{GroupExt, ImageExt, WidgetExt, WindowExt};
+use fltk::prelude::{GroupExt, ImageExt, WidgetBase, WidgetExt, WindowExt};
 use fltkrs_richdisplay::rich_text::{GlobalMessage, RichText};
 use fltkrs_richdisplay::{DataType, RichDataOptions, UserData};
 
@@ -17,15 +18,27 @@ async fn main() {
     // }
     let app = app::App::default();
     let mut win = window::Window::default()
-        .with_size(800, 400)
+        .with_size(800, 500)
         .with_label("draw by notice")
         .center_screen();
     win.make_resizable(true);
 
-    let mut rich_text = RichText::new(0, 0, 800, 400, None).size_of_parent();
+    let mut btn = Button::new(200, 0, 100, 50, "scroll");
+
+    let mut rich_text = RichText::new(0, 100, 800, 400, None);
     let (sender, mut receiver) = tokio::sync::mpsc::channel::<UserData>(100);
     rich_text.set_notifier(sender);
     rich_text.set_buffer_max_lines(50);
+
+    btn.set_callback({
+        let mut rich_text_rc = rich_text.clone();
+        move |_| {
+            rich_text_rc.scroll_to_bottom();
+        }
+    });
+
+    win.end();
+    win.show();
 
     let (global_sender, global_receiver) = app::channel::<GlobalMessage>();
 
@@ -90,8 +103,6 @@ async fn main() {
     });
 
 
-    win.end();
-    win.show();
 
     while app.wait() {
         if let Some(msg) = global_receiver.recv() {

@@ -4,15 +4,17 @@ use std::cell::RefCell;
 use std::collections::{HashMap};
 use std::ops::Deref;
 use std::rc::Rc;
+use std::thread;
 use std::time::Duration;
 use fltk::draw::{draw_rect_fill, Offscreen};
 use fltk::enums::{Align, Color, Cursor, Event};
 use fltk::frame::Frame;
 use fltk::group::{Scroll, ScrollType};
-use fltk::prelude::{GroupExt, WidgetBase, WidgetExt};
+use fltk::prelude::{GroupExt, ValuatorExt, WidgetBase, WidgetExt};
 use fltk::{app, draw, widget_extends};
-use log::debug;
+use log::{debug, error};
 use crate::{Coordinates, LinedData, LinePiece, PADDING, RichData, UserData};
+use crate::rich_text::{MAIN_PANEL_FIX_HEIGHT, PANEL_PADDING};
 
 #[derive(Clone, Debug)]
 pub struct RichReviewer {
@@ -27,7 +29,7 @@ widget_extends!(RichReviewer, Scroll, scroller);
 
 enum DelayedAction {
     Scroll(i32),
-    Resize(i32, i32, i32, i32),
+    Resize(i32, i32, i32, i32, i32),
     Redraw,
 }
 
@@ -67,9 +69,14 @@ impl RichReviewer {
                     DelayedAction::Scroll(y) => {
                         debug!("接收到滚动信号:{y}");
                         scroll_rc.scroll_to(0, y);
-                        scroll_rc.redraw();
+                        debug!("滚动到:{y}");
+                        // scroll_rc.redraw();
                     },
-                    DelayedAction::Resize(x, y, w, h) => {panel_rc.resize(x, y, w, h)}
+                    DelayedAction::Resize(x, y, w, h, sy) => {
+                        panel_rc.resize(x, y, w, h);
+                        scroll_rc.scroll_to(0, sy);
+                        debug!("滚动到:{sy}");
+                    }
                     DelayedAction::Redraw => {scroll_rc.redraw();}
                 }
             }
@@ -87,7 +94,6 @@ impl RichReviewer {
                  */
                 Self::draw_offline(screen_rc.clone(), &scroll_rc, data_buffer_rc.clone(), bg_rc.borrow().clone(), visible_lines_rc.clone());
 
-                // let (x, y, window_width, window_height) = (ctx.x(), ctx.y(), ctx.width(), scroll_rc.height());
                 let (x, y, window_width, window_height) = (scroll_rc.x(), scroll_rc.y(), scroll_rc.width(), scroll_rc.height());
                 screen_rc.borrow().copy(x, y, window_width, window_height, 0, 0);
             }
@@ -95,8 +101,7 @@ impl RichReviewer {
 
         scroller.handle({
             let buffer_rc = data_buffer.clone();
-            let bg_color_rc = background_color.clone();
-            let last_window_size = Rc::new(RefCell::new((0, 0)));
+            let last_window_size = Rc::new(RefCell::new((w, h - MAIN_PANEL_FIX_HEIGHT - PANEL_PADDING)));
             let visible_lines_rc = visible_lines.clone();
             let notifier_rc = notifier.clone();
             let screen_rc = reviewer_screen.clone();
@@ -108,6 +113,7 @@ impl RichReviewer {
                         let (current_width, current_height) = (scroller.width(), scroller.height());
                         let last_panel_height = panel_rc.height();
                         let (last_width, last_height) = *last_window_size.borrow();
+                        debug!("缩放窗口 last_width:{last_width}, last_height:{last_height}, current_width:{current_width}, current_height:{current_height}");
                         if last_width != current_width || last_height != current_height {
                             last_window_size.replace((current_width, current_height));
 
@@ -122,6 +128,7 @@ impl RichReviewer {
                                 }
 
                                 new_panel_height = Self::calc_panel_height(buffer_rc.clone(), current_height);
+
                                 // 同步缩放回顾内容面板
                                 panel_rc.resize(scroller.x(), scroller.y(), current_width, new_panel_height);
                             }
@@ -130,7 +137,7 @@ impl RichReviewer {
                             if let Some(offs) = Offscreen::new(current_width, current_height) {
                                 screen_rc.replace(offs);
                             } else {
-                                println!("Failed to create Offscreen.");
+                                error!("创建离线绘图板失败！");
                             }
 
                             /*
@@ -139,13 +146,16 @@ impl RichReviewer {
                             这个操作需要延迟到自动滚动完毕后再执行，此处通过异步信号来达成预期效果。
                              */
                             let old_scroll_y = scroller.yposition();
-                            if old_scroll_y > 0 && last_height > 0 {
+                            if old_scroll_y > 0 {
                                 let pos_percent = old_scroll_y as f64 / (last_panel_height - last_height) as f64;
                                 let new_scroll_y = ((new_panel_height - current_height) as f64 * pos_percent).round() as i32;
+                                debug!("new_panel_height: {:?}, current_height:{}, last_panel_height:{}, last_height:{}", new_panel_height, current_height, last_panel_height, last_height);
                                 let sender = sender.clone();
                                 tokio::spawn(async move {
+
+                                    debug!("发送滚动信号:{new_scroll_y}");
                                     if let Err(e) = sender.send(DelayedAction::Scroll(new_scroll_y)).await {
-                                        println!("发送滚动信号失败！{:?}", e);
+                                        error!("发送滚动信号失败！{:?}", e);
                                     }
                                 });
                             }
@@ -178,7 +188,7 @@ impl RichReviewer {
                                         let notifier = notifier.clone();
                                         tokio::spawn(async move {
                                             if let Err(e) = notifier.send(sd).await {
-                                                eprintln!("send error: {:?}", e);
+                                                error!("发送用户操作失败: {:?}", e);
                                             }
                                         });
                                     }
@@ -251,6 +261,8 @@ impl RichReviewer {
         screen.borrow().begin();
         // 滚动条滚动的高度在0到(panel.height - scroll.height)之间。
         let mut base_y = scroller.yposition();
+        debug!("滚动y轴：{base_y}");
+
         if base_y < 0 {
             base_y = 0;
         }
@@ -325,4 +337,6 @@ impl RichReviewer {
             self.scroller.scroll_to(0, self.panel.height() - self.scroller.height());
         }
     }
+
+
 }

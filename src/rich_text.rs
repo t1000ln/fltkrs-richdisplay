@@ -1,6 +1,5 @@
 //! 富文本查看器组件。
 
-use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::ops::Deref;
@@ -8,7 +7,7 @@ use std::rc::Rc;
 use std::sync::OnceLock;
 
 use fltk::draw::{draw_rect_fill, Offscreen};
-use fltk::enums::{Color, ColorDepth, Cursor, Event, FrameType};
+use fltk::enums::{Color, ColorDepth, Cursor, Event};
 use fltk::frame::Frame;
 use fltk::prelude::{GroupExt, ImageExt, WidgetBase, WidgetExt};
 use fltk::{app, draw, widget_extends};
@@ -22,8 +21,10 @@ use crate::rich_reviewer::RichReviewer;
 
 static ID_GENERATOR_INIT: OnceLock<u8> = OnceLock::new();
 
-const MAIN_PANEL_FIX_HEIGHT: i32 = 200;
+pub const MAIN_PANEL_FIX_HEIGHT: i32 = 200;
+pub const PANEL_PADDING: i32 = 3;
 
+#[derive(Debug, Clone)]
 pub struct RichText {
     panel: Frame,
     data_buffer: Rc<RefCell<VecDeque<RichData>>>,
@@ -51,7 +52,7 @@ impl RichText {
         let background_color = Rc::new(RefCell::new(Color::Black));
 
         let mut inner = Flex::new(x, y, w, h, title).column();
-        inner.set_pad(3);
+        inner.set_pad(PANEL_PADDING);
         inner.end();
 
         let mut reviewer = RichReviewer::new(x, y, w, h, None);
@@ -393,6 +394,10 @@ impl RichText {
                 self.panel.redraw();
             }
         }
+    }
+
+    pub fn scroll_to_bottom(&mut self) {
+        self.reviewer.scroller.scroll_to(0, self.reviewer.panel.height() - self.reviewer.scroller.height());
     }
 }
 

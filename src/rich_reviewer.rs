@@ -2,13 +2,12 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap};
-use std::ops::Deref;
 use std::rc::Rc;
 use fltk::draw::{draw_rect_fill, Offscreen};
 use fltk::enums::{Align, Color, Cursor, Event};
 use fltk::frame::Frame;
 use fltk::group::{Scroll, ScrollType};
-use fltk::prelude::{GroupExt, ValuatorExt, WidgetBase, WidgetExt};
+use fltk::prelude::{GroupExt, WidgetBase, WidgetExt};
 use fltk::{app, draw, widget_extends};
 use log::{debug, error};
 use crate::{Coordinates, LinedData, LinePiece, PADDING, RichData, UserData};
@@ -21,7 +20,6 @@ pub struct RichReviewer {
     data_buffer: Rc<RefCell<Vec<RichData>>>,
     background_color: Rc<Cell<Color>>,
     reviewer_screen: Rc<RefCell<Offscreen>>,
-    visible_lines: Rc<RefCell<HashMap<Coordinates, usize>>>,
 }
 widget_extends!(RichReviewer, Scroll, scroller);
 
@@ -29,13 +27,6 @@ pub struct LocalEvent;
 impl LocalEvent {
     pub const SCROLL_TO: i32 = 100;
     pub const RESIZE: i32 = 101;
-}
-
-
-enum DelayedAction {
-    Scroll(i32),
-    Resize(i32, i32, i32, i32, i32),
-    Redraw,
 }
 
 impl RichReviewer {
@@ -63,40 +54,13 @@ impl RichReviewer {
         let scroll_panel_to_y_after_resize = Rc::new(Cell::new(0));
         let resize_panel_after_resize = Rc::new(Cell::new((0, 0, 0, 0)));
 
-        /*
-        利用tokio::spawn的协程特性，在app主线程中异步执行滚动操作。
-        在非主线程的其他独立线程中，是无法执行滚动操作的。
-         */
-        // let (sender, mut receiver) = tokio::sync::mpsc::channel::<DelayedAction>(10);
-        // let mut scroll_rc = scroller.clone();
-        // let mut panel_rc = panel.clone();
-        // tokio::spawn(async move {
-        //     while let Some(action) = receiver.recv().await {
-        //         match action {
-        //             DelayedAction::Scroll(y) => {
-        //                 debug!("接收到滚动信号:{y}");
-        //                 scroll_rc.scroll_to(0, y);
-        //                 debug!("滚动到:{y}");
-        //                 // scroll_rc.redraw();
-        //             },
-        //             DelayedAction::Resize(x, y, w, h, sy) => {
-        //                 panel_rc.resize(x, y, w, h);
-        //                 scroll_rc.scroll_to(0, sy);
-        //                 debug!("滚动到:{sy}");
-        //             }
-        //             DelayedAction::Redraw => {scroll_rc.redraw();}
-        //         }
-        //     }
-        //     debug!("滚动线程结束");
-        // });
-
         panel.draw({
             let data_buffer_rc = data_buffer.clone();
             let scroll_rc = scroller.clone();
             let visible_lines_rc = visible_lines.clone();
             let bg_rc = background_color.clone();
             let screen_rc = reviewer_screen.clone();
-            move |ctx| {
+            move |_| {
                 /*
                 先离线绘制内容面板，再根据面板大小复制所需区域内容。这样做是为了避免在线绘制时，会出现绘制内容超出面板边界的问题。
                  */
@@ -107,6 +71,11 @@ impl RichReviewer {
             }
         });
 
+        /*
+        处理自定义事件，主要解决缩放窗口时需要重新计算面板大小并滚动到恰当位置的逻辑。
+        之所以需要自定义事件，是因为外部容器缩放时，内部面板并不会自动缩放，而是需要计算新的尺寸后再通过自定义事件来实现内部面板的缩放处理。
+        如果在外部容器的缩放事件处理过程中直接进行内部面板的缩放会出现外观不同步的问题，因此需要通过发出自定义事件来在app的全局事件处理循环中来逐个处理，才能避免该问题。
+         */
         panel.handle({
             let new_scroll_y_rc = scroll_panel_to_y_after_resize.clone();
             let mut scroller_rc = scroller.clone();
@@ -114,13 +83,11 @@ impl RichReviewer {
             move |ctx, evt| {
                 if evt == LocalEvent::RESIZE.into() {
                     let (x, y, w, h) = resize_panel_after_resize_rc.get();
-                    debug!("收到RESIZE事件，x:{x}, y:{y}, w:{w}, h:{h}");
+                    // 强制滚动到最顶部，避免scroll.yposition()缓存，在窗口不需要滚动条时仍出现滚动条的问题。
                     scroller_rc.scroll_to(0, 0);
                     ctx.resize(x, y, w, h);
-                    // scroller_rc.redraw();
                     true
                 } else if evt == LocalEvent::SCROLL_TO.into() {
-                    debug!("接收到请求滚动事件:{}", new_scroll_y_rc.get());
                     scroller_rc.scroll_to(0, new_scroll_y_rc.get());
                     true
                 } else {
@@ -132,10 +99,9 @@ impl RichReviewer {
         scroller.handle({
             let buffer_rc = data_buffer.clone();
             let last_window_size = Rc::new(Cell::new((w, h - MAIN_PANEL_FIX_HEIGHT - PANEL_PADDING)));
-            let visible_lines_rc = visible_lines.clone();
             let notifier_rc = notifier.clone();
             let screen_rc = reviewer_screen.clone();
-            let mut panel_rc = panel.clone();
+            let panel_rc = panel.clone();
             let new_scroll_y_rc = scroll_panel_to_y_after_resize.clone();
             let resize_panel_after_resize_rc = resize_panel_after_resize.clone();
             move |scroller, evt| {
@@ -145,7 +111,6 @@ impl RichReviewer {
                         let (current_width, current_height) = (scroller.width(), scroller.height());
                         let last_panel_height = panel_rc.height();
                         let (last_width, last_height) = last_window_size.get();
-                        debug!("缩放窗口 last_width:{last_width}, last_height:{last_height}, current_width:{current_width}, current_height:{current_height}");
                         if last_width != current_width || last_height != current_height {
                             last_window_size.replace((current_width, current_height));
 
@@ -164,7 +129,6 @@ impl RichReviewer {
                                 new_panel_height = Self::calc_panel_height(buffer_rc.clone(), current_height);
 
                                 // 同步缩放回顾内容面板
-                                // panel_rc.resize(scroller.x(), scroller.y(), current_width, new_panel_height);
                                 resize_panel_after_resize_rc.replace((scroller.x(), scroller.y(), current_width, new_panel_height));
                                 if let Err(e) = app::handle_main(LocalEvent::RESIZE) {
                                     error!("发送缩放信号失败:{e}");
@@ -191,21 +155,13 @@ impl RichReviewer {
                                 if let Err(e) = app::handle_main(LocalEvent::SCROLL_TO) {
                                     error!("发送滚动信号失败:{e}");
                                 }
-                                // let sender = sender.clone();
-                                // tokio::spawn(async move {
-                                //
-                                //     debug!("发送滚动信号:{new_scroll_y}");
-                                //     if let Err(e) = sender.send(DelayedAction::Scroll(new_scroll_y)).await {
-                                //         error!("发送滚动信号失败！{:?}", e);
-                                //     }
-                                // });
                             }
                         }
                     }
                     Event::Move => {
                         // 检测鼠标进入可互动区域，改变鼠标样式
                         let mut enter_piece = false;
-                        for area in visible_lines_rc.borrow().keys() {
+                        for area in visible_lines.borrow().keys() {
                             let (x, y, w, h) = area.to_rect();
                             if app::event_inside(x, y, w, h) {
                                 enter_piece = true;
@@ -220,7 +176,7 @@ impl RichReviewer {
                     }
                     Event::Released => {
                         // 检测鼠标点击可互动区域，执行用户自定义操作
-                        for (area, idx) in visible_lines_rc.borrow().iter() {
+                        for (area, idx) in visible_lines.borrow().iter() {
                             let (x, y, w, h) = area.to_rect();
                             if app::event_inside(x, y, w, h) {
                                 if let Some(rd) = buffer_rc.borrow().get(*idx) {
@@ -245,7 +201,7 @@ impl RichReviewer {
         });
 
 
-        Self { scroller, panel, data_buffer, background_color, reviewer_screen, visible_lines }
+        Self { scroller, panel, data_buffer, background_color, reviewer_screen }
     }
 
     pub fn set_background_color(&self, color: Color) {
@@ -290,7 +246,7 @@ impl RichReviewer {
                 bottom = bottom_y;
             }
         }
-        let mut content_height = bottom - top + PADDING.bottom + PADDING.top;
+        let content_height = bottom - top + PADDING.bottom + PADDING.top;
         if content_height > scroller_height {
             content_height
         } else {
@@ -302,7 +258,6 @@ impl RichReviewer {
         screen.borrow().begin();
         // 滚动条滚动的高度在0到(panel.height - scroll.height)之间。
         let mut base_y = scroller.yposition();
-        debug!("滚动y轴：{base_y}");
 
         if base_y < 0 {
             base_y = 0;
@@ -325,7 +280,7 @@ impl RichReviewer {
         // 填充背景色
         draw_rect_fill(0, 0, window_width, window_height, background_color);
 
-        let mut data = &*data_buffer.borrow();
+        let data = &*data_buffer.borrow();
 
         /*
         先试算出可显示的行，再真正绘制可显示的行。
@@ -378,6 +333,4 @@ impl RichReviewer {
             self.scroller.scroll_to(0, self.panel.height() - self.scroller.height());
         }
     }
-
-
 }

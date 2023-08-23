@@ -2,7 +2,6 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
-use std::ops::Deref;
 use std::rc::Rc;
 use std::sync::OnceLock;
 
@@ -73,10 +72,8 @@ impl RichText {
 
         panel.draw({
             let screen_rc = panel_screen.clone();
-            let mut parent_container_rc = inner.clone();
             move |ctx| {
                 let (x, y, window_width, window_height) = (ctx.x(), ctx.y(), ctx.width(), ctx.height());
-                // screen_rc.borrow().copy(x, y, window_width, window_height, 0, parent_container_rc.height() - window_height);
                 screen_rc.borrow().copy(x, y, window_width, window_height, 0, 0);
             }
         });
@@ -230,7 +227,7 @@ impl RichText {
 
     pub fn draw_offline(offscreen: Rc<RefCell<Offscreen>>, panel: &Frame, visible_lines: Rc<RefCell<HashMap<Coordinates, usize>>>, bg_color: Color, data_buffer: Rc<RefCell<VecDeque<RichData>>>) {
         offscreen.borrow().begin();
-        let (x, y, window_width, window_height) = (panel.x(), panel.y(), panel.width(), panel.height());
+        let (window_width, window_height) = (panel.width(), panel.height());
         let mut offset_y = 0;
         visible_lines.borrow_mut().clear();
 

@@ -1,11 +1,9 @@
 //! 内容源自rich_text的快照，可滚动的浏览的组件。
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap};
 use std::ops::Deref;
 use std::rc::Rc;
-use std::thread;
-use std::time::Duration;
 use fltk::draw::{draw_rect_fill, Offscreen};
 use fltk::enums::{Align, Color, Cursor, Event};
 use fltk::frame::Frame;
@@ -21,11 +19,18 @@ pub struct RichReviewer {
     pub(crate) scroller: Scroll,
     pub(crate) panel: Frame,
     data_buffer: Rc<RefCell<Vec<RichData>>>,
-    background_color: Rc<RefCell<Color>>,
+    background_color: Rc<Cell<Color>>,
     reviewer_screen: Rc<RefCell<Offscreen>>,
     visible_lines: Rc<RefCell<HashMap<Coordinates, usize>>>,
 }
 widget_extends!(RichReviewer, Scroll, scroller);
+
+pub struct LocalEvent;
+impl LocalEvent {
+    pub const SCROLL_TO: i32 = 100;
+    pub const RESIZE: i32 = 101;
+}
+
 
 enum DelayedAction {
     Scroll(i32),
@@ -51,36 +56,39 @@ impl RichReviewer {
         // scroller.set_clip_children(true);
 
         let data_buffer: Rc<RefCell<Vec<RichData>>> = Rc::new(RefCell::new(vec![]));
-        let background_color = Rc::new(RefCell::new(Color::Black));
+        let background_color = Rc::new(Cell::new(Color::Black));
         let visible_lines = Rc::new(RefCell::new(HashMap::<Coordinates, usize>::new()));
         let notifier: Rc<RefCell<Option<tokio::sync::mpsc::Sender<UserData>>>> = Rc::new(RefCell::new(None));
         let reviewer_screen = Rc::new(RefCell::new(Offscreen::new(w, h).unwrap()));
+        let scroll_panel_to_y_after_resize = Rc::new(Cell::new(0));
+        let resize_panel_after_resize = Rc::new(Cell::new((0, 0, 0, 0)));
 
         /*
         利用tokio::spawn的协程特性，在app主线程中异步执行滚动操作。
         在非主线程的其他独立线程中，是无法执行滚动操作的。
          */
-        let (sender, mut receiver) = tokio::sync::mpsc::channel::<DelayedAction>(10);
-        let mut scroll_rc = scroller.clone();
-        let mut panel_rc = panel.clone();
-        tokio::spawn(async move {
-            while let Some(action) = receiver.recv().await {
-                match action {
-                    DelayedAction::Scroll(y) => {
-                        debug!("接收到滚动信号:{y}");
-                        scroll_rc.scroll_to(0, y);
-                        debug!("滚动到:{y}");
-                        // scroll_rc.redraw();
-                    },
-                    DelayedAction::Resize(x, y, w, h, sy) => {
-                        panel_rc.resize(x, y, w, h);
-                        scroll_rc.scroll_to(0, sy);
-                        debug!("滚动到:{sy}");
-                    }
-                    DelayedAction::Redraw => {scroll_rc.redraw();}
-                }
-            }
-        });
+        // let (sender, mut receiver) = tokio::sync::mpsc::channel::<DelayedAction>(10);
+        // let mut scroll_rc = scroller.clone();
+        // let mut panel_rc = panel.clone();
+        // tokio::spawn(async move {
+        //     while let Some(action) = receiver.recv().await {
+        //         match action {
+        //             DelayedAction::Scroll(y) => {
+        //                 debug!("接收到滚动信号:{y}");
+        //                 scroll_rc.scroll_to(0, y);
+        //                 debug!("滚动到:{y}");
+        //                 // scroll_rc.redraw();
+        //             },
+        //             DelayedAction::Resize(x, y, w, h, sy) => {
+        //                 panel_rc.resize(x, y, w, h);
+        //                 scroll_rc.scroll_to(0, sy);
+        //                 debug!("滚动到:{sy}");
+        //             }
+        //             DelayedAction::Redraw => {scroll_rc.redraw();}
+        //         }
+        //     }
+        //     debug!("滚动线程结束");
+        // });
 
         panel.draw({
             let data_buffer_rc = data_buffer.clone();
@@ -92,30 +100,56 @@ impl RichReviewer {
                 /*
                 先离线绘制内容面板，再根据面板大小复制所需区域内容。这样做是为了避免在线绘制时，会出现绘制内容超出面板边界的问题。
                  */
-                Self::draw_offline(screen_rc.clone(), &scroll_rc, data_buffer_rc.clone(), bg_rc.borrow().clone(), visible_lines_rc.clone());
+                Self::draw_offline(screen_rc.clone(), &scroll_rc, data_buffer_rc.clone(), bg_rc.get(), visible_lines_rc.clone());
 
                 let (x, y, window_width, window_height) = (scroll_rc.x(), scroll_rc.y(), scroll_rc.width(), scroll_rc.height());
                 screen_rc.borrow().copy(x, y, window_width, window_height, 0, 0);
             }
         });
 
+        panel.handle({
+            let new_scroll_y_rc = scroll_panel_to_y_after_resize.clone();
+            let mut scroller_rc = scroller.clone();
+            let resize_panel_after_resize_rc = resize_panel_after_resize.clone();
+            move |ctx, evt| {
+                if evt == LocalEvent::RESIZE.into() {
+                    let (x, y, w, h) = resize_panel_after_resize_rc.get();
+                    debug!("收到RESIZE事件，x:{x}, y:{y}, w:{w}, h:{h}");
+                    scroller_rc.scroll_to(0, 0);
+                    ctx.resize(x, y, w, h);
+                    // scroller_rc.redraw();
+                    true
+                } else if evt == LocalEvent::SCROLL_TO.into() {
+                    debug!("接收到请求滚动事件:{}", new_scroll_y_rc.get());
+                    scroller_rc.scroll_to(0, new_scroll_y_rc.get());
+                    true
+                } else {
+                    false
+                }
+            }
+        });
+
         scroller.handle({
             let buffer_rc = data_buffer.clone();
-            let last_window_size = Rc::new(RefCell::new((w, h - MAIN_PANEL_FIX_HEIGHT - PANEL_PADDING)));
+            let last_window_size = Rc::new(Cell::new((w, h - MAIN_PANEL_FIX_HEIGHT - PANEL_PADDING)));
             let visible_lines_rc = visible_lines.clone();
             let notifier_rc = notifier.clone();
             let screen_rc = reviewer_screen.clone();
             let mut panel_rc = panel.clone();
+            let new_scroll_y_rc = scroll_panel_to_y_after_resize.clone();
+            let resize_panel_after_resize_rc = resize_panel_after_resize.clone();
             move |scroller, evt| {
                 match evt {
                     Event::Resize => {
                         // 缩放窗口后重新计算分片绘制信息。
                         let (current_width, current_height) = (scroller.width(), scroller.height());
                         let last_panel_height = panel_rc.height();
-                        let (last_width, last_height) = *last_window_size.borrow();
+                        let (last_width, last_height) = last_window_size.get();
                         debug!("缩放窗口 last_width:{last_width}, last_height:{last_height}, current_width:{current_width}, current_height:{current_height}");
                         if last_width != current_width || last_height != current_height {
                             last_window_size.replace((current_width, current_height));
+
+                            let old_scroll_y = scroller.yposition();
 
                             let mut new_panel_height = current_height;
                             if last_width != current_width {
@@ -130,7 +164,11 @@ impl RichReviewer {
                                 new_panel_height = Self::calc_panel_height(buffer_rc.clone(), current_height);
 
                                 // 同步缩放回顾内容面板
-                                panel_rc.resize(scroller.x(), scroller.y(), current_width, new_panel_height);
+                                // panel_rc.resize(scroller.x(), scroller.y(), current_width, new_panel_height);
+                                resize_panel_after_resize_rc.replace((scroller.x(), scroller.y(), current_width, new_panel_height));
+                                if let Err(e) = app::handle_main(LocalEvent::RESIZE) {
+                                    error!("发送缩放信号失败:{e}");
+                                }
                             }
 
                             // 按照新的窗口大小重新生成绘图板
@@ -145,19 +183,22 @@ impl RichReviewer {
                             需要获取缩放前的滚动偏移量比例，并按照同比在缩放完成重绘后强制滚动到对应比例处。
                             这个操作需要延迟到自动滚动完毕后再执行，此处通过异步信号来达成预期效果。
                              */
-                            let old_scroll_y = scroller.yposition();
                             if old_scroll_y > 0 {
                                 let pos_percent = old_scroll_y as f64 / (last_panel_height - last_height) as f64;
                                 let new_scroll_y = ((new_panel_height - current_height) as f64 * pos_percent).round() as i32;
+                                new_scroll_y_rc.replace(new_scroll_y);
                                 debug!("new_panel_height: {:?}, current_height:{}, last_panel_height:{}, last_height:{}", new_panel_height, current_height, last_panel_height, last_height);
-                                let sender = sender.clone();
-                                tokio::spawn(async move {
-
-                                    debug!("发送滚动信号:{new_scroll_y}");
-                                    if let Err(e) = sender.send(DelayedAction::Scroll(new_scroll_y)).await {
-                                        error!("发送滚动信号失败！{:?}", e);
-                                    }
-                                });
+                                if let Err(e) = app::handle_main(LocalEvent::SCROLL_TO) {
+                                    error!("发送滚动信号失败:{e}");
+                                }
+                                // let sender = sender.clone();
+                                // tokio::spawn(async move {
+                                //
+                                //     debug!("发送滚动信号:{new_scroll_y}");
+                                //     if let Err(e) = sender.send(DelayedAction::Scroll(new_scroll_y)).await {
+                                //         error!("发送滚动信号失败！{:?}", e);
+                                //     }
+                                // });
                             }
                         }
                     }

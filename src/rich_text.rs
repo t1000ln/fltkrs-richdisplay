@@ -1,6 +1,6 @@
 //! 富文本查看器组件。
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
 use std::ops::Deref;
 use std::rc::Rc;
@@ -28,7 +28,7 @@ pub const PANEL_PADDING: i32 = 3;
 pub struct RichText {
     panel: Frame,
     data_buffer: Rc<RefCell<VecDeque<RichData>>>,
-    background_color: Rc<RefCell<Color>>,
+    background_color: Rc<Cell<Color>>,
     buffer_max_lines: usize,
     notifier: Rc<RefCell<Option<tokio::sync::mpsc::Sender<UserData>>>>,
     inner: Flex,
@@ -49,7 +49,7 @@ impl RichText {
             0
         });
 
-        let background_color = Rc::new(RefCell::new(Color::Black));
+        let background_color = Rc::new(Cell::new(Color::Black));
 
         let mut inner = Flex::new(x, y, w, h, title).column();
         inner.set_pad(PANEL_PADDING);
@@ -72,14 +72,12 @@ impl RichText {
         let notifier: Rc<RefCell<Option<tokio::sync::mpsc::Sender<UserData>>>> = Rc::new(RefCell::new(None));
 
         panel.draw({
-            // let data_buffer_rc = data_buffer.clone();
-            // let bg_rc = background_color.clone();
-            // let visible_lines_rc = visible_lines.clone();
             let screen_rc = panel_screen.clone();
             let mut parent_container_rc = inner.clone();
             move |ctx| {
                 let (x, y, window_width, window_height) = (ctx.x(), ctx.y(), ctx.width(), ctx.height());
-                screen_rc.borrow().copy(x, y, window_width, window_height, 0, parent_container_rc.height() - window_height);
+                // screen_rc.borrow().copy(x, y, window_width, window_height, 0, parent_container_rc.height() - window_height);
+                screen_rc.borrow().copy(x, y, window_width, window_height, 0, 0);
             }
         });
 
@@ -88,7 +86,7 @@ impl RichText {
          */
         panel.handle({
             let buffer_rc = data_buffer.clone();
-            let last_window_size = Rc::new(RefCell::new((0, 0)));
+            let last_window_size = Rc::new(Cell::new((0, 0)));
             let visible_lines_rc = visible_lines.clone();
             let notifier_rc = notifier.clone();
             let screen_rc = panel_screen.clone();
@@ -100,7 +98,7 @@ impl RichText {
                     Event::Resize => {
                         // 缩放窗口后重新计算分片绘制信息。
                         let (current_width, current_height) = (ctx.width(), ctx.height());
-                        let (last_width, last_height) = *last_window_size.borrow();
+                        let (last_width, last_height) = last_window_size.get();
                         if last_width != current_width || last_height != current_height {
                             last_window_size.replace((current_width, current_height));
 
@@ -115,9 +113,9 @@ impl RichText {
                             }
 
                             // 替换新的离线绘制板
-                            if let Some(offs) = Offscreen::new(current_width, parent_container_rc.height()) {
+                            if let Some(offs) = Offscreen::new(current_width, current_height) {
                                 screen_rc.replace(offs);
-                                Self::draw_offline(screen_rc.clone(), &ctx, visible_lines_rc.clone(), bg_rc.borrow().clone(), buffer_rc.clone());
+                                Self::draw_offline(screen_rc.clone(), &ctx, visible_lines_rc.clone(), bg_rc.get(), buffer_rc.clone());
                             }
                         }
                     }
@@ -172,9 +170,9 @@ impl RichText {
 
 
                             // 替换新的离线绘制板
-                            if let Some(offs) = Offscreen::new(parent_container_rc.width(), parent_container_rc.height()) {
+                            if let Some(offs) = Offscreen::new(parent_container_rc.width(), MAIN_PANEL_FIX_HEIGHT) {
                                 screen_rc.replace(offs);
-                                Self::draw_offline(screen_rc.clone(), &ctx, visible_lines_rc.clone(), bg_rc.borrow().clone(), buffer_rc.clone());
+                                Self::draw_offline(screen_rc.clone(), &ctx, visible_lines_rc.clone(), bg_rc.get(), buffer_rc.clone());
                             }
                         }
                     }
@@ -225,7 +223,7 @@ impl RichText {
             self.data_buffer.borrow_mut().pop_front();
         }
 
-        Self::draw_offline(self.panel_screen.clone(), &self.panel, self.visible_lines.clone(), self.background_color.borrow().clone(), self.data_buffer.clone());
+        Self::draw_offline(self.panel_screen.clone(), &self.panel, self.visible_lines.clone(), self.background_color.get(), self.data_buffer.clone());
 
         self.panel.redraw();
     }
@@ -233,11 +231,11 @@ impl RichText {
     pub fn draw_offline(offscreen: Rc<RefCell<Offscreen>>, panel: &Frame, visible_lines: Rc<RefCell<HashMap<Coordinates, usize>>>, bg_color: Color, data_buffer: Rc<RefCell<VecDeque<RichData>>>) {
         offscreen.borrow().begin();
         let (x, y, window_width, window_height) = (panel.x(), panel.y(), panel.width(), panel.height());
-        let mut offset_y = -y;
+        let mut offset_y = 0;
         visible_lines.borrow_mut().clear();
 
         // 填充背景
-        draw_rect_fill(x, y, window_width, window_height, bg_color);
+        draw_rect_fill(0, 0, window_width, window_height, bg_color);
 
         let data = data_buffer.borrow();
 
@@ -245,7 +243,7 @@ impl RichText {
         for (idx, rich_data) in data.iter().enumerate().rev() {
             if let Some((_, bottom_y, _)) = rich_data.v_bounds {
                 if !set_offset_y && bottom_y > window_height {
-                    offset_y = bottom_y - window_height + PADDING.bottom - y;
+                    offset_y = bottom_y - window_height + PADDING.bottom;
                     set_offset_y = true;
                 }
 

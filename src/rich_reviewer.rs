@@ -3,14 +3,14 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap};
 use std::rc::Rc;
-use fltk::draw::{draw_rect_fill, Offscreen};
+use fltk::draw::{draw_rect_fill, draw_rounded_rectf, draw_xyline, LineStyle, Offscreen, set_draw_color, set_line_style};
 use fltk::enums::{Align, Color, Cursor, Event};
 use fltk::frame::Frame;
 use fltk::group::{Scroll, ScrollType};
 use fltk::prelude::{GroupExt, WidgetBase, WidgetExt};
 use fltk::{app, draw, widget_extends};
-use log::{debug, error};
-use crate::{Coordinates, LinedData, LinePiece, PADDING, RichData, UserData};
+use log::{error};
+use crate::{Coordinates, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, UserData};
 use crate::rich_text::{MAIN_PANEL_FIX_HEIGHT, PANEL_PADDING};
 
 #[derive(Clone, Debug)]
@@ -20,14 +20,11 @@ pub struct RichReviewer {
     data_buffer: Rc<RefCell<Vec<RichData>>>,
     background_color: Rc<Cell<Color>>,
     reviewer_screen: Rc<RefCell<Offscreen>>,
+    notifier: Rc<RefCell<Option<tokio::sync::mpsc::Sender<UserData>>>>,
+    pub resize_panel_after_resize: Rc<Cell<(i32, i32, i32, i32)>>,
+    pub scroll_panel_to_y_after_resize: Rc<Cell<i32>>,
 }
 widget_extends!(RichReviewer, Scroll, scroller);
-
-pub struct LocalEvent;
-impl LocalEvent {
-    pub const SCROLL_TO: i32 = 100;
-    pub const RESIZE: i32 = 101;
-}
 
 impl RichReviewer {
     pub const SCROLL_BAR_WIDTH: i32 = 10;
@@ -43,8 +40,6 @@ impl RichReviewer {
 
         let mut panel = Frame::new(x, y, w, h, None);
         scroller.add_resizable(&panel);
-        // scroller.resizable(&panel);
-        // scroller.set_clip_children(true);
 
         let data_buffer: Rc<RefCell<Vec<RichData>>> = Rc::new(RefCell::new(vec![]));
         let background_color = Rc::new(Cell::new(Color::Black));
@@ -104,6 +99,7 @@ impl RichReviewer {
             let panel_rc = panel.clone();
             let new_scroll_y_rc = scroll_panel_to_y_after_resize.clone();
             let resize_panel_after_resize_rc = resize_panel_after_resize.clone();
+            let visible_lines_rc = visible_lines.clone();
             move |scroller, evt| {
                 match evt {
                     Event::Resize => {
@@ -151,7 +147,6 @@ impl RichReviewer {
                                 let pos_percent = old_scroll_y as f64 / (last_panel_height - last_height) as f64;
                                 let new_scroll_y = ((new_panel_height - current_height) as f64 * pos_percent).round() as i32;
                                 new_scroll_y_rc.replace(new_scroll_y);
-                                debug!("new_panel_height: {:?}, current_height:{}, last_panel_height:{}, last_height:{}", new_panel_height, current_height, last_panel_height, last_height);
                                 if let Err(e) = app::handle_main(LocalEvent::SCROLL_TO) {
                                     error!("发送滚动信号失败:{e}");
                                 }
@@ -160,23 +155,18 @@ impl RichReviewer {
                     }
                     Event::Move => {
                         // 检测鼠标进入可互动区域，改变鼠标样式
-                        let mut enter_piece = false;
-                        for area in visible_lines.borrow().keys() {
-                            let (x, y, w, h) = area.to_rect();
-                            if app::event_inside(x, y, w, h) {
-                                enter_piece = true;
-                                break;
-                            }
-                        }
-                        if enter_piece {
+                        if mouse_enter(visible_lines_rc.clone()) {
                             draw::set_cursor(Cursor::Hand);
                         } else {
                             draw::set_cursor(Cursor::Default);
                         }
                     }
+                    Event::Leave => {
+                        draw::set_cursor(Cursor::Default);
+                    }
                     Event::Released => {
                         // 检测鼠标点击可互动区域，执行用户自定义操作
-                        for (area, idx) in visible_lines.borrow().iter() {
+                        for (area, idx) in visible_lines_rc.borrow().iter() {
                             let (x, y, w, h) = area.to_rect();
                             if app::event_inside(x, y, w, h) {
                                 if let Some(rd) = buffer_rc.borrow().get(*idx) {
@@ -200,8 +190,7 @@ impl RichReviewer {
             }
         });
 
-
-        Self { scroller, panel, data_buffer, background_color, reviewer_screen }
+        Self { scroller, panel, data_buffer, background_color, reviewer_screen, scroll_panel_to_y_after_resize, resize_panel_after_resize, notifier }
     }
 
     pub fn set_background_color(&self, color: Color) {
@@ -217,6 +206,45 @@ impl RichReviewer {
         // 设置新的窗口尺寸
         let panel_height = Self::calc_panel_height(self.data_buffer.clone(), scroller_height);
         self.panel.resize(self.panel.x(), self.panel.y(), scroller_width, panel_height);
+        // self.resize_panel_after_resize.replace((self.scroller.x(), self.scroller.y(), scroller_width, panel_height));
+        // if let Err(e) = app::handle_main(LocalEvent::RESIZE) {
+        //     error!("发送缩放信号失败:{e}");
+        // }
+
+
+
+        // 滚动到最底部
+        // self.scroller.scroll_to(0, panel_height - scroller_height);
+        // self.scroll_panel_to_y_after_resize.replace(panel_height - scroller_height);
+        // if let Err(e) = app::handle_main(LocalEvent::SCROLL_TO) {
+        //     error!("发送滚动信号失败:{e}");
+        // }
+    }
+
+    /// 根据当前回顾`scroller`窗口大小创建对应的离线绘图板，并设置滚动条到最底部。
+    ///
+    /// # Arguments
+    ///
+    /// * `w`:
+    /// * `h`:
+    ///
+    /// returns: ()
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
+    pub fn renew_offscreen(&mut self, w: i32, h: i32) {
+        if let Some(offs) = Offscreen::new(w, h) {
+            self.reviewer_screen.replace(offs);
+            // 滚动到最底部
+            self.scroller.scroll_to(0, self.panel.height() - self.scroller.height());
+        }
+    }
+
+    pub fn scroll_to_bottom(&mut self) {
+        self.scroller.scroll_to(0, self.panel.height() - self.scroller.height());
     }
 
     /// 计算数据内容所需的面板高度。
@@ -256,16 +284,16 @@ impl RichReviewer {
 
     pub fn draw_offline(screen: Rc<RefCell<Offscreen>>, scroller: &Scroll, data_buffer: Rc<RefCell<Vec<RichData>>>, background_color: Color, visible_lines: Rc<RefCell<HashMap<Coordinates, usize>>>) {
         screen.borrow().begin();
+        let (scroller_x, scroller_y, window_width, window_height) = (scroller.x(), scroller.y(), scroller.width(), scroller.height());
+        let drawable_height = window_height - PANEL_PADDING;
+        visible_lines.borrow_mut().clear();
         // 滚动条滚动的高度在0到(panel.height - scroll.height)之间。
         let mut base_y = scroller.yposition();
-
         if base_y < 0 {
             base_y = 0;
         }
 
-        let window_width = scroller.width();
-        let window_height = scroller.height();
-        let (mut top_y, mut bottom_y) = (base_y, base_y + window_height);
+        let (mut top_y, mut bottom_y) = (base_y, base_y + drawable_height);
 
         // 处理数据相对位移
         if let Some(first) = data_buffer.borrow().first() {
@@ -278,7 +306,7 @@ impl RichReviewer {
         let offset_y = top_y - PADDING.top;
 
         // 填充背景色
-        draw_rect_fill(0, 0, window_width, window_height, background_color);
+        draw_rect_fill(0, 0, window_width, drawable_height, background_color);
 
         let data = &*data_buffer.borrow();
 
@@ -305,19 +333,30 @@ impl RichReviewer {
         }
 
         for (idx, rich_data) in data[from_index..to_index].iter().enumerate() {
-            // todo: 待处理页面滚动后鼠标事件检测区域未更新的问题。
-            rich_data.draw(offset_y, idx, visible_lines.clone());
+            rich_data.draw(offset_y, idx, visible_lines.clone(), scroller_x, scroller_y);
         }
+
+        /*
+        绘制分界线
+         */
+        // 象牙白底色
+        set_draw_color(Color::from_rgb(235, 229, 209));
+        draw_rounded_rectf(0, drawable_height, window_width, PANEL_PADDING, 4);
+
+        // 暗金色虚线
+        set_draw_color(Color::from_rgb(136, 102, 0));
+        set_line_style(LineStyle::DashDotDot, PANEL_PADDING / 3);
+        draw_xyline(scroller_x + 6, drawable_height + (PANEL_PADDING / 2), scroller_x + window_width - 6);
+        set_line_style(LineStyle::Solid, 1);
 
         screen.borrow().end();
     }
 
-    /// 根据当前回顾`scroller`窗口大小创建对应的离线绘图板，并设置滚动条到最底部。
+    /// 设置互动消息发送器。
     ///
     /// # Arguments
     ///
-    /// * `w`:
-    /// * `h`:
+    /// * `notifier`:
     ///
     /// returns: ()
     ///
@@ -326,11 +365,8 @@ impl RichReviewer {
     /// ```
     ///
     /// ```
-    pub fn renew_offscreen(&mut self, w: i32, h: i32) {
-        if let Some(offs) = Offscreen::new(w, h) {
-            self.reviewer_screen.replace(offs);
-            // 滚动到最底部
-            self.scroller.scroll_to(0, self.panel.height() - self.scroller.height());
-        }
+    pub fn set_notifier(&mut self, notifier: tokio::sync::mpsc::Sender<UserData>) {
+        self.notifier.replace(Some(notifier));
     }
+
 }

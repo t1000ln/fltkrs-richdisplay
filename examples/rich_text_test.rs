@@ -6,8 +6,17 @@ use fltk::button::Button;
 use fltk::enums::{Color, Font};
 use fltk::image::SharedImage;
 use fltk::prelude::{GroupExt, ImageExt, WidgetBase, WidgetExt, WindowExt};
-use fltkrs_richdisplay::rich_text::{GlobalMessage, RichText};
+use log::debug;
+use fltkrs_richdisplay::rich_text::{RichText};
 use fltkrs_richdisplay::{DataType, RichDataOptions, UserData};
+
+pub enum GlobalMessage {
+    UpdatePanel,
+    ScrollToBottom,
+    ContentData(UserData),
+    UpdateData(RichDataOptions),
+    DisableData(i64),
+}
 
 #[tokio::main]
 async fn main() {
@@ -18,12 +27,12 @@ async fn main() {
     // }
     let app = app::App::default();
     let mut win = window::Window::default()
-        .with_size(800, 500)
+        .with_size(800, 600)
         .with_label("draw by notice")
         .center_screen();
     win.make_resizable(true);
 
-    let mut btn = Button::new(200, 0, 100, 50, "scroll");
+    let mut btn = Button::new(200, 0, 100, 50, "top");
 
     let mut rich_text = RichText::new(0, 100, 800, 400, None);
     let (sender, mut receiver) = tokio::sync::mpsc::channel::<UserData>(100);
@@ -31,10 +40,14 @@ async fn main() {
     rich_text.set_buffer_max_lines(50);
 
     btn.set_callback({
-        let mut rich_text_rc = rich_text.clone();
-        move |_| {
-            rich_text_rc.scroll_to_bottom();
+        |_| {
+            debug!("btn clicked");
         }
+    });
+
+    let mut btn2 = Button::new(200, 550, 100, 50, "bottom");
+    btn2.set_callback(|_| {
+        debug!("btn2 clicked");
     });
 
     win.end();
@@ -72,7 +85,7 @@ async fn main() {
 
 
     tokio::spawn(async move {
-        for i in 0..20 {
+        for i in 0..1 {
             let turn = i * 13;
             let mut data: Vec<UserData> = Vec::from([
                 UserData::new_text(format!("{}安全并且高效地处理并发编程是Rust的另一个主要目标。并发编程和并行编程这两种概念随着计算机设备的多核a优化而变得越来越重要。并发编程允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 1)).set_underline(true).set_font(Font::Helvetica, 38).set_bg_color(Some(Color::DarkYellow)).set_clickable(true),
@@ -99,7 +112,7 @@ async fn main() {
             }
         }
 
-        dbg!("Sender closed");
+        debug!("Sender closed");
     });
 
 
@@ -123,7 +136,8 @@ async fn main() {
             }
         }
 
-        app::sleep(0.016);
+        // app::sleep(0.016);
+        app::sleep(0.001);
         app::awake();
     }
 }

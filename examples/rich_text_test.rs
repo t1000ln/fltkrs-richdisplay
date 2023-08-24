@@ -2,29 +2,56 @@
 
 use std::time::Duration;
 use fltk::{app, window};
+use fltk::button::Button;
 use fltk::enums::{Color, Font};
 use fltk::image::SharedImage;
-use fltk::prelude::{GroupExt, ImageExt, WidgetExt, WindowExt};
-use fltkrs_richdisplay::rich_text::{GlobalMessage, RichText};
+use fltk::prelude::{GroupExt, ImageExt, WidgetBase, WidgetExt, WindowExt};
+use log::debug;
+use fltkrs_richdisplay::rich_text::{RichText};
 use fltkrs_richdisplay::{DataType, RichDataOptions, UserData};
+
+pub enum GlobalMessage {
+    UpdatePanel,
+    ScrollToBottom,
+    ContentData(UserData),
+    UpdateData(RichDataOptions),
+    DisableData(i64),
+}
 
 #[tokio::main]
 async fn main() {
+    simple_logger::init_with_level(log::Level::Debug).unwrap();
     // #[cfg(target_os = "linux")]
     // {
     //     unsafe { backtrace_on_stack_overflow::enable() };
     // }
     let app = app::App::default();
     let mut win = window::Window::default()
-        .with_size(800, 400)
+        .with_size(800, 600)
         .with_label("draw by notice")
         .center_screen();
     win.make_resizable(true);
 
-    let mut rich_text = RichText::new(0, 0, 800, 400, None).size_of_parent();
+    let mut btn = Button::new(200, 0, 100, 50, "top");
+
+    let mut rich_text = RichText::new(0, 100, 800, 400, None);
     let (sender, mut receiver) = tokio::sync::mpsc::channel::<UserData>(100);
     rich_text.set_notifier(sender);
-    rich_text.set_buffer_max_lines(30);
+    rich_text.set_buffer_max_lines(50);
+
+    btn.set_callback({
+        |_| {
+            debug!("btn clicked");
+        }
+    });
+
+    let mut btn2 = Button::new(200, 550, 100, 50, "bottom");
+    btn2.set_callback(|_| {
+        debug!("btn2 clicked");
+    });
+
+    win.end();
+    win.show();
 
     let (global_sender, global_receiver) = app::channel::<GlobalMessage>();
 
@@ -58,7 +85,7 @@ async fn main() {
 
 
     tokio::spawn(async move {
-        for i in 0..2 {
+        for i in 0..20 {
             let turn = i * 13;
             let mut data: Vec<UserData> = Vec::from([
                 UserData::new_text(format!("{}安全并且高效地处理并发编程是Rust的另一个主要目标。并发编程和并行编程这两种概念随着计算机设备的多核a优化而变得越来越重要。并发编程允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 1)).set_underline(true).set_font(Font::Helvetica, 38).set_bg_color(Some(Color::DarkYellow)).set_clickable(true),
@@ -81,16 +108,14 @@ async fn main() {
             data.reverse();
             while let Some(data_unit) = data.pop() {
                 global_sender.send(GlobalMessage::ContentData(data_unit));
-                tokio::time::sleep(Duration::from_millis(10)).await;
+                tokio::time::sleep(Duration::from_millis(30)).await;
             }
         }
 
-        println!("Sender closed");
+        debug!("Sender closed");
     });
 
 
-    win.end();
-    win.show();
 
     while app.wait() {
         if let Some(msg) = global_receiver.recv() {
@@ -111,7 +136,8 @@ async fn main() {
             }
         }
 
-        app::sleep(0.016);
+        // app::sleep(0.016);
+        app::sleep(0.001);
         app::awake();
     }
 }

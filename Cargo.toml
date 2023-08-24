@@ -7,9 +7,11 @@ edition = "2021"
 
 [dependencies]
 fltk = "^1.4.9"
-tokio = { version = "1.29.1", features = ["full"] }
+tokio = { version = "1.32", features = ["full"] }
 idgenerator-thin = "0.1.2"
+log = "^0.4"
 
 [dev-dependencies]
+simple_logger = "4.2"
 [target.'cfg(unix)'.dependencies]
 backtrace-on-stack-overflow = "0.3.0"

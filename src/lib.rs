@@ -3,12 +3,14 @@ use std::cmp::{max, min, Ordering};
 use std::collections::HashMap;
 use std::fmt::{Debug};
 use std::rc::{Rc, Weak};
+use fltk::app;
 use fltk::draw::{descent, draw_image, draw_line, draw_rounded_rectf, draw_text2, measure, set_draw_color, set_font};
 use fltk::enums::{Align, Color, ColorDepth, Font};
 use idgenerator_thin::YitIdHelper;
+use log::{error};
 
 pub mod rich_text;
-pub mod rich_snapshot;
+pub mod rich_reviewer;
 
 /// 默认内容边界到窗口之间的空白距离。
 pub const PADDING: Padding = Padding { left: 5, top: 5, right: 5, bottom: 5 };
@@ -21,6 +23,21 @@ pub const IMAGE_PADDING_V: i32 = 2;
 
 /// 同一行内多个文字分片之间的水平间距。
 pub const PIECE_SPACING: i32 = 2;
+
+/// 自定义事件。
+pub struct LocalEvent;
+impl LocalEvent {
+
+    /// 滚动事件。
+    pub const SCROLL_TO: i32 = 100;
+
+    /// 缩放事件。
+    pub const RESIZE: i32 = 101;
+
+    /// 清理回顾区组件事件。
+    pub const DROP_REVIEWER: i32 = 102;
+
+}
 
 /// 鼠标事件发生的位置，相对于窗口的坐标系。
 #[derive(Debug)]
@@ -304,7 +321,7 @@ pub trait LinedData {
     /// ```
     ///
     /// ```
-    fn draw(&self, offset_y: i32, idx: usize, visible_lines_mapper: Rc<RefCell<HashMap<Coordinates, usize>>>);
+    fn draw(&self, offset_y: i32, idx: usize, visible_lines_mapper: Rc<RefCell<HashMap<Coordinates, usize>>>, panel_x: i32, panel_y: i32);
 
     fn estimate(&mut self, blow_line: Rc<RefCell<LinePiece>>, max_width: i32) -> Rc<RefCell<LinePiece>>;
 
@@ -460,12 +477,31 @@ pub fn calc_v_center_offset(line_height: i32, font_height: i32) -> (i32, i32) {
     (up, down)
 }
 
-// pub fn mouse_enter(x: i32, y: i32, area: &Coordinates) -> bool {
-//     x >= area.0 && x <= area.2 && y <= area.1 && y >= area.3
-// }
+/// 检测鼠标是否进入可交互的内容条中。
+///
+/// # Arguments
+///
+/// * `visible_lines`:
+///
+/// returns: bool
+///
+/// # Examples
+///
+/// ```
+///
+/// ```
+pub fn mouse_enter(visible_lines: Rc<RefCell<HashMap<Coordinates, usize>>>) -> bool {
+    for area in visible_lines.borrow().keys() {
+        let (x, y, w, h) = area.to_rect();
+        if app::event_inside(x, y, w, h) {
+            return true;
+        }
+    }
+    return false;
+}
 
 /// 绘制信息单元。
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RichData {
     /// 数据ID。
     pub id: i64,
@@ -684,15 +720,10 @@ impl LinedData for RichData {
         }
     }
 
-    fn draw(&self, offset_y: i32, idx: usize, visible_lines_mapper: Rc<RefCell<HashMap<Coordinates, usize>>>) {
+    fn draw(&self, offset_y: i32, idx: usize, visible_lines_mapper: Rc<RefCell<HashMap<Coordinates, usize>>>, panel_x: i32, panel_y: i32) {
         match self.data_type {
             DataType::Text => {
                 let bg_offset = 1;
-                let mut bg_height_modifier = 0;
-                #[cfg(not(target_os = "windows"))]
-                {
-                    bg_height_modifier = 2;
-                }
 
                 set_font(self.font, self.font_size);
                 for piece in self.line_pieces.iter() {
@@ -700,13 +731,18 @@ impl LinedData for RichData {
                     let y = piece.y - offset_y;
                     if self.clickable() {
                         let map = &mut *visible_lines_mapper.borrow_mut();
-                        map.insert(Coordinates::new(piece.x, y, piece.w, piece.h), idx);
+                        map.insert(Coordinates::new(piece.x + panel_x, y + panel_y, piece.w, piece.h), idx);
                     }
 
                     if let Some(bg_color) = &self.bg_color {
                         // 绘制背景色
                         set_draw_color(*bg_color);
-                        draw_rounded_rectf(piece.x, y - piece.spacing + bg_height_modifier, piece.w, piece.font_height, 4);
+
+                        #[cfg(target_os = "linux")]
+                        draw_rounded_rectf(piece.x, y - piece.spacing + 2, piece.w, piece.font_height, 4);
+
+                        #[cfg(not(target_os = "linux"))]
+                        draw_rounded_rectf(piece.x, y - piece.spacing, piece.w, piece.font_height, 4);
                     }
 
                     set_draw_color(self.fg_color);
@@ -731,12 +767,12 @@ impl LinedData for RichData {
                     let piece = &*piece.borrow();
                     if self.clickable() {
                         let map = &mut *visible_lines_mapper.borrow_mut();
-                        map.insert(Coordinates::new(piece.x, piece.y - offset_y, piece.w, piece.h), idx);
+                        map.insert(Coordinates::new(piece.x + panel_x, piece.y - offset_y + panel_y, piece.w, piece.h), idx);
                     }
 
                     if let Some(img) = &self.image {
                         if let Err(e) = draw_image(img.as_slice(), piece.x, piece.y - offset_y, piece.w, piece.h, ColorDepth::Rgb8) {
-                            eprintln!("draw image error: {:?}", e);
+                            error!("draw image error: {:?}", e);
                         }
                     }
                 }
@@ -929,10 +965,16 @@ impl LinedData for RichData {
             lp.borrow_mut().y = piece_top_y + up_offset;
         }
 
+        let mut top_y = top_y;
+        if let Some(first_piece) = self.line_pieces.first() {
+            let fp = &*first_piece.borrow();
+            top_y = fp.top_y;
+        }
         let mut bottom_y = top_y;
-        if let Some(last_piece) = self.line_pieces.last_mut() {
-            let last_piece = &*last_piece.borrow();
-            bottom_y = last_piece.y + last_piece.through_line.borrow().max_h;
+        if let Some(last_piece) = self.line_pieces.last() {
+            let lp = &*last_piece.borrow();
+            // bottom_y = lp.y + lp.through_line.borrow().max_h;
+            bottom_y = lp.top_y + lp.through_line.borrow().max_h;
         }
         self.set_v_bounds(top_y, bottom_y, start_x);
         ret

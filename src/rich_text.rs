@@ -16,7 +16,7 @@ use fltk::image::{RgbImage};
 use crate::{Coordinates, DataType, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, UserData};
 
 use idgenerator_thin::{IdGeneratorOptions, YitIdHelper};
-use log::{error};
+use log::{debug, error};
 use crate::rich_reviewer::RichReviewer;
 
 static ID_GENERATOR_INIT: OnceLock<u8> = OnceLock::new();
@@ -353,7 +353,6 @@ impl RichText {
         if let Some(reviewer) = self.reviewer.borrow().as_ref() {
             reviewer.set_background_color(background_color);
         }
-        // self.reviewer.set_background_color(background_color);
     }
 
     /// 设置缓冲区最大数据条数，并非行数。

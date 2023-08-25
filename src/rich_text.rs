@@ -16,13 +16,13 @@ use fltk::image::{RgbImage};
 use crate::{Coordinates, DataType, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, UserData};
 
 use idgenerator_thin::{IdGeneratorOptions, YitIdHelper};
-use log::{debug, error};
+use log::{error};
 use crate::rich_reviewer::RichReviewer;
 
 static ID_GENERATOR_INIT: OnceLock<u8> = OnceLock::new();
 
 pub const MAIN_PANEL_FIX_HEIGHT: i32 = 200;
-pub const PANEL_PADDING: i32 = 12;
+pub const PANEL_PADDING: i32 = 8;
 
 #[derive(Debug, Clone)]
 pub struct RichText {
@@ -53,6 +53,7 @@ impl RichText {
         let reviewer = Rc::new(RefCell::new(None::<RichReviewer>));
 
         let mut inner = Flex::new(x, y, w, h, title).column();
+        inner.set_pad(0);
         inner.end();
 
 
@@ -99,7 +100,7 @@ impl RichText {
                                 current_height
                             };
                             flex.fixed(&panel_rc, panel_height);
-                            flex.recalc();
+                            // flex.recalc();
                         }
                     }
                     Event::MouseWheel => {
@@ -130,7 +131,6 @@ impl RichText {
                                 buffer_rc.clone()
                             );
 
-                            // reviewer.renew_offscreen(reviewer.width(), reviewer.height());
                             reviewer.scroll_to_bottom();
 
                             reviewer_rc.replace(Some(reviewer));
@@ -345,6 +345,10 @@ impl RichText {
             }
 
         }
+
+        // 填充顶部边界空白
+        draw_rect_fill(0, 0, window_width, PADDING.top, bg_color);
+
         offscreen.borrow().end();
     }
 

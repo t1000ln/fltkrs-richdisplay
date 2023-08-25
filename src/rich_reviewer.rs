@@ -10,7 +10,7 @@ use fltk::group::{Scroll, ScrollType};
 use fltk::prelude::{GroupExt, WidgetBase, WidgetExt};
 use fltk::{app, draw, widget_extends};
 use log::{error};
-use crate::{Coordinates, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, UserData};
+use crate::{Coordinates, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData};
 use crate::rich_text::{PANEL_PADDING};
 
 #[derive(Clone, Debug)]
@@ -19,6 +19,7 @@ pub struct RichReviewer {
     pub(crate) panel: Frame,
     data_buffer: Rc<RefCell<Vec<RichData>>>,
     background_color: Rc<Cell<Color>>,
+    visible_lines: Rc<RefCell<HashMap<Coordinates, usize>>>,
     reviewer_screen: Rc<RefCell<Offscreen>>,
     notifier: Rc<RefCell<Option<tokio::sync::mpsc::Sender<UserData>>>>,
     pub resize_panel_after_resize: Rc<Cell<(i32, i32, i32, i32)>>,
@@ -96,7 +97,7 @@ impl RichReviewer {
             let last_window_size = Rc::new(Cell::new((w, h)));
             let notifier_rc = notifier.clone();
             let screen_rc = reviewer_screen.clone();
-            let mut panel_rc = panel.clone();
+            let panel_rc = panel.clone();
             let new_scroll_y_rc = scroll_panel_to_y_after_resize.clone();
             let resize_panel_after_resize_rc = resize_panel_after_resize.clone();
             let visible_lines_rc = visible_lines.clone();
@@ -190,7 +191,7 @@ impl RichReviewer {
             }
         });
 
-        Self { scroller, panel, data_buffer, background_color, reviewer_screen, scroll_panel_to_y_after_resize, resize_panel_after_resize, notifier }
+        Self { scroller, panel, data_buffer, background_color, visible_lines, reviewer_screen, scroll_panel_to_y_after_resize, resize_panel_after_resize, notifier }
     }
 
     pub fn set_background_color(&self, color: Color) {
@@ -321,7 +322,7 @@ impl RichReviewer {
         }
 
         for (idx, rich_data) in data[from_index..to_index].iter().enumerate() {
-            rich_data.draw(offset_y, idx, visible_lines.clone(), scroller_x, scroller_y);
+            rich_data.draw(offset_y, idx + from_index, visible_lines.clone(), scroller_x, scroller_y);
         }
 
         /*
@@ -356,4 +357,55 @@ impl RichReviewer {
         self.notifier.replace(Some(notifier));
     }
 
+    /// 更改数据属性。
+    ///
+    /// # Arguments
+    ///
+    /// * `id`: 数据ID。
+    /// * `clickable`:
+    /// * `underline`:
+    /// * `expired`:
+    /// * `text`:
+    /// * `fg_color`:
+    /// * `bg_color`:
+    ///
+    /// returns: ()
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
+    pub fn update_data(&mut self, options: RichDataOptions) {
+        let mut find_out = false;
+        let mut target_idx = 0;
+        if let Ok(idx) = self.data_buffer.borrow().binary_search_by_key(&options.id, |rd| rd.id) {
+            target_idx = idx;
+            find_out = true;
+        }
+
+        if find_out {
+            if let Some(rd) = self.data_buffer.borrow_mut().get_mut(target_idx) {
+                update_data_properties(options, rd);
+            }
+            Self::draw_offline(self.reviewer_screen.clone(), &self.scroller, self.data_buffer.clone(), self.background_color.get(), self.visible_lines.clone());
+        }
+    }
+
+    pub fn disable_data(&mut self, id: i64) {
+        let mut find_out = false;
+        let mut target_idx = 0;
+        if let Ok(idx) = self.data_buffer.borrow().binary_search_by_key(&id, |rd| rd.id) {
+            target_idx = idx;
+            find_out = true;
+        }
+
+        if find_out {
+            if let Some(rd) = self.data_buffer.borrow_mut().get_mut(target_idx) {
+                disable_data(rd);
+            }
+
+            Self::draw_offline(self.reviewer_screen.clone(), &self.scroller, self.data_buffer.clone(), self.background_color.get(), self.visible_lines.clone());
+        }
+    }
 }

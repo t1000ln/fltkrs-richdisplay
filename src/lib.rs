@@ -3,9 +3,11 @@ use std::cmp::{max, min, Ordering};
 use std::collections::HashMap;
 use std::fmt::{Debug};
 use std::rc::{Rc, Weak};
-use fltk::app;
+use fltk::{app, draw};
 use fltk::draw::{descent, draw_image, draw_line, draw_rounded_rectf, draw_text2, measure, set_draw_color, set_font};
-use fltk::enums::{Align, Color, ColorDepth, Font};
+use fltk::enums::{Align, Color, ColorDepth, Cursor, Font};
+use fltk::image::RgbImage;
+use fltk::prelude::ImageExt;
 use idgenerator_thin::YitIdHelper;
 use log::{error};
 
@@ -477,7 +479,7 @@ pub fn calc_v_center_offset(line_height: i32, font_height: i32) -> (i32, i32) {
     (up, down)
 }
 
-/// 检测鼠标是否进入可交互的内容条中。
+/// 检测鼠标是否进入可交互的内容区域中。
 ///
 /// # Arguments
 ///
@@ -498,6 +500,81 @@ pub fn mouse_enter(visible_lines: Rc<RefCell<HashMap<Coordinates, usize>>>) -> b
         }
     }
     return false;
+}
+
+/// 更新数据内容的属性。用于用户互动操作反馈。
+///
+/// # Arguments
+///
+/// * `options`:
+/// * `rd`:
+///
+/// returns: ()
+///
+/// # Examples
+///
+/// ```
+///
+/// ```
+pub fn update_data_properties(options: RichDataOptions, rd: &mut RichData) {
+    if let Some(clickable) = options.clickable {
+        rd.clickable = clickable;
+        if !clickable {
+            draw::set_cursor(Cursor::Default);
+        }
+    }
+    if let Some(underline) = options.underline {
+        rd.underline = underline;
+    }
+    if let Some(expired) = options.expired {
+        rd.expired = expired;
+    }
+    if let Some(text) = options.text {
+        rd.text = text;
+    }
+    if let Some(fg_color) = options.fg_color {
+        rd.fg_color = fg_color;
+    }
+    if let Some(bg_color) = options.bg_color {
+        rd.bg_color = Some(bg_color);
+    }
+    if let Some(strike_through) = options.strike_through {
+        rd.strike_through = strike_through;
+    }
+}
+
+/// 禁用数据内容。
+/// 当前的实现为：图形内容增加灰色遮罩层，文本内容增加删除线。
+///
+/// # Arguments
+///
+/// * `rd`:
+///
+/// returns: ()
+///
+/// # Examples
+///
+/// ```
+///
+/// ```
+pub fn disable_data(rd: &mut RichData) {
+    rd.set_clickable(false);
+    draw::set_cursor(Cursor::Default);
+
+    match rd.data_type {
+        DataType::Image => {
+            if let Some(image) = rd.image.as_mut() {
+                if let Ok(mut ni) = RgbImage::new(image.as_slice(), rd.image_width, rd.image_height, ColorDepth::Rgb8) {
+                    ni.inactive();
+                    image.clear();
+                    image.append(&mut ni.to_rgb_data());
+                }
+            }
+        }
+        DataType::Text => {
+            rd.strike_through = true;
+        }
+    }
 }
 
 /// 绘制信息单元。
@@ -990,7 +1067,7 @@ impl LinedData for RichData {
 }
 
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RichDataOptions {
     pub id: i64,
     pub clickable: Option<bool>,

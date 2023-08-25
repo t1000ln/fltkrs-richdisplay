@@ -6,14 +6,13 @@ use std::rc::Rc;
 use std::sync::OnceLock;
 
 use fltk::draw::{draw_rect_fill, Offscreen};
-use fltk::enums::{Color, ColorDepth, Cursor, Event};
+use fltk::enums::{Color, Cursor, Event};
 use fltk::frame::Frame;
-use fltk::prelude::{GroupExt, ImageExt, WidgetBase, WidgetExt};
+use fltk::prelude::{GroupExt, WidgetBase, WidgetExt};
 use fltk::{app, draw, widget_extends};
 use fltk::app::MouseWheel;
 use fltk::group::{Flex, Scroll};
-use fltk::image::{RgbImage};
-use crate::{Coordinates, DataType, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, UserData};
+use crate::{Coordinates, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData};
 
 use idgenerator_thin::{IdGeneratorOptions, YitIdHelper};
 use log::{error};
@@ -428,33 +427,16 @@ impl RichText {
 
         if find_out {
             if let Some(rd) = self.data_buffer.borrow_mut().get_mut(target_idx) {
-                if let Some(clickable) = options.clickable {
-                    rd.clickable = clickable;
-                    if !clickable {
-                        draw::set_cursor(Cursor::Default);
-                    }
-                }
-                if let Some(underline) = options.underline {
-                    rd.underline = underline;
-                }
-                if let Some(expired) = options.expired {
-                    rd.expired = expired;
-                }
-                if let Some(text) = options.text {
-                    rd.text = text;
-                }
-                if let Some(fg_color) = options.fg_color {
-                    rd.fg_color = fg_color;
-                }
-                if let Some(bg_color) = options.bg_color {
-                    rd.bg_color = Some(bg_color);
-                }
-                if let Some(strike_through) = options.strike_through {
-                    rd.strike_through = strike_through;
-                }
-                self.panel.redraw();
+                update_data_properties(options.clone(), rd);
             }
+            Self::draw_offline(self.panel_screen.clone(), &self.panel, self.visible_lines.clone(), self.background_color.get(), self.data_buffer.clone());
         }
+
+        if let Some(reviewer) = self.reviewer.borrow_mut().as_mut() {
+            reviewer.update_data(options);
+        }
+
+        self.inner.redraw();
     }
 
     pub fn disable_data(&mut self, id: i64) {
@@ -467,26 +449,16 @@ impl RichText {
 
         if find_out {
             if let Some(rd) = self.data_buffer.borrow_mut().get_mut(target_idx) {
-                rd.set_clickable(false);
-                draw::set_cursor(Cursor::Default);
-
-                match rd.data_type {
-                    DataType::Image => {
-                        if let Some(image) = rd.image.as_mut() {
-                            if let Ok(mut ni) = RgbImage::new(image.as_slice(), rd.image_width, rd.image_height, ColorDepth::Rgb8) {
-                                ni.inactive();
-                                image.clear();
-                                image.append(&mut ni.to_rgb_data());
-                            }
-                        }
-                    }
-                    DataType::Text => {
-                        rd.strike_through = true;
-                    }
-                }
-
-                self.panel.redraw();
+                disable_data(rd);
             }
+
+            Self::draw_offline(self.panel_screen.clone(), &self.panel, self.visible_lines.clone(), self.background_color.get(), self.data_buffer.clone());
         }
+
+        if let Some(reviewer) = self.reviewer.borrow_mut().as_mut() {
+            reviewer.disable_data(id);
+        }
+
+        self.inner.redraw();
     }
 }

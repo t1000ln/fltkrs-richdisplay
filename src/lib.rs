@@ -39,6 +39,12 @@ impl LocalEvent {
     /// 清理回顾区组件事件。
     pub const DROP_REVIEWER: i32 = 102;
 
+    /// 从rich-display容器外部发起关闭回顾区的事件。
+    pub const DROP_REVIEWER_FROM_EXTERNAL: i32 = 103;
+
+    /// 从rich-display容器外部发起打开回顾区的事件。
+    pub const OPEN_REVIEWER_FROM_EXTERNAL: i32 = 104;
+
 }
 
 /// 鼠标事件发生的位置，相对于窗口的坐标系。

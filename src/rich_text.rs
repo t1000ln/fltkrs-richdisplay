@@ -33,7 +33,7 @@ pub struct RichText {
     inner: Flex,
     reviewer: Rc<RefCell<Option<RichReviewer>>>,
     panel_screen: Rc<RefCell<Offscreen>>,
-    visible_lines: Rc<RefCell<HashMap<Coordinates, usize>>>
+    visible_lines: Rc<RefCell<HashMap<Coordinates, usize>>>,
 }
 widget_extends!(RichText, Flex, inner);
 
@@ -87,92 +87,124 @@ impl RichText {
             let to_be_dropped_reviewer_rc = to_be_dropped_reviewer.clone();
             let notifier_rc = notifier.clone();
             move |flex, evt| {
-                match evt {
-                    Event::Resize => {
-                        let (current_width, current_height) = (flex.width(), flex.height());
-                        let (last_width, last_height) = last_window_size.get();
-                        if last_width != current_width || last_height != current_height {
-                            last_window_size.replace((current_width, current_height));
-                            let panel_height = if reviewer_rc.borrow().is_some() {
-                                MAIN_PANEL_FIX_HEIGHT
-                            } else {
-                                current_height
-                            };
-                            flex.fixed(&panel_rc, panel_height);
-                            // flex.recalc();
+                if evt == LocalEvent::DROP_REVIEWER_FROM_EXTERNAL.into() {
+                    // 隐藏回顾区
+                    let (should_remove, drop_target) = Self::should_hide_reviewer(
+                        reviewer_rc.clone(),
+                        flex,
+                        &panel_rc,
+                        screen_rc.clone(),
+                        bg_rc.clone(),
+                        visible_lines_rc.clone(),
+                        buffer_rc.clone()
+                    );
+                    return if should_remove {
+                        reviewer_rc.replace(None);
+                        to_be_dropped_reviewer_rc.replace(drop_target);
+                        if let Err(e) = app::handle_main(LocalEvent::DROP_REVIEWER) {
+                            error!("发送删除回顾事件时发生错误：{}", e);
                         }
+                        true
+                    } else {
+                        false
                     }
-                    Event::MouseWheel => {
-                        /*
-                        显示或隐藏回顾区。
-                         */
-                        if app::event_dy() == MouseWheel::Down && !buffer_rc.borrow().is_empty() && reviewer_rc.borrow().is_none() {
-                            // 显示回顾区
-                            let mut reviewer = RichReviewer::new(0, 0, flex.width(), flex.height() - MAIN_PANEL_FIX_HEIGHT, None);
-                            reviewer.set_background_color(bg_rc.get());
-                            if let Some(notifier_rc) = notifier_rc.borrow().as_ref() {
-                                reviewer.set_notifier(notifier_rc.clone());
-                            }
-                            let snapshot = Vec::from(buffer_rc.borrow().clone());
-                            reviewer.set_data(snapshot);
-                            flex.insert(&reviewer.scroller, 0);
-                            flex.fixed(&panel_rc, MAIN_PANEL_FIX_HEIGHT);
-                            flex.recalc();
+                } else if evt == LocalEvent::OPEN_REVIEWER_FROM_EXTERNAL.into() {
+                    let mut reviewer = RichReviewer::new(0, 0, flex.width(), flex.height() - MAIN_PANEL_FIX_HEIGHT, None);
+                    reviewer.set_background_color(bg_rc.get());
+                    if let Some(notifier_rc) = notifier_rc.borrow().as_ref() {
+                        reviewer.set_notifier(notifier_rc.clone());
+                    }
+                    let snapshot = Vec::from(buffer_rc.borrow().clone());
+                    reviewer.set_data(snapshot);
+                    flex.insert(&reviewer.scroller, 0);
+                    flex.fixed(&panel_rc, MAIN_PANEL_FIX_HEIGHT);
+                    flex.recalc();
 
-                            // 替换新的离线绘制板
-                            Self::new_offline(
-                                flex.width(),
-                                MAIN_PANEL_FIX_HEIGHT,
-                                screen_rc.clone(),
-                                &panel_rc,
-                                visible_lines_rc.clone(),
-                                bg_rc.get(),
-                                buffer_rc.clone()
-                            );
+                    // 替换新的离线绘制板
+                    Self::new_offline(
+                        flex.width(),
+                        MAIN_PANEL_FIX_HEIGHT,
+                        screen_rc.clone(),
+                        &panel_rc,
+                        visible_lines_rc.clone(),
+                        bg_rc.get(),
+                        buffer_rc.clone()
+                    );
 
-                            reviewer.scroll_to_bottom();
-
-                            reviewer_rc.replace(Some(reviewer));
-
-                        } else if app::event_dy() == MouseWheel::Up && reviewer_rc.borrow().is_some() {
-                            // 隐藏回顾区
-                            let mut should_remove = false;
-                            let mut drop_target: Option<(Scroll, Frame)> = None;
-                            if let Some(reviewer) = &*reviewer_rc.borrow() {
-                                let dy = reviewer.scroller.yposition();
-                                if dy == reviewer.panel.height() - reviewer.scroller.height() {
-                                    let full_height = flex.height();
-                                    flex.remove(&reviewer.scroller);
-                                    flex.fixed(&panel_rc, flex.height());
-                                    flex.recalc();
-                                    should_remove = true;
-
-                                    drop_target.replace((reviewer.scroller.clone(), reviewer.panel.clone()));
-
-                                    // 替换新的离线绘制板
-                                    Self::new_offline(
-                                        flex.width(),
-                                        full_height,
-                                        screen_rc.clone(),
-                                        &panel_rc,
-                                        visible_lines_rc.clone(),
-                                        bg_rc.get(),
-                                        buffer_rc.clone()
-                                    );
-                                }
-                            }
-                            if should_remove {
-                                reviewer_rc.replace(None);
-                                to_be_dropped_reviewer_rc.replace(drop_target);
-                                if let Err(e) = app::handle_main(LocalEvent::DROP_REVIEWER) {
-                                    error!("发送删除回顾事件时发生错误：{}", e);
-                                }
+                    reviewer.scroll_to_bottom();
+                    reviewer_rc.replace(Some(reviewer));
+                    true
+                } else {
+                    match evt {
+                        Event::Resize => {
+                            let (current_width, current_height) = (flex.width(), flex.height());
+                            let (last_width, last_height) = last_window_size.get();
+                            if last_width != current_width || last_height != current_height {
+                                last_window_size.replace((current_width, current_height));
+                                let panel_height = if reviewer_rc.borrow().is_some() {
+                                    MAIN_PANEL_FIX_HEIGHT
+                                } else {
+                                    current_height
+                                };
+                                flex.fixed(&panel_rc, panel_height);
+                                // flex.recalc();
                             }
                         }
+                        Event::MouseWheel => {
+                            /*
+                            显示或隐藏回顾区。
+                             */
+                            if app::event_dy() == MouseWheel::Down && !buffer_rc.borrow().is_empty() && reviewer_rc.borrow().is_none() {
+                                // 显示回顾区
+                                let mut reviewer = RichReviewer::new(0, 0, flex.width(), flex.height() - MAIN_PANEL_FIX_HEIGHT, None);
+                                reviewer.set_background_color(bg_rc.get());
+                                if let Some(notifier_rc) = notifier_rc.borrow().as_ref() {
+                                    reviewer.set_notifier(notifier_rc.clone());
+                                }
+                                let snapshot = Vec::from(buffer_rc.borrow().clone());
+                                reviewer.set_data(snapshot);
+                                flex.insert(&reviewer.scroller, 0);
+                                flex.fixed(&panel_rc, MAIN_PANEL_FIX_HEIGHT);
+                                flex.recalc();
+
+                                // 替换新的离线绘制板
+                                Self::new_offline(
+                                    flex.width(),
+                                    MAIN_PANEL_FIX_HEIGHT,
+                                    screen_rc.clone(),
+                                    &panel_rc,
+                                    visible_lines_rc.clone(),
+                                    bg_rc.get(),
+                                    buffer_rc.clone()
+                                );
+
+                                reviewer.scroll_to_bottom();
+                                reviewer_rc.replace(Some(reviewer));
+
+                            } else if app::event_dy() == MouseWheel::Up && reviewer_rc.borrow().is_some() {
+                                // 隐藏回顾区
+                                let (should_remove, drop_target) = Self::should_hide_reviewer(
+                                    reviewer_rc.clone(),
+                                    flex,
+                                    &panel_rc,
+                                    screen_rc.clone(),
+                                    bg_rc.clone(),
+                                    visible_lines_rc.clone(),
+                                    buffer_rc.clone()
+                                );
+                                if should_remove {
+                                    reviewer_rc.replace(None);
+                                    to_be_dropped_reviewer_rc.replace(drop_target);
+                                    if let Err(e) = app::handle_main(LocalEvent::DROP_REVIEWER) {
+                                        error!("发送删除回顾事件时发生错误：{}", e);
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
                     }
-                    _ => {}
+                    false
                 }
-                false
             }
         });
 
@@ -189,7 +221,7 @@ impl RichText {
             let to_be_dropped_reviewer_rc = to_be_dropped_reviewer.clone();
             move |ctx, evt| {
                 if evt == LocalEvent::DROP_REVIEWER.into() {
-                    // 销毁组件，回收内存
+                    // 销毁组件，回收内存，否则会有内存泄漏。
                     let target = to_be_dropped_reviewer_rc.replace(None);
                     if let Some((scroller, panel)) = target {
                         app::delete_widget(scroller);
@@ -266,6 +298,40 @@ impl RichText {
         });
 
         Self { panel, data_buffer, background_color, buffer_max_lines, notifier, inner, reviewer, panel_screen, visible_lines }
+    }
+
+    fn should_hide_reviewer(
+        reviewer_rc: Rc<RefCell<Option<RichReviewer>>>,
+        flex: &mut Flex,
+        panel_rc: &Frame,
+        screen_rc: Rc<RefCell<Offscreen>>,
+        bg_rc: Rc<Cell<Color>>,
+        visible_lines_rc: Rc<RefCell<HashMap<Coordinates, usize>>>,
+        buffer_rc: Rc<RefCell<VecDeque<RichData>>>
+    ) -> (bool, Option<(Scroll, Frame)>){
+        if let Some(reviewer) = &*reviewer_rc.borrow() {
+            let dy = reviewer.scroller.yposition();
+            if dy == reviewer.panel.height() - reviewer.scroller.height() {
+                let full_height = flex.height();
+                flex.remove(&reviewer.scroller);
+                flex.fixed(panel_rc, flex.height());
+                flex.recalc();
+
+                // 替换新的离线绘制板
+                Self::new_offline(
+                    flex.width(),
+                    full_height,
+                    screen_rc.clone(),
+                    panel_rc,
+                    visible_lines_rc.clone(),
+                    bg_rc.get(),
+                    buffer_rc.clone()
+                );
+
+                return (true, Some((reviewer.scroller.clone(), reviewer.panel.clone())));
+            }
+        }
+        return (false, None);
     }
 
     /// 向数据缓冲区中添加新的数据。新增数据时会计算其绘制所需信息，包括起始坐标和高度等。
@@ -460,5 +526,35 @@ impl RichText {
         }
 
         self.inner.redraw();
+    }
+
+    pub fn auto_close_reviewer(&mut self) -> bool {
+        return if self.reviewer.borrow().is_some() {
+            let handle_result = app::handle_main(LocalEvent::DROP_REVIEWER_FROM_EXTERNAL);
+            match handle_result {
+                Ok(handled) => {handled}
+                Err(e) => {
+                    error!("从外部发送关闭回顾区组件事件时出错: {:?}", e);
+                    false
+                }
+            }
+        } else {
+            false
+        }
+    }
+
+    pub fn auto_open_reviewer(&mut self) -> bool {
+        return if !self.data_buffer.borrow().is_empty() && self.reviewer.borrow().is_none() {
+            let handle_result = app::handle_main(LocalEvent::OPEN_REVIEWER_FROM_EXTERNAL);
+            match handle_result {
+                Ok(handled) => {handled}
+                Err(e) => {
+                    error!("从外部发送打开回顾区组件事件时出错: {:?}", e);
+                    false
+                }
+            }
+        } else {
+            false
+        }
     }
 }

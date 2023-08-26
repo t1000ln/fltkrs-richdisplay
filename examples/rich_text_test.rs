@@ -3,7 +3,7 @@
 use std::time::Duration;
 use fltk::{app, window};
 use fltk::button::Button;
-use fltk::enums::{Color, Font};
+use fltk::enums::{Color, Event, Font, Key};
 use fltk::group::Group;
 use fltk::image::SharedImage;
 use fltk::prelude::{GroupExt, ImageExt, WidgetBase, WidgetExt, WindowExt};
@@ -12,8 +12,6 @@ use fltkrs_richdisplay::rich_text::{RichText};
 use fltkrs_richdisplay::{DataType, RichDataOptions, UserData};
 
 pub enum GlobalMessage {
-    UpdatePanel,
-    ScrollToBottom,
     ContentData(UserData),
     UpdateData(RichDataOptions),
     DisableData(i64),
@@ -22,14 +20,10 @@ pub enum GlobalMessage {
 #[tokio::main]
 async fn main() {
     simple_logger::init_with_level(log::Level::Debug).unwrap();
-    // #[cfg(target_os = "linux")]
-    // {
-    //     unsafe { backtrace_on_stack_overflow::enable() };
-    // }
     let app = app::App::default();
     let mut win = window::Window::default()
         .with_size(1000, 600)
-        .with_label("draw by notice")
+        .with_label("rich-display example")
         .center_screen();
     win.make_resizable(true);
 
@@ -57,6 +51,26 @@ async fn main() {
     });
 
     group.end();
+
+
+    win.handle({
+        let mut rich_text_rc = rich_text.clone();
+        move |_, evt| {
+            let mut handled = false;
+            match evt {
+                Event::KeyDown => {
+                    if app::event_key_down(Key::PageDown) {
+                        handled = rich_text_rc.auto_close_reviewer();
+                    } else if app::event_key_down(Key::PageUp) {
+                        handled = rich_text_rc.auto_open_reviewer();
+                    }
+
+                }
+                _ => {}
+            }
+            handled
+        }
+    });
 
     win.end();
     win.show();
@@ -128,9 +142,6 @@ async fn main() {
     while app.wait() {
         if let Some(msg) = global_receiver.recv() {
             match msg {
-                GlobalMessage::UpdatePanel => {
-                    rich_text.redraw();
-                }
                 GlobalMessage::ContentData(data) => {
                     rich_text.append(data);
                 }
@@ -140,7 +151,6 @@ async fn main() {
                 GlobalMessage::DisableData(id) => {
                     rich_text.disable_data(id);
                 }
-                _ => {}
             }
         }
 

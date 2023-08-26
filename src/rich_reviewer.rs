@@ -1,6 +1,7 @@
 //! 内容源自rich_text的快照，可滚动的浏览的组件。
 
 use std::cell::{Cell, RefCell};
+use std::cmp::{max, min};
 use std::collections::{HashMap};
 use std::rc::Rc;
 use fltk::draw::{draw_rect_fill, draw_xyline, LineStyle, Offscreen, set_draw_color, set_line_style};
@@ -9,7 +10,7 @@ use fltk::frame::Frame;
 use fltk::group::{Scroll, ScrollType};
 use fltk::prelude::{GroupExt, WidgetBase, WidgetExt};
 use fltk::{app, draw, widget_extends};
-use log::{error};
+use log::{debug, error};
 use crate::{Coordinates, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData};
 use crate::rich_text::{PANEL_PADDING};
 
@@ -75,6 +76,7 @@ impl RichReviewer {
             let new_scroll_y_rc = scroll_panel_to_y_after_resize.clone();
             let mut scroller_rc = scroller.clone();
             let resize_panel_after_resize_rc = resize_panel_after_resize.clone();
+
             move |ctx, evt| {
                 if evt == LocalEvent::RESIZE.into() {
                     let (x, y, w, h) = resize_panel_after_resize_rc.get();
@@ -100,6 +102,8 @@ impl RichReviewer {
             let new_scroll_y_rc = scroll_panel_to_y_after_resize.clone();
             let resize_panel_after_resize_rc = resize_panel_after_resize.clone();
             let visible_lines_rc = visible_lines.clone();
+            let mut push_from_x = 0;
+            let mut push_from_y = 0;
             move |scroller, evt| {
                 match evt {
                     Event::Resize => {
@@ -183,6 +187,26 @@ impl RichReviewer {
                                 break;
                             }
                         }
+                    }
+                    Event::Push => {
+                        let coords = app::event_coords();
+                        push_from_x = coords.0;
+                        push_from_y = coords.1;
+                        return true;
+                    }
+                    Event::Drag => {
+                        let yp = scroller.yposition();
+                        let cy = app::event_y();
+                        let max_scroll = panel_rc.height() - scroller.height();
+
+                        // 拖动时如果鼠标超出scroll组件边界，但滚动条未到达底部或顶部时，自动滚动内容。
+                        if cy > (scroller.y() + scroller.h()) && yp < max_scroll {
+                            scroller.scroll_to(0, min(yp + 10, max_scroll));
+                        } else if cy < scroller.y() && yp > 0 {
+                            scroller.scroll_to(0, max(yp - 10, 0));
+                        }
+
+                        return true;
                     }
                     _ => {}
                 }

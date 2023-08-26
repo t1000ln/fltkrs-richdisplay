@@ -62,8 +62,7 @@ impl RichReviewer {
                  */
                 Self::draw_offline(screen_rc.clone(), &scroll_rc, data_buffer_rc.clone(), bg_rc.get(), visible_lines_rc.clone());
 
-                let (x, y, window_width, window_height) = (scroll_rc.x(), scroll_rc.y(), scroll_rc.width(), scroll_rc.height());
-                screen_rc.borrow().copy(x, y, window_width, window_height, 0, 0);
+                screen_rc.borrow().copy(scroll_rc.x(), scroll_rc.y(), scroll_rc.width(), scroll_rc.height(), 0, 0);
             }
         });
 

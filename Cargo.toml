@@ -13,5 +13,3 @@ log = "^0.4"
 
 [dev-dependencies]
 simple_logger = "4.2"
-[target.'cfg(unix)'.dependencies]
-backtrace-on-stack-overflow = "0.3.0"

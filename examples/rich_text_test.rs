@@ -52,9 +52,13 @@ async fn main() {
 
     group.end();
 
-
+    /*
+    启用PageUp/PageDown快捷键打开和关闭回顾区的功能支持。
+    使用鼠标滚轮进行打开/关闭回顾区的功能已经内置在模块包中，而PageUp/PageDown的快捷键无法被内置组件检测到，因此需要外层容器主动调用API实现。
+    包里提供的两个API接口为此提供支持：`RichText::auto_open_reviewer(&self)`和`RichText::auto_close_reviewer(&self)`。
+     */
     win.handle({
-        let mut rich_text_rc = rich_text.clone();
+        let rich_text_rc = rich_text.clone();
         move |_, evt| {
             let mut handled = false;
             match evt {

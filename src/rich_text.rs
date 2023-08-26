@@ -23,6 +23,7 @@ static ID_GENERATOR_INIT: OnceLock<u8> = OnceLock::new();
 pub const MAIN_PANEL_FIX_HEIGHT: i32 = 200;
 pub const PANEL_PADDING: i32 = 8;
 
+/// rich-display主面板结构。
 #[derive(Debug, Clone)]
 pub struct RichText {
     panel: Frame,
@@ -71,11 +72,13 @@ impl RichText {
         panel.draw({
             let screen_rc = panel_screen.clone();
             move |ctx| {
-                let (x, y, window_width, window_height) = (ctx.x(), ctx.y(), ctx.width(), ctx.height());
-                screen_rc.borrow().copy(x, y, window_width, window_height, 0, 0);
+                screen_rc.borrow().copy(ctx.x(), ctx.y(), ctx.width(), ctx.height(), 0, 0);
             }
         });
 
+        /*
+        处理主面板容器的动作事件，打开或关闭回顾区。
+         */
         inner.handle({
             let last_window_size = Rc::new(Cell::new((0, 0)));
             let panel_rc = panel.clone();
@@ -209,7 +212,7 @@ impl RichText {
         });
 
         /*
-        处理窗口事件
+        处理主面板缩放及鼠标操作事件。
          */
         panel.handle({
             let buffer_rc = data_buffer.clone();
@@ -300,6 +303,7 @@ impl RichText {
         Self { panel, data_buffer, background_color, buffer_max_lines, notifier, inner, reviewer, panel_screen, visible_lines }
     }
 
+    /// 检查是否应该关闭回顾区，若满足关闭条件则关闭回顾区并记录待销毁的回顾区组件。
     fn should_hide_reviewer(
         reviewer_rc: Rc<RefCell<Option<RichReviewer>>>,
         flex: &mut Flex,
@@ -377,14 +381,14 @@ impl RichText {
         self.panel.redraw();
     }
 
-    pub fn new_offline(w: i32, h: i32, offscreen: Rc<RefCell<Offscreen>>, panel: &Frame, visible_lines: Rc<RefCell<HashMap<Coordinates, usize>>>, bg_color: Color, data_buffer: Rc<RefCell<VecDeque<RichData>>>) {
+    fn new_offline(w: i32, h: i32, offscreen: Rc<RefCell<Offscreen>>, panel: &Frame, visible_lines: Rc<RefCell<HashMap<Coordinates, usize>>>, bg_color: Color, data_buffer: Rc<RefCell<VecDeque<RichData>>>) {
         if let Some(offs) = Offscreen::new(w, h) {
             offscreen.replace(offs);
             Self::draw_offline(offscreen.clone(), &panel, visible_lines.clone(), bg_color, data_buffer.clone());
         }
     }
 
-    pub fn draw_offline(offscreen: Rc<RefCell<Offscreen>>, panel: &Frame, visible_lines: Rc<RefCell<HashMap<Coordinates, usize>>>, bg_color: Color, data_buffer: Rc<RefCell<VecDeque<RichData>>>) {
+    fn draw_offline(offscreen: Rc<RefCell<Offscreen>>, panel: &Frame, visible_lines: Rc<RefCell<HashMap<Coordinates, usize>>>, bg_color: Color, data_buffer: Rc<RefCell<VecDeque<RichData>>>) {
         offscreen.borrow().begin();
         let (panel_x, panel_y, window_width, window_height) = (panel.x(), panel.y(), panel.width(), panel.height());
         let mut offset_y = 0;
@@ -417,6 +421,19 @@ impl RichText {
         offscreen.borrow().end();
     }
 
+    /// 设置面板背景色。
+    ///
+    /// # Arguments
+    ///
+    /// * `background_color`: 背景色。
+    ///
+    /// returns: ()
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
     pub fn set_background_color(&mut self, background_color: Color) {
         self.background_color.replace(background_color);
         if let Some(reviewer) = self.reviewer.borrow().as_ref() {
@@ -424,7 +441,7 @@ impl RichText {
         }
     }
 
-    /// 设置缓冲区最大数据条数，并非行数。
+    /// 设置数据缓存最大条数，并非行数。
     ///
     /// # Arguments
     ///
@@ -468,20 +485,66 @@ impl RichText {
     ///
     /// # Arguments
     ///
-    /// * `id`: 数据ID。
-    /// * `clickable`:
-    /// * `underline`:
-    /// * `expired`:
-    /// * `text`:
-    /// * `fg_color`:
-    /// * `bg_color`:
+    /// * `options`: 调整属性。
     ///
     /// returns: ()
     ///
     /// # Examples
     ///
     /// ```
+    /// use fltk::{app, window};
+    /// use fltk::enums::Color;
+    /// use fltk::prelude::{GroupExt, WidgetExt};
+    /// use fltkrs_richdisplay::rich_text::RichText;
+    /// use fltkrs_richdisplay::{RichDataOptions, UserData};
     ///
+    /// pub enum GlobalMessage {
+    ///     ContentData(UserData),
+    ///     UpdateData(RichDataOptions),
+    ///     DisableData(i64),
+    /// }
+    ///
+    /// let app = app::App::default();
+    /// let mut win = window::Window::default().with_size(1000, 600);
+    /// let mut rich_text = RichText::new(100, 100, 800, 400, None);
+    /// win.end();
+    /// win.show();
+    ///
+    /// let (sender, mut receiver) = tokio::sync::mpsc::channel::<UserData>(100);
+    /// let (global_sender, global_receiver) = app::channel::<GlobalMessage>();
+    /// let (global_sender, global_receiver) = app::channel::<GlobalMessage>();
+    ///
+    /// let global_sender_rc = global_sender.clone();
+    /// tokio::spawn(async move {
+    ///     while let Some(data) = receiver.recv().await {
+    ///         if data.text.starts_with("14") {
+    ///             let toggle = !data.underline;
+    ///             let update_options = RichDataOptions::new(data.id).underline(toggle);
+    ///             global_sender_rc.send(GlobalMessage::UpdateData(update_options));
+    ///         } else if data.text.starts_with("22") {
+    ///             global_sender_rc.send(GlobalMessage::DisableData(data.id));
+    ///         }
+    ///     }
+    /// });
+    ///
+    /// while app.wait() {
+    ///     if let Some(msg) = global_receiver.recv() {
+    ///         match msg {
+    ///             GlobalMessage::ContentData(data) => {
+    ///                 rich_text.append(data);
+    ///             }
+    ///             GlobalMessage::UpdateData(options) => {
+    ///                 rich_text.update_data(options);
+    ///             }
+    ///             GlobalMessage::DisableData(id) => {
+    ///                 rich_text.disable_data(id);
+    ///             }
+    ///         }
+    ///     }
+    ///
+    ///     app::sleep(0.001);
+    ///     app::awake();
+    /// }
     /// ```
     pub fn update_data(&mut self, options: RichDataOptions) {
         let mut find_out = false;
@@ -505,6 +568,72 @@ impl RichText {
         self.inner.redraw();
     }
 
+    /// 禁用数据片段的互动能力，同时伴随显示效果会有变化。
+    /// 对于文本段会增加删除线，对于图像会增加灰色遮罩层。
+    ///
+    /// # Arguments
+    ///
+    /// * `id`: 数据片段的ID。
+    ///
+    /// returns: ()
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fltk::{app, window};
+    /// use fltk::enums::Color;
+    /// use fltk::prelude::{GroupExt, WidgetExt};
+    /// use fltkrs_richdisplay::rich_text::RichText;
+    /// use fltkrs_richdisplay::{RichDataOptions, UserData};
+    ///
+    /// pub enum GlobalMessage {
+    ///     ContentData(UserData),
+    ///     UpdateData(RichDataOptions),
+    ///     DisableData(i64),
+    /// }
+    ///
+    /// let app = app::App::default();
+    /// let mut win = window::Window::default().with_size(1000, 600);
+    /// let mut rich_text = RichText::new(100, 100, 800, 400, None);
+    /// win.end();
+    /// win.show();
+    ///
+    /// let (sender, mut receiver) = tokio::sync::mpsc::channel::<UserData>(100);
+    /// let (global_sender, global_receiver) = app::channel::<GlobalMessage>();
+    /// let (global_sender, global_receiver) = app::channel::<GlobalMessage>();
+    ///
+    /// let global_sender_rc = global_sender.clone();
+    /// tokio::spawn(async move {
+    ///     while let Some(data) = receiver.recv().await {
+    ///         if data.text.starts_with("14") {
+    ///             let toggle = !data.underline;
+    ///             let update_options = RichDataOptions::new(data.id).underline(toggle);
+    ///             global_sender_rc.send(GlobalMessage::UpdateData(update_options));
+    ///         } else if data.text.starts_with("22") {
+    ///             global_sender_rc.send(GlobalMessage::DisableData(data.id));
+    ///         }
+    ///     }
+    /// });
+    ///
+    /// while app.wait() {
+    ///     if let Some(msg) = global_receiver.recv() {
+    ///         match msg {
+    ///             GlobalMessage::ContentData(data) => {
+    ///                 rich_text.append(data);
+    ///             }
+    ///             GlobalMessage::UpdateData(options) => {
+    ///                 rich_text.update_data(options);
+    ///             }
+    ///             GlobalMessage::DisableData(id) => {
+    ///                 rich_text.disable_data(id);
+    ///             }
+    ///         }
+    ///     }
+    ///
+    ///     app::sleep(0.001);
+    ///     app::awake();
+    /// }
+    /// ```
     pub fn disable_data(&mut self, id: i64) {
         let mut find_out = false;
         let mut target_idx = 0;
@@ -528,7 +657,46 @@ impl RichText {
         self.inner.redraw();
     }
 
-    pub fn auto_close_reviewer(&mut self) -> bool {
+    /// 自动关闭回顾区的接口。当回顾区滚动条已抵达最底部时会关闭回顾区，否则不关闭也不产生额外干扰。
+    ///
+    /// 该方法适合在调用者的事件处理器当中使用。
+    ///
+    /// returns: bool 当满足关闭条件时，返回 `true`，否则返回 `false`。对于事件处理器来说，当本方法返回 `true` 时，提示事件应被消耗，否则应忽略当前事件。
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fltk::enums::{Event, Key};
+    /// use fltk::{app, window};
+    /// use fltk::prelude::{GroupExt, WidgetBase, WidgetExt};
+    /// use fltkrs_richdisplay::rich_text::RichText;
+    ///
+    /// let app = app::App::default();
+    /// let mut win = window::Window::default().with_size(1000, 600);
+    /// let rich_text = RichText::new(100, 100, 800, 400, None);
+    /// win.handle({
+    ///     let rich_text_rc = rich_text.clone();
+    ///     move |_, evt| {
+    ///         let mut handled = false;
+    ///         match evt {
+    ///             Event::KeyDown => {
+    ///                 if app::event_key_down(Key::PageDown) {
+    ///                     handled = rich_text_rc.auto_close_reviewer();
+    ///                 } else if app::event_key_down(Key::PageUp) {
+    ///                     handled = rich_text_rc.auto_open_reviewer();
+    ///                 }
+    ///
+    ///             }
+    ///             _ => {}
+    ///         }
+    ///         handled
+    ///     }
+    /// });
+    /// win.end();
+    /// win.show();
+    /// app.run().unwrap();
+    /// ```
+    pub fn auto_close_reviewer(&self) -> bool {
         return if self.reviewer.borrow().is_some() {
             let handle_result = app::handle_main(LocalEvent::DROP_REVIEWER_FROM_EXTERNAL);
             match handle_result {
@@ -543,7 +711,46 @@ impl RichText {
         }
     }
 
-    pub fn auto_open_reviewer(&mut self) -> bool {
+    /// 自动打开回顾区的接口。当没有显示回顾区时自动打开回顾区，否则不关闭也不产生额外干扰。
+    ///
+    /// 该方法适合在调用者的事件处理器当中使用。
+    ///
+    /// returns: bool 当满足关闭条件时，返回 `true`，否则返回 `false`。对于事件处理器来说，当本方法返回 `true` 时，提示事件应被消耗，否则应忽略当前事件。
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fltk::enums::{Event, Key};
+    /// use fltk::{app, window};
+    /// use fltk::prelude::{GroupExt, WidgetBase, WidgetExt};
+    /// use fltkrs_richdisplay::rich_text::RichText;
+    ///
+    /// let app = app::App::default();
+    /// let mut win = window::Window::default().with_size(1000, 600);
+    /// let mut rich_text = RichText::new(100, 100, 800, 400, None);
+    /// win.handle({
+    ///     let mut rich_text_rc = rich_text.clone();
+    ///     move |_, evt| {
+    ///         let mut handled = false;
+    ///         match evt {
+    ///             Event::KeyDown => {
+    ///                 if app::event_key_down(Key::PageDown) {
+    ///                     handled = rich_text_rc.auto_close_reviewer();
+    ///                 } else if app::event_key_down(Key::PageUp) {
+    ///                     handled = rich_text_rc.auto_open_reviewer();
+    ///                 }
+    ///
+    ///             }
+    ///             _ => {}
+    ///         }
+    ///         handled
+    ///     }
+    /// });
+    /// win.end();
+    /// win.show();
+    /// app.run().unwrap();
+    /// ```
+    pub fn auto_open_reviewer(&self) -> bool {
         return if !self.data_buffer.borrow().is_empty() && self.reviewer.borrow().is_none() {
             let handle_result = app::handle_main(LocalEvent::OPEN_REVIEWER_FROM_EXTERNAL);
             match handle_result {

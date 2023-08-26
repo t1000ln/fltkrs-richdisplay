@@ -1072,7 +1072,7 @@ impl LinedData for RichData {
     }
 }
 
-
+/// 数据片段调整属性。
 #[derive(Debug, Clone)]
 pub struct RichDataOptions {
     pub id: i64,

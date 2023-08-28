@@ -1,4 +1,4 @@
-use std::cell::{RefCell};
+use std::cell::{Cell, RefCell};
 use std::cmp::{max, min, Ordering};
 use std::collections::HashMap;
 use std::fmt::{Debug};
@@ -8,8 +8,9 @@ use fltk::draw::{descent, draw_image, draw_line, draw_rounded_rectf, draw_text2,
 use fltk::enums::{Align, Color, ColorDepth, Cursor, Font};
 use fltk::image::RgbImage;
 use fltk::prelude::ImageExt;
+
 use idgenerator_thin::YitIdHelper;
-use log::{error};
+use log::{debug, error};
 
 pub mod rich_text;
 pub mod rich_reviewer;
@@ -47,22 +48,55 @@ impl LocalEvent {
 
 }
 
-/// 鼠标事件发生的位置，相对于窗口的坐标系。
-#[derive(Debug)]
-pub struct EventPoint(i32, i32);
-
-/// 矩形范围的左上角x/y坐标和宽高。
+/// 矩形结构，x/y表示左上角坐标，w/h表示宽和高，w/h不为负值。
 #[derive(Debug, Clone, Eq, Hash, PartialEq)]
-pub struct Coordinates(i32, i32, i32, i32);
-impl Coordinates {
+pub struct Rectangle(i32, i32, i32, i32);
+impl Rectangle {
+    /// 构建新的矩形结构，并且保证构建出的矩形x/y在左上角，w/h大于等于0.
+    ///
+    /// # Arguments
+    ///
+    /// * `x`: 起始x坐标。
+    /// * `y`: 起始y坐标。
+    /// * `w`: 起始宽度，可以小于零。用于兼容鼠标向任意方向拖拽的场景。
+    /// * `h`: 起始高度，可以小于零。用于兼容鼠标向任意方向拖拽的场景。
+    ///
+    /// returns: Rectangle
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fltkrs_richdisplay::Rectangle;
+    ///
+    /// let rect = Rectangle::new(20, 30, 25, 25);
+    /// assert_eq!(rect.tup(), (20, 30, 25, 25));
+    ///
+    /// let rect = Rectangle::new(20, 30, -10, 25);
+    /// assert_eq!(rect.tup(), (10, 30, 10, 25));
+    ///
+    /// let rect = Rectangle::new(20, 30, 10, -25);
+    /// assert_eq!(rect.tup(), (20, 5, 10, 25));
+    ///
+    /// let rect = Rectangle::new(20, 30, -10, -25);
+    /// assert_eq!(rect.tup(), (10, 5, 10, 25));
+    /// ```
     pub fn new(x: i32, y: i32, w: i32, h: i32) -> Self {
-        Coordinates(x, y, w, h)
+        if w < 0 && h < 0 {
+            Rectangle(x + w, y + h, -w, -h)
+        } else if w < 0 {
+            Rectangle(x + w, y, -w, h)
+        } else if h < 0 {
+            Rectangle(x, y + h, w, -h)
+        } else {
+            Rectangle(x, y, w, h)
+        }
     }
 
-    pub fn to_rect(&self) -> (i32, i32, i32, i32) {
+    pub fn tup(&self) -> (i32, i32, i32, i32) {
         (self.0, self.1, self.2, self.3)
     }
 }
+
 
 /// 同一行内多个分片之间共享的信息。通过Rc<RefCell<ThroughLine>>进行链接。
 #[derive(Debug, Clone)]
@@ -184,6 +218,9 @@ pub struct LinePiece {
 
     /// 在同一行内有多个数据分片的情况下， 跟踪行高信息。每次新增行时，第一个分片需要创建新的对象；在同一行其他分片只需要引用第一个分片的对象即可。
     pub through_line: Rc<RefCell<ThroughLine>>,
+
+    /// 选中文字相对于当前片段的起始到结束位置，位置索引是以`unicode`字符计算的。
+    pub selected_range: Rc<Cell<Option<(usize, usize)>>>,
 }
 
 impl LinePiece {
@@ -200,6 +237,7 @@ impl LinePiece {
             next_y,
             font_height,
             through_line: through_line.clone(),
+            selected_range: Rc::new(Cell::new(None)),
         }));
         through_line.borrow_mut().add_piece(new_piece.clone());
         new_piece
@@ -219,6 +257,7 @@ impl LinePiece {
             next_y: PADDING.top,
             font_height: 1,
             through_line: through_line.clone(),
+            selected_range: Rc::new(Cell::new(None)),
         }));
         through_line.borrow_mut().add_piece(init_piece.clone());
         init_piece
@@ -329,7 +368,7 @@ pub trait LinedData {
     /// ```
     ///
     /// ```
-    fn draw(&self, offset_y: i32, idx: usize, visible_lines_mapper: Rc<RefCell<HashMap<Coordinates, usize>>>, panel_x: i32, panel_y: i32);
+    fn draw(&self, offset_y: i32);
 
     fn estimate(&mut self, blow_line: Rc<RefCell<LinePiece>>, max_width: i32) -> Rc<RefCell<LinePiece>>;
 
@@ -498,9 +537,9 @@ pub fn calc_v_center_offset(line_height: i32, font_height: i32) -> (i32, i32) {
 /// ```
 ///
 /// ```
-pub fn mouse_enter(visible_lines: Rc<RefCell<HashMap<Coordinates, usize>>>) -> bool {
+pub fn mouse_enter(visible_lines: Rc<RefCell<HashMap<Rectangle, usize>>>) -> bool {
     for area in visible_lines.borrow().keys() {
-        let (x, y, w, h) = area.to_rect();
+        let (x, y, w, h) = area.tup();
         if app::event_inside(x, y, w, h) {
             return true;
         }
@@ -803,7 +842,7 @@ impl LinedData for RichData {
         }
     }
 
-    fn draw(&self, offset_y: i32, idx: usize, visible_lines_mapper: Rc<RefCell<HashMap<Coordinates, usize>>>, panel_x: i32, panel_y: i32) {
+    fn draw(&self, offset_y: i32) {
         match self.data_type {
             DataType::Text => {
                 let bg_offset = 1;
@@ -812,10 +851,15 @@ impl LinedData for RichData {
                 for piece in self.line_pieces.iter() {
                     let piece = &*piece.borrow();
                     let y = piece.y - offset_y;
-                    if self.clickable() {
-                        let map = &mut *visible_lines_mapper.borrow_mut();
-                        map.insert(Coordinates::new(piece.x + panel_x, y + panel_y, piece.w, piece.h), idx);
-                    }
+                    // if self.clickable() {
+                    //     let cmap = &mut *clickable_data_mapper.borrow_mut();
+                    //     cmap.insert(Rectangle::new(piece.x + panel_x, y + panel_y, piece.w, piece.h), idx);
+                    // }
+                    //
+                    // {
+                    //     let vmap = &mut *visible_lines.borrow_mut();
+                    //     vmap.insert(Rectangle::new(piece.x + panel_x, y + panel_y, piece.w, piece.h), piece.clone());
+                    // }
 
                     if let Some(bg_color) = &self.bg_color {
                         // 绘制背景色
@@ -826,6 +870,19 @@ impl LinedData for RichData {
 
                         #[cfg(not(target_os = "linux"))]
                         draw_rounded_rectf(piece.x, y - piece.spacing, piece.w, piece.font_height, 4);
+                    }
+
+                    if let Some((from, to)) = piece.selected_range.get() {
+                        // 绘制选中背景色
+                        set_draw_color(Color::Selection);
+                        let (skip_width, _) = measure(piece.line.chars().take(from).collect::<String>().as_str(), false);
+                        let (fill_width, _) = measure(piece.line.chars().skip(from).take(to - from).collect::<String>().as_str(), false);
+
+                        #[cfg(target_os = "linux")]
+                        draw_rounded_rectf(piece.x + skip_width, y - piece.spacing + 2, fill_width, piece.font_height, 4);
+
+                        #[cfg(not(target_os = "linux"))]
+                        draw_rounded_rectf(piece.x + skip_width, y - piece.spacing, fill_width, piece.font_height, 4);
                     }
 
                     set_draw_color(self.fg_color);
@@ -848,10 +905,10 @@ impl LinedData for RichData {
             DataType::Image => {
                 if let Some(piece) = self.line_pieces.last() {
                     let piece = &*piece.borrow();
-                    if self.clickable() {
-                        let map = &mut *visible_lines_mapper.borrow_mut();
-                        map.insert(Coordinates::new(piece.x + panel_x, piece.y - offset_y + panel_y, piece.w, piece.h), idx);
-                    }
+                    // if self.clickable() {
+                    //     let map = &mut *clickable_data_mapper.borrow_mut();
+                    //     map.insert(Rectangle::new(piece.x + panel_x, piece.y - offset_y + panel_y, piece.w, piece.h), idx);
+                    // }
 
                     if let Some(img) = &self.image {
                         if let Err(e) = draw_image(img.as_slice(), piece.x, piece.y - offset_y, piece.w, piece.h, ColorDepth::Rgb8) {
@@ -1135,70 +1192,90 @@ impl RichDataOptions {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use std::cmp::Ordering;
-    use fltk::enums::Font;
-    use super::*;
+/// 碰撞检测，检查两个矩形区域是否出现交叉。
+///
+/// # Arguments
+///
+/// * `a`: 目标区域。
+/// * `b`: 当前区域，或者鼠标拖拽选择区域。
+///
+/// returns: bool
+///
+/// # Examples
+///
+/// ```
+/// use fltkrs_richdisplay::{is_overlap, Rectangle};
+/// let c_coord = Rectangle(40, 28, 40 + 21, 50);
+/// let selection_area = Rectangle(40, 28, 80, 45);
+/// if is_overlap(&c_coord, &selection_area) {
+///     println!("选区包含了目标区域");
+/// }
+/// ```
+pub fn is_overlap(target_area: &Rectangle, selection_area: &Rectangle) -> bool {
+    target_area.0 < (selection_area.0 + selection_area.2) && (target_area.0 + target_area.2) > selection_area.0 && target_area.1 < (selection_area.1 + selection_area.3) && (target_area.1 + target_area.3) > selection_area.1
+}
 
+pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>) -> bool {
+    /*
+    遍历可见行，检查每一行的矩形范围是否与选区有重叠，若有重叠则继续检测出现重叠的行中哪些文字片段与选区有重叠。
+     */
+    let mut selected = false;
+    for (line_rect, piece) in visible_lines.borrow_mut().iter_mut() {
+        if is_overlap(line_rect, drag_area) {
+            // 当前行与选区有重叠，from:出现重叠的起始字符索引号，to:出现重叠的结束字符索引号。
+            let (mut from, len) = (0, piece.line.chars().count());
+            let mut to = len;
+            let mut overlap = false;
+            /*
+            逐字检测重叠的文字片段。
+            首先从首字符逐字累加试算其矩形范围，检测是否重叠，得出起始索引号。
+            待得到起始索引号后，再试算剩余部分文字的矩形范围，并逐字向后缩减范围，得出非重叠字符的索引号时即刻终止循环。
+             */
+            for i in 0..len {
+                if !overlap {
+                    let (pre_half_width, pre_half_height) = measure(piece.line.chars().take(i + 1).collect::<String>().as_str(), false);
+                    let part_rect = Rectangle::new(line_rect.0, line_rect.1, pre_half_width, pre_half_height);
+                    if is_overlap(&part_rect, drag_area) {
+                        from = i;
+                        overlap = true;
+                    }
 
-    #[test]
-    pub fn test_estimate() {
-        // let rich_text = RichData::new_text("安全并且高效地处理并发编程是Rust的另一个主要目标。并发编程和并行编程这两种概念随着计算机设备的多核优化而变得越来越重要。并发编程允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。".to_string());
-        let mut rich_text: RichData = UserData::new_text("asdfh\nasdf\n".to_string()).into();
-        let from_y = 5;
-        let top_y = from_y;
-        let mut last_piece = LinePiece::new("".to_string(), 5, from_y, 0, 0, top_y, 0, 5, 5, 1, Rc::new(RefCell::new(Default::default())));
-        last_piece = rich_text.estimate(last_piece, 785);
-        println!("last_line: {:?}", last_piece);
-        let increased_height = rich_text.height();
-        println!("increased_height: {}", increased_height);
+                } else if overlap {
+                    let (post_half_width, post_half_height) = measure(piece.line.chars().skip(i).collect::<String>().as_str(), false);
+                    let part_rect = Rectangle::new(line_rect.0 + line_rect.2 - post_half_width, line_rect.1 + line_rect.3 - post_half_height, post_half_width, post_half_height);
+                    if !is_overlap(&part_rect, drag_area) {
+                        to = i;
+                        break;
+                    }
 
-        let mut rich_text: RichData = UserData::new_text("asdfh\nasdf\n".to_string()).set_font(Font::HelveticaBold, 32).into();
-        last_piece = rich_text.estimate(last_piece, 785);
-        println!("last_line: {:?}", last_piece);
-        let increased_height = rich_text.height();
-        println!("increased_height: {}", increased_height);
-
-        let mut rich_text: RichData = UserData::new_text("asdfh\nasdf\n".to_string()).set_font(Font::HelveticaBold, 16).into();
-        last_piece = rich_text.estimate(last_piece, 785);
-        println!("last_line: {:?}", last_piece);
-        let increased_height = rich_text.height();
-        println!("increased_height: {}", increased_height);
-    }
-
-    #[test]
-    pub fn test_str() {
-        let text = "0123456789";
-        let t1 = &text[0..4];
-        println!("t1: {:?}", t1);
-
-        let mut tw = 0;
-        let chars = text.chars();
-        let seek = 6;
-        if let Ok(p) = (0..(text.len() - 1)).collect::<Vec<usize>>().binary_search_by({
-            move |pos| {
-                println!("pos: {:?}", pos);
-                tw = *pos;
-                if pos <= &seek && pos + 1 > seek {
-
-                    Ordering::Equal
-                } else if pos > &seek {
-                    Ordering::Greater
-                } else {
-                    Ordering::Less
                 }
             }
-        }) {
-            println!("p: {}, tw: {}", p, tw);
-        } else {
-            println!("tw: {:?}", tw);
+            debug!("from: {}, to: {}, len: {}", from, to, len);
+            if overlap {
+                piece.selected_range.set(Some((from, to)));
+                selected = true;
+            }
         }
     }
+    selected
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::Rectangle;
 
     #[test]
-    pub fn test_collect() {
-        let cl = (0..66).collect::<Vec<i32>>();
-        println!("cl: {:?}", cl);
+    pub fn make_rectangle_test() {
+        let rect = Rectangle::new(20, 30, 25, 25);
+        assert_eq!(rect.tup(), (20, 30, 25, 25));
+
+        let rect = Rectangle::new(20, 30, -10, 25);
+        assert_eq!(rect.tup(), (10, 30, 10, 25));
+
+        let rect = Rectangle::new(20, 30, 10, -25);
+        assert_eq!(rect.tup(), (20, 5, 10, 25));
+
+        let rect = Rectangle::new(20, 30, -10, -25);
+        assert_eq!(rect.tup(), (10, 5, 10, 25));
     }
 }

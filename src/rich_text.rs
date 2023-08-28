@@ -4,6 +4,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use fltk::draw::{draw_rect_fill, Offscreen};
 use fltk::enums::{Color, Cursor, Event};
@@ -12,10 +13,11 @@ use fltk::prelude::{GroupExt, WidgetBase, WidgetExt};
 use fltk::{app, draw, widget_extends};
 use fltk::app::MouseWheel;
 use fltk::group::{Flex, Scroll};
-use crate::{Coordinates, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData};
+use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData, select_text};
 
 use idgenerator_thin::{IdGeneratorOptions, YitIdHelper};
-use log::{error};
+use log::{debug, error};
+use throttle_my_fn::throttle;
 use crate::rich_reviewer::RichReviewer;
 
 static ID_GENERATOR_INIT: OnceLock<u8> = OnceLock::new();
@@ -34,7 +36,8 @@ pub struct RichText {
     inner: Flex,
     reviewer: Rc<RefCell<Option<RichReviewer>>>,
     panel_screen: Rc<RefCell<Offscreen>>,
-    visible_lines: Rc<RefCell<HashMap<Coordinates, usize>>>,
+    clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
+    visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
 }
 widget_extends!(RichText, Flex, inner);
 
@@ -65,7 +68,8 @@ impl RichText {
         let buffer_max_lines = 100;
         let data_buffer = Rc::new(RefCell::new(VecDeque::<RichData>::with_capacity(buffer_max_lines + 1)));
 
-        let visible_lines = Rc::new(RefCell::new(HashMap::<Coordinates, usize>::new()));
+        let visible_lines = Rc::new(RefCell::new(HashMap::<Rectangle, LinePiece>::new()));
+        let clickable_data = Rc::new(RefCell::new(HashMap::<Rectangle, usize>::new()));
         let notifier: Rc<RefCell<Option<tokio::sync::mpsc::Sender<UserData>>>> = Rc::new(RefCell::new(None));
         let to_be_dropped_reviewer = Rc::new(Cell::new(None::<(Scroll, Frame)>));
 
@@ -86,6 +90,7 @@ impl RichText {
             let buffer_rc = data_buffer.clone();
             let bg_rc = background_color.clone();
             let visible_lines_rc = visible_lines.clone();
+            let clickable_data_rc = clickable_data.clone();
             let screen_rc = panel_screen.clone();
             let to_be_dropped_reviewer_rc = to_be_dropped_reviewer.clone();
             let notifier_rc = notifier.clone();
@@ -99,6 +104,7 @@ impl RichText {
                         screen_rc.clone(),
                         bg_rc.clone(),
                         visible_lines_rc.clone(),
+                        clickable_data_rc.clone(),
                         buffer_rc.clone()
                     );
                     return if should_remove {
@@ -130,6 +136,7 @@ impl RichText {
                         screen_rc.clone(),
                         &panel_rc,
                         visible_lines_rc.clone(),
+                        clickable_data_rc.clone(),
                         bg_rc.get(),
                         buffer_rc.clone()
                     );
@@ -177,6 +184,7 @@ impl RichText {
                                     screen_rc.clone(),
                                     &panel_rc,
                                     visible_lines_rc.clone(),
+                                    clickable_data_rc.clone(),
                                     bg_rc.get(),
                                     buffer_rc.clone()
                                 );
@@ -193,7 +201,8 @@ impl RichText {
                                     screen_rc.clone(),
                                     bg_rc.clone(),
                                     visible_lines_rc.clone(),
-                                    buffer_rc.clone()
+                                    clickable_data_rc.clone(),
+                                    buffer_rc.clone(),
                                 );
                                 if should_remove {
                                     reviewer_rc.replace(None);
@@ -218,10 +227,14 @@ impl RichText {
             let buffer_rc = data_buffer.clone();
             let last_window_size = Rc::new(Cell::new((0, 0)));
             let visible_lines_rc = visible_lines.clone();
+            let clickable_data_rc = clickable_data.clone();
             let notifier_rc = notifier.clone();
             let screen_rc = panel_screen.clone();
             let bg_rc = background_color.clone();
             let to_be_dropped_reviewer_rc = to_be_dropped_reviewer.clone();
+            let mut push_from_x = 0;
+            let mut push_from_y = 0;
+            let mut selected = false;
             move |ctx, evt| {
                 if evt == LocalEvent::DROP_REVIEWER.into() {
                     // 销毁组件，回收内存，否则会有内存泄漏。
@@ -256,6 +269,7 @@ impl RichText {
                                     screen_rc.clone(),
                                     &ctx,
                                     visible_lines_rc.clone(),
+                                    clickable_data_rc.clone(),
                                     bg_rc.get(),
                                     buffer_rc.clone()
                                 );
@@ -263,7 +277,7 @@ impl RichText {
                         }
                         Event::Move => {
                             // 检测鼠标进入可互动区域，改变鼠标样式
-                            if mouse_enter(visible_lines_rc.clone()) {
+                            if mouse_enter(clickable_data_rc.clone()) {
                                 draw::set_cursor(Cursor::Hand);
                             } else {
                                 draw::set_cursor(Cursor::Default);
@@ -274,8 +288,8 @@ impl RichText {
                         }
                         Event::Released => {
                             // 检测鼠标点击可互动区域，执行用户自定义操作
-                            for (area, idx) in visible_lines_rc.borrow().iter() {
-                                let (x, y, w, h) = area.to_rect();
+                            for (area, idx) in clickable_data_rc.borrow().iter() {
+                                let (x, y, w, h) = area.tup();
                                 if app::event_inside(x, y, w, h) {
                                     if let Some(rd) = buffer_rc.borrow().get(*idx) {
                                         let sd = rd.into();
@@ -292,6 +306,43 @@ impl RichText {
                                 }
                             }
                         }
+                        Event::Push => {
+                            let coords = app::event_coords();
+                            push_from_x = coords.0;
+                            push_from_y = coords.1;
+                            if selected {
+                                for (_, piece) in visible_lines_rc.borrow_mut().iter_mut() {
+                                    piece.selected_range.set(None);
+                                }
+                                Self::draw_offline(
+                                    screen_rc.clone(),
+                                    &ctx,
+                                    visible_lines_rc.clone(),
+                                    clickable_data_rc.clone(),
+                                    bg_rc.get(),
+                                    buffer_rc.clone()
+                                );
+                                ctx.redraw();
+                            }
+
+                            return true;
+                        }
+                        Event::Drag => {
+                            let (ox, oy) = app::event_coords();
+                            let selection_rect = Rectangle::new(push_from_x, push_from_y, ox - push_from_x, oy - push_from_y);
+                            if let Some(ret) = Self::redraw_after_drag(
+                                selection_rect,
+                                screen_rc.clone(),
+                                ctx,
+                                visible_lines_rc.clone(),
+                                clickable_data_rc.clone(),
+                                bg_rc.get(),
+                                buffer_rc.clone()
+                            ) {
+                                selected = ret;
+                            }
+                            return true;
+                        }
                         _ => {}
                     }
                     false
@@ -300,7 +351,29 @@ impl RichText {
             }
         });
 
-        Self { panel, data_buffer, background_color, buffer_max_lines, notifier, inner, reviewer, panel_screen, visible_lines }
+        Self { panel, data_buffer, background_color, buffer_max_lines, notifier, inner, reviewer, panel_screen, visible_lines, clickable_data }
+    }
+
+    #[throttle(1, Duration::from_millis(500))]
+    fn redraw_after_drag(selection_rect: Rectangle, offscreen: Rc<RefCell<Offscreen>>,
+                         panel: &mut Frame,
+                         visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
+                         clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
+                         bg_color: Color, data_buffer: Rc<RefCell<VecDeque<RichData>>>) -> bool {
+        let selected = select_text(&selection_rect, visible_lines.clone());
+        if selected {
+            RichText::draw_offline(
+                offscreen,
+                panel,
+                visible_lines,
+                clickable_data,
+                bg_color,
+                data_buffer
+            );
+            panel.redraw();
+        }
+
+        selected
     }
 
     /// 检查是否应该关闭回顾区，若满足关闭条件则关闭回顾区并记录待销毁的回顾区组件。
@@ -310,8 +383,9 @@ impl RichText {
         panel_rc: &Frame,
         screen_rc: Rc<RefCell<Offscreen>>,
         bg_rc: Rc<Cell<Color>>,
-        visible_lines_rc: Rc<RefCell<HashMap<Coordinates, usize>>>,
-        buffer_rc: Rc<RefCell<VecDeque<RichData>>>
+        visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
+        clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
+        buffer_rc: Rc<RefCell<VecDeque<RichData>>>,
     ) -> (bool, Option<(Scroll, Frame)>){
         if let Some(reviewer) = &*reviewer_rc.borrow() {
             let dy = reviewer.scroller.yposition();
@@ -327,9 +401,11 @@ impl RichText {
                     full_height,
                     screen_rc.clone(),
                     panel_rc,
-                    visible_lines_rc.clone(),
+                    visible_lines.clone(),
+                    clickable_data.clone(),
                     bg_rc.get(),
-                    buffer_rc.clone()
+                    buffer_rc.clone(),
+
                 );
 
                 return (true, Some((reviewer.scroller.clone(), reviewer.panel.clone())));
@@ -376,29 +452,53 @@ impl RichText {
             self.data_buffer.borrow_mut().pop_front();
         }
 
-        Self::draw_offline(self.panel_screen.clone(), &self.panel, self.visible_lines.clone(), self.background_color.get(), self.data_buffer.clone());
+        Self::draw_offline(
+            self.panel_screen.clone(),
+            &self.panel,
+            self.visible_lines.clone(),
+            self.clickable_data.clone(),
+            self.background_color.get(),
+            self.data_buffer.clone(),
+        );
 
         self.panel.redraw();
     }
 
-    fn new_offline(w: i32, h: i32, offscreen: Rc<RefCell<Offscreen>>, panel: &Frame, visible_lines: Rc<RefCell<HashMap<Coordinates, usize>>>, bg_color: Color, data_buffer: Rc<RefCell<VecDeque<RichData>>>) {
+    fn new_offline(
+        w: i32, h: i32, offscreen: Rc<RefCell<Offscreen>>,
+        panel: &Frame,
+        visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
+        clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
+        bg_color: Color, data_buffer: Rc<RefCell<VecDeque<RichData>>>
+        ) {
         if let Some(offs) = Offscreen::new(w, h) {
             offscreen.replace(offs);
-            Self::draw_offline(offscreen.clone(), &panel, visible_lines.clone(), bg_color, data_buffer.clone());
+            Self::draw_offline(offscreen.clone(), &panel, visible_lines.clone(), clickable_data, bg_color, data_buffer.clone());
         }
     }
 
-    fn draw_offline(offscreen: Rc<RefCell<Offscreen>>, panel: &Frame, visible_lines: Rc<RefCell<HashMap<Coordinates, usize>>>, bg_color: Color, data_buffer: Rc<RefCell<VecDeque<RichData>>>) {
+    fn draw_offline(
+        offscreen: Rc<RefCell<Offscreen>>,
+        panel: &Frame,
+        visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
+        clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
+        bg_color: Color, data_buffer: Rc<RefCell<VecDeque<RichData>>>) {
+
         offscreen.borrow().begin();
         let (panel_x, panel_y, window_width, window_height) = (panel.x(), panel.y(), panel.width(), panel.height());
         let mut offset_y = 0;
-        visible_lines.borrow_mut().clear();
+
+        let mut vl = visible_lines.borrow_mut();
+        let mut cd = clickable_data.borrow_mut();
+        vl.clear();
+        cd.clear();
 
         // 填充背景
         draw_rect_fill(0, 0, window_width, window_height, bg_color);
 
-        let data = data_buffer.borrow();
 
+        // 绘制数据内容
+        let data = data_buffer.borrow();
         let mut set_offset_y = false;
         for (idx, rich_data) in data.iter().enumerate().rev() {
             if let Some((_, bottom_y, _)) = rich_data.v_bounds {
@@ -410,9 +510,22 @@ impl RichText {
                 if bottom_y < offset_y {
                     break;
                 }
-                rich_data.draw(offset_y, idx, visible_lines.clone(), panel_x, panel_y);
-            }
 
+                // 暂存主体任意部分可见的数据行信息
+                for piece in rich_data.line_pieces.iter() {
+                    let piece = &*piece.borrow();
+                    let y = piece.y - offset_y;
+                    vl.insert(Rectangle::new(piece.x + panel_x, y + panel_y, piece.w, piece.h), piece.clone());
+
+                    // 暂存可操作数据信息
+                    if rich_data.clickable {
+                        cd.insert(Rectangle::new(piece.x + panel_x, y + panel_y, piece.w, piece.h), idx);
+                    }
+                }
+
+                // rich_data.draw(offset_y, idx, visible_lines.clone(),clickable_data.clone(), panel_x, panel_y);
+                rich_data.draw(offset_y);
+            }
         }
 
         // 填充顶部边界空白
@@ -558,7 +671,14 @@ impl RichText {
             if let Some(rd) = self.data_buffer.borrow_mut().get_mut(target_idx) {
                 update_data_properties(options.clone(), rd);
             }
-            Self::draw_offline(self.panel_screen.clone(), &self.panel, self.visible_lines.clone(), self.background_color.get(), self.data_buffer.clone());
+            Self::draw_offline(
+                self.panel_screen.clone(),
+                &self.panel,
+                self.visible_lines.clone(),
+                self.clickable_data.clone(),
+                self.background_color.get(),
+                self.data_buffer.clone()
+            );
         }
 
         if let Some(reviewer) = self.reviewer.borrow_mut().as_mut() {
@@ -647,7 +767,14 @@ impl RichText {
                 disable_data(rd);
             }
 
-            Self::draw_offline(self.panel_screen.clone(), &self.panel, self.visible_lines.clone(), self.background_color.get(), self.data_buffer.clone());
+            Self::draw_offline(
+                self.panel_screen.clone(),
+                &self.panel,
+                self.visible_lines.clone(),
+                self.clickable_data.clone(),
+                self.background_color.get(),
+                self.data_buffer.clone(),
+            );
         }
 
         if let Some(reviewer) = self.reviewer.borrow_mut().as_mut() {

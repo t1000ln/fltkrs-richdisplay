@@ -11,7 +11,7 @@ use fltk::group::{Scroll, ScrollType};
 use fltk::prelude::{GroupExt, WidgetBase, WidgetExt};
 use fltk::{app, draw, widget_extends};
 use log::{debug, error};
-use crate::{Coordinates, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData};
+use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData};
 use crate::rich_text::{PANEL_PADDING};
 
 #[derive(Clone, Debug)]
@@ -20,7 +20,8 @@ pub struct RichReviewer {
     pub(crate) panel: Frame,
     data_buffer: Rc<RefCell<Vec<RichData>>>,
     background_color: Rc<Cell<Color>>,
-    visible_lines: Rc<RefCell<HashMap<Coordinates, usize>>>,
+    visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
+    clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
     reviewer_screen: Rc<RefCell<Offscreen>>,
     notifier: Rc<RefCell<Option<tokio::sync::mpsc::Sender<UserData>>>>,
     pub resize_panel_after_resize: Rc<Cell<(i32, i32, i32, i32)>>,
@@ -45,7 +46,8 @@ impl RichReviewer {
 
         let data_buffer: Rc<RefCell<Vec<RichData>>> = Rc::new(RefCell::new(vec![]));
         let background_color = Rc::new(Cell::new(Color::Black));
-        let visible_lines = Rc::new(RefCell::new(HashMap::<Coordinates, usize>::new()));
+        let visible_lines = Rc::new(RefCell::new(HashMap::<Rectangle, LinePiece>::new()));
+        let clickable_data = Rc::new(RefCell::new(HashMap::<Rectangle, usize>::new()));
         let notifier: Rc<RefCell<Option<tokio::sync::mpsc::Sender<UserData>>>> = Rc::new(RefCell::new(None));
         let reviewer_screen = Rc::new(RefCell::new(Offscreen::new(w, h).unwrap()));
         let scroll_panel_to_y_after_resize = Rc::new(Cell::new(0));
@@ -55,13 +57,14 @@ impl RichReviewer {
             let data_buffer_rc = data_buffer.clone();
             let scroll_rc = scroller.clone();
             let visible_lines_rc = visible_lines.clone();
+            let clickable_data_rc = clickable_data.clone();
             let bg_rc = background_color.clone();
             let screen_rc = reviewer_screen.clone();
             move |_| {
                 /*
                 先离线绘制内容面板，再根据面板大小复制所需区域内容。这样做是为了避免在线绘制时，会出现绘制内容超出面板边界的问题。
                  */
-                Self::draw_offline(screen_rc.clone(), &scroll_rc, data_buffer_rc.clone(), bg_rc.get(), visible_lines_rc.clone());
+                Self::draw_offline(screen_rc.clone(), &scroll_rc, visible_lines_rc.clone(), clickable_data_rc.clone(), data_buffer_rc.clone(), bg_rc.get());
 
                 screen_rc.borrow().copy(scroll_rc.x(), scroll_rc.y(), scroll_rc.width(), scroll_rc.height(), 0, 0);
             }
@@ -76,7 +79,6 @@ impl RichReviewer {
             let new_scroll_y_rc = scroll_panel_to_y_after_resize.clone();
             let mut scroller_rc = scroller.clone();
             let resize_panel_after_resize_rc = resize_panel_after_resize.clone();
-
             move |ctx, evt| {
                 if evt == LocalEvent::RESIZE.into() {
                     let (x, y, w, h) = resize_panel_after_resize_rc.get();
@@ -101,7 +103,7 @@ impl RichReviewer {
             let panel_rc = panel.clone();
             let new_scroll_y_rc = scroll_panel_to_y_after_resize.clone();
             let resize_panel_after_resize_rc = resize_panel_after_resize.clone();
-            let visible_lines_rc = visible_lines.clone();
+            let clickable_data_rc = clickable_data.clone();
             let mut push_from_x = 0;
             let mut push_from_y = 0;
             move |scroller, evt| {
@@ -159,7 +161,7 @@ impl RichReviewer {
                     }
                     Event::Move => {
                         // 检测鼠标进入可互动区域，改变鼠标样式
-                        if mouse_enter(visible_lines_rc.clone()) {
+                        if mouse_enter(clickable_data_rc.clone()) {
                             draw::set_cursor(Cursor::Hand);
                         } else {
                             draw::set_cursor(Cursor::Default);
@@ -170,8 +172,8 @@ impl RichReviewer {
                     }
                     Event::Released => {
                         // 检测鼠标点击可互动区域，执行用户自定义操作
-                        for (area, idx) in visible_lines_rc.borrow().iter() {
-                            let (x, y, w, h) = area.to_rect();
+                        for (area, idx) in clickable_data_rc.borrow().iter() {
+                            let (x, y, w, h) = area.tup();
                             if app::event_inside(x, y, w, h) {
                                 if let Some(rd) = buffer_rc.borrow().get(*idx) {
                                     let sd = rd.into();
@@ -214,7 +216,7 @@ impl RichReviewer {
             }
         });
 
-        Self { scroller, panel, data_buffer, background_color, visible_lines, reviewer_screen, scroll_panel_to_y_after_resize, resize_panel_after_resize, notifier }
+        Self { scroller, panel, data_buffer, background_color, visible_lines, clickable_data, reviewer_screen, scroll_panel_to_y_after_resize, resize_panel_after_resize, notifier }
     }
 
     pub fn set_background_color(&self, color: Color) {
@@ -293,11 +295,24 @@ impl RichReviewer {
         }
     }
 
-    pub fn draw_offline(screen: Rc<RefCell<Offscreen>>, scroller: &Scroll, data_buffer: Rc<RefCell<Vec<RichData>>>, background_color: Color, visible_lines: Rc<RefCell<HashMap<Coordinates, usize>>>) {
+    fn draw_offline(
+        screen: Rc<RefCell<Offscreen>>,
+        scroller: &Scroll,
+        visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
+        clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
+        data_buffer: Rc<RefCell<Vec<RichData>>>,
+        background_color: Color,
+        ) {
+
         screen.borrow().begin();
         let (scroller_x, scroller_y, window_width, window_height) = (scroller.x(), scroller.y(), scroller.width(), scroller.height());
         let drawable_height = window_height - PANEL_PADDING;
-        visible_lines.borrow_mut().clear();
+
+        let mut vl = visible_lines.borrow_mut();
+        let mut cd = clickable_data.borrow_mut();
+        vl.clear();
+        cd.clear();
+
         // 滚动条滚动的高度在0到(panel.height - scroll.height)之间。
         let mut base_y = scroller.yposition();
         if base_y < 0 {
@@ -345,7 +360,17 @@ impl RichReviewer {
         }
 
         for (idx, rich_data) in data[from_index..to_index].iter().enumerate() {
-            rich_data.draw(offset_y, idx + from_index, visible_lines.clone(), scroller_x, scroller_y);
+            // rich_data.draw(offset_y, idx + from_index, visible_lines.clone(), clickable_data.clone(), scroller_x, scroller_y);
+            rich_data.draw(offset_y);
+
+            for piece in rich_data.line_pieces.iter() {
+                let piece = &*piece.borrow();
+                let y = piece.y - offset_y;
+                vl.insert(Rectangle::new(piece.x + scroller_x, y + scroller_y, piece.w, piece.h), piece.clone());
+                if rich_data.clickable {
+                    cd.insert(Rectangle::new(piece.x + scroller_x, y + scroller_y, piece.w, piece.h), idx + from_index);
+                }
+            }
         }
 
         /*
@@ -411,7 +436,14 @@ impl RichReviewer {
             if let Some(rd) = self.data_buffer.borrow_mut().get_mut(target_idx) {
                 update_data_properties(options, rd);
             }
-            Self::draw_offline(self.reviewer_screen.clone(), &self.scroller, self.data_buffer.clone(), self.background_color.get(), self.visible_lines.clone());
+            Self::draw_offline(
+                self.reviewer_screen.clone(),
+                &self.scroller,
+                self.visible_lines.clone(),
+                self.clickable_data.clone(),
+                self.data_buffer.clone(),
+                self.background_color.get(),
+            );
         }
     }
 
@@ -428,7 +460,15 @@ impl RichReviewer {
                 disable_data(rd);
             }
 
-            Self::draw_offline(self.reviewer_screen.clone(), &self.scroller, self.data_buffer.clone(), self.background_color.get(), self.visible_lines.clone());
+            // Self::draw_offline(self.reviewer_screen.clone(), &self.scroller, self.data_buffer.clone(), self.background_color.get(), self.visible_lines.clone());
+            Self::draw_offline(
+                self.reviewer_screen.clone(),
+                &self.scroller,
+                self.visible_lines.clone(),
+                self.clickable_data.clone(),
+                self.data_buffer.clone(),
+                self.background_color.get(),
+            );
         }
     }
 }

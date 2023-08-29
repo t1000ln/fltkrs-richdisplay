@@ -323,6 +323,7 @@ impl RichText {
                                     buffer_rc.clone()
                                 );
                                 ctx.redraw();
+                                selected = false;
                             }
 
                             return true;
@@ -354,13 +355,13 @@ impl RichText {
         Self { panel, data_buffer, background_color, buffer_max_lines, notifier, inner, reviewer, panel_screen, visible_lines, clickable_data }
     }
 
-    #[throttle(1, Duration::from_millis(500))]
+    #[throttle(1, Duration::from_millis(100))]
     fn redraw_after_drag(selection_rect: Rectangle, offscreen: Rc<RefCell<Offscreen>>,
                          panel: &mut Frame,
                          visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
                          clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
                          bg_color: Color, data_buffer: Rc<RefCell<VecDeque<RichData>>>) -> bool {
-        let selected = select_text(&selection_rect, visible_lines.clone());
+        let selected = select_text(&selection_rect, visible_lines.clone(), false);
         if selected {
             RichText::draw_offline(
                 offscreen,
@@ -445,6 +446,11 @@ impl RichText {
             // 首次添加数据
             let last_piece = LinePiece::init_piece();
             rich_data.estimate(last_piece, drawable_max_width);
+        }
+
+        for piece in rich_data.line_pieces.iter() {
+            piece.borrow_mut().font = rich_data.font;
+            piece.borrow_mut().font_size = rich_data.font_size;
         }
 
         self.data_buffer.borrow_mut().push_back(rich_data);

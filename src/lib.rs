@@ -1,6 +1,6 @@
 use std::cell::{Cell, RefCell};
 use std::cmp::{max, min, Ordering};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::{Debug};
 use std::rc::{Rc, Weak};
 use fltk::{app, draw};
@@ -10,7 +10,7 @@ use fltk::image::RgbImage;
 use fltk::prelude::ImageExt;
 
 use idgenerator_thin::YitIdHelper;
-use log::{debug, error};
+use log::{debug, error, warn};
 
 pub mod rich_text;
 pub mod rich_reviewer;
@@ -49,7 +49,7 @@ impl LocalEvent {
 }
 
 /// 矩形结构，x/y表示左上角坐标，w/h表示宽和高，w/h不为负值。
-#[derive(Debug, Clone, Eq, Hash, PartialEq)]
+#[derive(Debug, Clone, Eq, Hash, PartialEq, Ord, PartialOrd)]
 pub struct Rectangle(i32, i32, i32, i32);
 impl Rectangle {
     /// 构建新的矩形结构，并且保证构建出的矩形x/y在左上角，w/h大于等于0.
@@ -221,6 +221,9 @@ pub struct LinePiece {
 
     /// 选中文字相对于当前片段的起始到结束位置，位置索引是以`unicode`字符计算的。
     pub selected_range: Rc<Cell<Option<(usize, usize)>>>,
+
+    pub font: Font,
+    pub font_size: i32,
 }
 
 impl LinePiece {
@@ -238,6 +241,8 @@ impl LinePiece {
             font_height,
             through_line: through_line.clone(),
             selected_range: Rc::new(Cell::new(None)),
+            font: Font::Helvetica,
+            font_size: 12,
         }));
         through_line.borrow_mut().add_piece(new_piece.clone());
         new_piece
@@ -258,9 +263,15 @@ impl LinePiece {
             font_height: 1,
             through_line: through_line.clone(),
             selected_range: Rc::new(Cell::new(None)),
+            font: Font::Helvetica,
+            font_size: 12,
         }));
         through_line.borrow_mut().add_piece(init_piece.clone());
         init_piece
+    }
+
+    pub fn eq2(&mut self, other: &Self) -> bool {
+        self.x == other.x && self.y == other.y && self.w == other.w && self.h == other.h && self.line.eq(&other.line)
     }
 }
 
@@ -1215,45 +1226,116 @@ pub fn is_overlap(target_area: &Rectangle, selection_area: &Rectangle) -> bool {
     target_area.0 < (selection_area.0 + selection_area.2) && (target_area.0 + target_area.2) > selection_area.0 && target_area.1 < (selection_area.1 + selection_area.3) && (target_area.1 + target_area.3) > selection_area.1
 }
 
-pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>) -> bool {
+pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>, column_mode: bool) -> bool {
     /*
     遍历可见行，检查每一行的矩形范围是否与选区有重叠，若有重叠则继续检测出现重叠的行中哪些文字片段与选区有重叠。
      */
     let mut selected = false;
+    let mut selected_pieces: BTreeMap<Rectangle, LinePiece> = BTreeMap::new();
     for (line_rect, piece) in visible_lines.borrow_mut().iter_mut() {
         if is_overlap(line_rect, drag_area) {
+            selected_pieces.insert(line_rect.clone(), piece.clone());
             // 当前行与选区有重叠，from:出现重叠的起始字符索引号，to:出现重叠的结束字符索引号。
-            let (mut from, len) = (0, piece.line.chars().count());
-            let mut to = len;
-            let mut overlap = false;
-            /*
-            逐字检测重叠的文字片段。
-            首先从首字符逐字累加试算其矩形范围，检测是否重叠，得出起始索引号。
-            待得到起始索引号后，再试算剩余部分文字的矩形范围，并逐字向后缩减范围，得出非重叠字符的索引号时即刻终止循环。
-             */
-            for i in 0..len {
-                if !overlap {
-                    let (pre_half_width, pre_half_height) = measure(piece.line.chars().take(i + 1).collect::<String>().as_str(), false);
-                    let part_rect = Rectangle::new(line_rect.0, line_rect.1, pre_half_width, pre_half_height);
-                    if is_overlap(&part_rect, drag_area) {
-                        from = i;
-                        overlap = true;
-                    }
+            set_font(piece.font, piece.font_size);
 
-                } else if overlap {
-                    let (post_half_width, post_half_height) = measure(piece.line.chars().skip(i).collect::<String>().as_str(), false);
-                    let part_rect = Rectangle::new(line_rect.0 + line_rect.2 - post_half_width, line_rect.1 + line_rect.3 - post_half_height, post_half_width, post_half_height);
-                    if !is_overlap(&part_rect, drag_area) {
-                        to = i;
-                        break;
+            let (x, len)= (line_rect.0, piece.line.chars().count());
+            let text = piece.line.as_str();
+            let from_vec = (0..len).collect::<Vec<usize>>();
+            if let Ok(from) = from_vec.binary_search_by({
+                let left_border = drag_area.0;
+                move |pos| {
+                    let (pw1, _) = measure(text.chars().take(*pos + 1).collect::<String>().as_str(), false);
+                    if x + pw1 < left_border {
+                        Ordering::Less
+                    } else {
+                        if *pos == 0 {
+                            Ordering::Equal
+                        } else {
+                            let (pw2, _) = measure(text.chars().take(*pos).collect::<String>().as_str(), false);
+                            if x + pw2 <= left_border {
+                                Ordering::Equal
+                            } else {
+                                Ordering::Greater
+                            }
+                        }
                     }
-
+                }
+            }) {
+                if from == len - 1 {
+                    piece.selected_range.set(Some((from, len)));
+                    selected = true;
+                } else {
+                    let to_vec = (from..len).collect::<Vec<usize>>();
+                    if let Ok(to) = to_vec.binary_search_by({
+                        let right_boarder = drag_area.0 + drag_area.2;
+                        move |pos| {
+                            let (pw1, _) = measure(text.chars().take(*pos + 1).collect::<String>().as_str(), false);
+                            if x + pw1 < right_boarder {
+                                if pos + 1 == len {
+                                    Ordering::Equal
+                                } else {
+                                    Ordering::Less
+                                }
+                            } else {
+                                if *pos == 0 {
+                                    Ordering::Equal
+                                } else {
+                                    let (pw2, _) = measure(text.chars().take(*pos).collect::<String>().as_str(), false);
+                                    if x + pw2 <= right_boarder {
+                                        Ordering::Equal
+                                    } else {
+                                        Ordering::Greater
+                                    }
+                                }
+                            }
+                        }
+                    }) {
+                        piece.selected_range.set(Some((from, to_vec[to] + 1)));
+                        selected = true;
+                    } else {
+                        error!("检测结尾时异常！")
+                    }
                 }
             }
-            debug!("from: {}, to: {}, len: {}", from, to, len);
-            if overlap {
-                piece.selected_range.set(Some((from, to)));
-                selected = true;
+        } else {
+            piece.selected_range.set(None);
+        }
+    }
+    if selected && !column_mode {
+        // todo: 待完成排序，和范围内全选功能。
+        let lines = selected_pieces.iter().fold(0, {
+            let mut last_y = -1;
+            move |acc, (rect, piece)| {
+                debug!("rect: {:?}", rect);
+                if rect.1 > last_y {
+                    last_y = rect.1;
+                    acc + 1
+                } else {
+                    acc
+                }
+            }
+        });
+        if lines > 2 {
+
+        } else if lines == 2 {
+            debug!("选择两行");
+            if let Some((_, piece)) = selected_pieces.pop_last() {
+                let last_line = &piece.through_line.borrow_mut().ys;
+                for p in last_line.borrow_mut().iter_mut() {
+                    if let Some(p) = p.upgrade() {
+                        let lp = &mut *p.borrow_mut();
+                        if lp.eq2(&piece) {
+                            let mut old_to = 0;
+                            if let Some((_, to)) = lp.selected_range.get() {
+                                old_to = to;
+                            }
+                            lp.selected_range.set(Some((0, old_to)));
+                            break;
+                        } else {
+                            lp.selected_range.set(Some((0, lp.line.chars().count())));
+                        }
+                    }
+                }
             }
         }
     }

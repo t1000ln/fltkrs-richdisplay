@@ -1,16 +1,16 @@
 use std::cell::{Cell, RefCell};
 use std::cmp::{max, min, Ordering};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::{Debug};
 use std::rc::{Rc, Weak};
 use fltk::{app, draw};
-use fltk::draw::{descent, draw_image, draw_line, draw_rounded_rectf, draw_text2, measure, set_draw_color, set_font};
+use fltk::draw::{descent, draw_image, draw_line, draw_rectf, draw_text2, measure, set_draw_color, set_font};
 use fltk::enums::{Align, Color, ColorDepth, Cursor, Font};
 use fltk::image::RgbImage;
 use fltk::prelude::ImageExt;
 
 use idgenerator_thin::YitIdHelper;
-use log::{debug, error, warn};
+use log::{debug, error};
 
 pub mod rich_text;
 pub mod rich_reviewer;
@@ -49,8 +49,45 @@ impl LocalEvent {
 }
 
 /// 矩形结构，x/y表示左上角坐标，w/h表示宽和高，w/h不为负值。
-#[derive(Debug, Clone, Eq, Hash, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Clone, Eq, Hash, PartialEq)]
 pub struct Rectangle(i32, i32, i32, i32);
+
+impl PartialOrd<Self> for Rectangle {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        if self.1 > other.1 {
+            Some(Ordering::Greater)
+        } else if self.1 < other.1 {
+            Some(Ordering::Less)
+        } else {
+            if self.0 > other.0 {
+                Some(Ordering::Greater)
+            } else if self.0 < other.0 {
+                Some(Ordering::Less)
+            } else {
+                Some(Ordering::Equal)
+            }
+        }
+    }
+}
+
+impl Ord for Rectangle {
+    fn cmp(&self, other: &Self) -> Ordering {
+        if self.1 > other.1 {
+            Ordering::Greater
+        } else if self.1 < other.1 {
+            Ordering::Less
+        } else {
+            if self.0 > other.0 {
+                Ordering::Greater
+            } else if self.0 < other.0 {
+                Ordering::Less
+            } else {
+                Ordering::Equal
+            }
+        }
+    }
+}
+
 impl Rectangle {
     /// 构建新的矩形结构，并且保证构建出的矩形x/y在左上角，w/h大于等于0.
     ///
@@ -862,25 +899,19 @@ impl LinedData for RichData {
                 for piece in self.line_pieces.iter() {
                     let piece = &*piece.borrow();
                     let y = piece.y - offset_y;
-                    // if self.clickable() {
-                    //     let cmap = &mut *clickable_data_mapper.borrow_mut();
-                    //     cmap.insert(Rectangle::new(piece.x + panel_x, y + panel_y, piece.w, piece.h), idx);
-                    // }
-                    //
-                    // {
-                    //     let vmap = &mut *visible_lines.borrow_mut();
-                    //     vmap.insert(Rectangle::new(piece.x + panel_x, y + panel_y, piece.w, piece.h), piece.clone());
-                    // }
 
                     if let Some(bg_color) = &self.bg_color {
                         // 绘制背景色
                         set_draw_color(*bg_color);
 
                         #[cfg(target_os = "linux")]
-                        draw_rounded_rectf(piece.x, y - piece.spacing + 2, piece.w, piece.font_height, 4);
+                        draw_rectf(piece.x, y - piece.spacing + 2, piece.w, piece.font_height);
+                        // draw_rounded_rectf(piece.x, y - piece.spacing + 2, piece.w, piece.font_height, 4);
+
 
                         #[cfg(not(target_os = "linux"))]
-                        draw_rounded_rectf(piece.x, y - piece.spacing, piece.w, piece.font_height, 4);
+                        // draw_rounded_rectf(piece.x, y - piece.spacing, piece.w, piece.font_height, 4);
+                        draw_rectf(piece.x, y - piece.spacing, piece.w, piece.font_height);
                     }
 
                     if let Some((from, to)) = piece.selected_range.get() {
@@ -890,10 +921,13 @@ impl LinedData for RichData {
                         let (fill_width, _) = measure(piece.line.chars().skip(from).take(to - from).collect::<String>().as_str(), false);
 
                         #[cfg(target_os = "linux")]
-                        draw_rounded_rectf(piece.x + skip_width, y - piece.spacing + 2, fill_width, piece.font_height, 4);
+                        draw_rectf(piece.x + skip_width, y - piece.spacing + 2, fill_width, piece.font_height);
+                        // draw_rounded_rectf(piece.x + skip_width, y - piece.spacing + 2, fill_width, piece.font_height, 4);
+
 
                         #[cfg(not(target_os = "linux"))]
-                        draw_rounded_rectf(piece.x + skip_width, y - piece.spacing, fill_width, piece.font_height, 4);
+                        // draw_rounded_rectf(piece.x + skip_width, y - piece.spacing, fill_width, piece.font_height, 4);
+                        draw_rectf(piece.x + skip_width, y - piece.spacing, fill_width, piece.font_height);
                     }
 
                     set_draw_color(self.fg_color);
@@ -916,11 +950,6 @@ impl LinedData for RichData {
             DataType::Image => {
                 if let Some(piece) = self.line_pieces.last() {
                     let piece = &*piece.borrow();
-                    // if self.clickable() {
-                    //     let map = &mut *clickable_data_mapper.borrow_mut();
-                    //     map.insert(Rectangle::new(piece.x + panel_x, piece.y - offset_y + panel_y, piece.w, piece.h), idx);
-                    // }
-
                     if let Some(img) = &self.image {
                         if let Err(e) = draw_image(img.as_slice(), piece.x, piece.y - offset_y, piece.w, piece.h, ColorDepth::Rgb8) {
                             error!("draw image error: {:?}", e);
@@ -1226,18 +1255,34 @@ pub fn is_overlap(target_area: &Rectangle, selection_area: &Rectangle) -> bool {
     target_area.0 < (selection_area.0 + selection_area.2) && (target_area.0 + target_area.2) > selection_area.0 && target_area.1 < (selection_area.1 + selection_area.3) && (target_area.1 + target_area.3) > selection_area.1
 }
 
-pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>, column_mode: bool) -> bool {
+pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>, column_mode: bool, push_from: (i32, i32), panel_x: i32) -> bool {
     /*
     遍历可见行，检查每一行的矩形范围是否与选区有重叠，若有重叠则继续检测出现重叠的行中哪些文字片段与选区有重叠。
      */
     let mut selected = false;
-    let mut selected_pieces: BTreeMap<Rectangle, LinePiece> = BTreeMap::new();
+    // 选中行的代表
+    let mut selected_lines: BTreeMap<i32, LinePiece> = BTreeMap::new();
     for (line_rect, piece) in visible_lines.borrow_mut().iter_mut() {
         if is_overlap(line_rect, drag_area) {
-            selected_pieces.insert(line_rect.clone(), piece.clone());
-            // 当前行与选区有重叠，from:出现重叠的起始字符索引号，to:出现重叠的结束字符索引号。
+            /*
+            记录每一行位于选择区域中最左边那个片段，作为每一行的代表片段。
+            由于同一行内的不同片段可能绘制高度不同，但是都具有的top_y属性可以表示虚拟行高的顶部位置。
+             */
+            if !selected_lines.contains_key(&piece.top_y) {
+                selected_lines.insert(piece.top_y, piece.clone());
+            } else {
+                if let Some(old_piece) = selected_lines.get(&piece.top_y) {
+                    if piece.x < old_piece.x {
+                        selected_lines.insert(piece.top_y, piece.clone());
+                    }
+                }
+            }
+
             set_font(piece.font, piece.font_size);
 
+            /*
+            采用二分法依次检索选区中字符串左边界和右边界的字符索引，并记录左右边界字符右侧水平坐标。
+             */
             let (x, len)= (line_rect.0, piece.line.chars().count());
             let text = piece.line.as_str();
             let from_vec = (0..len).collect::<Vec<usize>>();
@@ -1265,6 +1310,7 @@ pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rect
                     piece.selected_range.set(Some((from, len)));
                     selected = true;
                 } else {
+                    // 查找右边界字符位置
                     let to_vec = (from..len).collect::<Vec<usize>>();
                     if let Ok(to) = to_vec.binary_search_by({
                         let right_boarder = drag_area.0 + drag_area.2;
@@ -1301,42 +1347,140 @@ pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rect
             piece.selected_range.set(None);
         }
     }
-    if selected && !column_mode {
-        // todo: 待完成排序，和范围内全选功能。
-        let lines = selected_pieces.iter().fold(0, {
-            let mut last_y = -1;
-            move |acc, (rect, piece)| {
-                debug!("rect: {:?}", rect);
-                if rect.1 > last_y {
-                    last_y = rect.1;
-                    acc + 1
-                } else {
-                    acc
-                }
-            }
-        });
-        if lines > 2 {
 
-        } else if lines == 2 {
-            debug!("选择两行");
-            if let Some((_, piece)) = selected_pieces.pop_last() {
+    if selected && !column_mode {
+        // 选区有跨行情况
+        if selected_lines.len() > 1 {
+            // 首先处理(消费)最后一行
+            if let Some((_, piece)) = selected_lines.pop_last() {
                 let last_line = &piece.through_line.borrow_mut().ys;
                 for p in last_line.borrow_mut().iter_mut() {
                     if let Some(p) = p.upgrade() {
                         let lp = &mut *p.borrow_mut();
+                        /*
+                        对位于代表片段左边的所有分片进行全选处理，而代表片段右边的片段不处理(选中或未选中都不变)。
+                         */
                         if lp.eq2(&piece) {
-                            let mut old_to = 0;
-                            if let Some((_, to)) = lp.selected_range.get() {
-                                old_to = to;
+                            if drag_area.0 >= panel_x + lp.x {
+                                let mut new_to = 0;
+                                if let Some((old_from, old_to)) = lp.selected_range.get() {
+                                    if drag_area.1 < push_from.1 {
+                                        if drag_area.0 < push_from.0 {
+                                            // 选区向起始点左上方延伸，结束位不变。
+                                            new_to = old_to;
+                                        } else {
+                                            // 选区向起始点右上方延伸，结束位是选区起始位。
+                                            new_to = old_from + 1;
+                                        }
+                                    } else {
+                                        if drag_area.0 < push_from.0 {
+                                            // 选区向起始点左下方延伸，结束位是选区起始位。
+                                            new_to = old_from + 1;
+                                        } else {
+                                            // 选区向起始点右下方延伸，结束位不变。
+                                            new_to = old_to;
+                                        }
+                                    }
+                                }
+                                lp.selected_range.set(Some((0, new_to)));
+                            } else {
+                                // 选区间隙，维持不变
                             }
-                            lp.selected_range.set(Some((0, old_to)));
-                            break;
                         } else {
-                            lp.selected_range.set(Some((0, lp.line.chars().count())));
+                            if push_from.0 < panel_x + lp.x {
+                                if drag_area.1 < push_from.1 {
+                                    // 右侧片段，向上拖选时不选
+                                    lp.selected_range.set(None);
+                                } else {
+                                    // 右侧片段，向下拖选时维持选择状态
+                                }
+                            } else if push_from.0 >= panel_x + lp.next_x {
+                                if drag_area.0 > panel_x + lp.x {
+                                    // 左侧片段，全选
+                                    lp.selected_range.set(Some((0, lp.line.chars().count())));
+                                } else {
+                                    if drag_area.1 + drag_area.3 > push_from.1 {
+                                        // 向左下拖选，选区片段左边界大于选区左边界，不选
+                                        lp.selected_range.set(None);
+                                    } else {
+                                        // 向左上拖选，当前片段维持原态
+                                    }
+                                }
+                            } else {
+                                if drag_area.0 < panel_x + lp.x && (drag_area.1 + drag_area.3 > push_from.1){
+                                    // 向左下拖选，左端大于选区左边界，不选择
+                                    // debug!("向左下拖选，片段位于选区右侧，不选择");
+                                    lp.selected_range.set(None);
+                                } else {
+                                    // 向左上拖选，维持原态
+                                    // debug!("向左上维持原态：{}", lp.line);
+                                }
+                            }
                         }
                     }
                 }
             }
+
+            // 接着处理(消费)第一行
+            if let Some((_, piece)) = selected_lines.pop_first() {
+                let first_line = &piece.through_line.borrow_mut().ys;
+                for p in first_line.borrow_mut().iter_mut() {
+                    if let Some(p) = p.upgrade() {
+                        let lp = &mut *p.borrow_mut();
+                        /*
+                        对于代表片段右边的所有片段进行全选处理，而左边的片段不处理。
+                         */
+                        if lp.eq2(&piece) {
+                            // debug!("选区内代表片段：{}", lp.line);
+                            let mut from = 0;
+                            if let Some((old_from, old_to)) = lp.selected_range.get() {
+                                if (drag_area.1 + drag_area.3) > push_from.1 {
+                                    // 从起始点击位置向下拖动
+                                    if push_from.0 > panel_x + lp.next_x {
+                                        lp.selected_range.set(None);
+                                    } else {
+                                        if push_from.0 == drag_area.0 {
+                                            // 从起始点击位置向右拖动，起始选中索引不变，后续全部选中
+                                            from = old_from;
+                                        } else {
+                                            // 从起始点击位置向左拖动，起始索引改为选区内末尾字符，后续全部选中
+                                            from = old_to - 1;
+                                        }
+                                        lp.selected_range.set(Some((from, lp.line.chars().count())));
+                                    }
+                                } else {
+                                    // 从起始点击位置向上拖动
+                                    if drag_area.0 == push_from.0 {
+                                        // 向右上拖选
+                                        lp.selected_range.set(Some((old_to, lp.line.chars().count())));
+                                    } else {
+                                        // 向左上拖选
+                                        lp.selected_range.set(Some((old_from, lp.line.chars().count())));
+                                    }
+                                }
+                            }
+
+                        } else {
+
+
+                        }
+                    }
+                }
+            }
+            // 最后处理中间行即剩余的行，进行全选处理。
+            selected_lines.iter_mut().for_each({
+                |(_, piece)| {
+                    let tl = &piece.through_line.borrow_mut().ys;
+                    tl.borrow_mut().iter_mut().for_each({
+                        |p| {
+                            if let Some(p) = p.upgrade() {
+                                let lp = &mut *p.borrow_mut();
+                                lp.selected_range.set(Some((0, lp.line.chars().count())));
+                            }
+                        }
+                    });
+                }
+            });
         }
     }
     selected

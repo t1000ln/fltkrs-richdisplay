@@ -338,7 +338,9 @@ impl RichText {
                                 visible_lines_rc.clone(),
                                 clickable_data_rc.clone(),
                                 bg_rc.get(),
-                                buffer_rc.clone()
+                                buffer_rc.clone(),
+                                (push_from_x, push_from_y),
+                                ctx.x()
                             ) {
                                 selected = ret;
                             }
@@ -360,8 +362,10 @@ impl RichText {
                          panel: &mut Frame,
                          visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
                          clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
-                         bg_color: Color, data_buffer: Rc<RefCell<VecDeque<RichData>>>) -> bool {
-        let selected = select_text(&selection_rect, visible_lines.clone(), false);
+                         bg_color: Color, data_buffer: Rc<RefCell<VecDeque<RichData>>>,
+                         push_from: (i32, i32),
+                         panel_x: i32) -> bool {
+        let selected = select_text(&selection_rect, visible_lines.clone(), false, push_from, panel_x);
         if selected {
             RichText::draw_offline(
                 offscreen,

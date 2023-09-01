@@ -1312,6 +1312,23 @@ enum HorizonPosOfDrag {
     Cover,
 }
 
+/// 通过鼠标选择文本时，根据划选区域和方向，自动选择符合用户习惯的文本内容范围。
+///
+/// # Arguments
+///
+/// * `drag_area`: 拖选区域。
+/// * `visible_lines`: 当前窗口内可见的内容行。
+/// * `column_mode`: 是否列模式。普通操作时不选列模式。
+/// * `push_from`: 鼠标拖选开始时的坐标。
+/// * `panel_x`: 当前内容面板的x坐标。
+///
+/// returns: bool
+///
+/// # Examples
+///
+/// ```
+///
+/// ```
 pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>, column_mode: bool, push_from: (i32, i32), panel_x: i32) -> bool {
     /*
     遍历可见行，检查每一行的矩形范围是否与选区有重叠，若有重叠则继续检测出现重叠的行中哪些文字片段与选区有重叠。

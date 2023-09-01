@@ -307,7 +307,7 @@ impl LinePiece {
         init_piece
     }
 
-    pub fn eq2(&mut self, other: &Self) -> bool {
+    pub fn eq2(&self, other: &Self) -> bool {
         self.x == other.x && self.y == other.y && self.w == other.w && self.h == other.h && self.line.eq(&other.line)
     }
 }
@@ -1255,6 +1255,63 @@ pub fn is_overlap(target_area: &Rectangle, selection_area: &Rectangle) -> bool {
     target_area.0 < (selection_area.0 + selection_area.2) && (target_area.0 + target_area.2) > selection_area.0 && target_area.1 < (selection_area.1 + selection_area.3) && (target_area.1 + target_area.3) > selection_area.1
 }
 
+/// 拖选时，当前片段相对于拖选起点位置的方位。
+#[derive(Debug)]
+enum PosOfDrag {
+    /// 上方，选区位于片段内
+    UpInside,
+    /// 上方，选区包裹片段
+    UpCover,
+    /// 左上方，与选区有交叉
+    UpLeftInside,
+    /// 左上方，与选区有交叉，起点在选区外
+    UpLeftOutside,
+    /// 左上方，选区外
+    UpLeft,
+    /// 右上方，与选区有交叉
+    UpRightInside,
+    /// 右上方，与选区有交叉，起点在选区外。
+    UpRightOutside,
+    /// 右上方，选区外
+    UpRight,
+    /// 下方，选区位于片段内
+    DownInside,
+    /// 下方，选区包裹片段
+    DownCover,
+    /// 左下方，与选区有交叉
+    DownLeftInside,
+    /// 左下方，选区外
+    DownLeft,
+    /// 右下方，与选区有交叉
+    DownRightInside,
+    /// 右下方，与选区有交叉，起点在外部。
+    DownRightOutside,
+    /// 左下方，与选区有交叉，起点在外部。
+    DownLeftOutside,
+    /// 右下方，选区外
+    DownRight,
+}
+
+/// 水平方位
+enum HorizonPosOfDrag {
+    /// 选区位于片段内
+    Inside,
+    /// 选区位于左侧，有交叉
+    LeftInside,
+    /// 选区位于左侧，无交叉
+    Left,
+    /// 选区位于右侧，有交叉
+    RightInside,
+    /// 选区位于右侧，无交叉
+    Right,
+    /// 选区位于左侧，有交叉，起点位于外部
+    RightOutside,
+    /// 选区位于右侧，有交叉，起点位于外部
+    LeftOutside,
+    /// 选区包裹片段
+    Cover,
+}
+
 pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>, column_mode: bool, push_from: (i32, i32), panel_x: i32) -> bool {
     /*
     遍历可见行，检查每一行的矩形范围是否与选区有重叠，若有重叠则继续检测出现重叠的行中哪些文字片段与选区有重叠。
@@ -1409,11 +1466,9 @@ pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rect
                             } else {
                                 if drag_area.0 < panel_x + lp.x && (drag_area.1 + drag_area.3 > push_from.1){
                                     // 向左下拖选，左端大于选区左边界，不选择
-                                    // debug!("向左下拖选，片段位于选区右侧，不选择");
                                     lp.selected_range.set(None);
                                 } else {
                                     // 向左上拖选，维持原态
-                                    // debug!("向左上维持原态：{}", lp.line);
                                 }
                             }
                         }
@@ -1426,43 +1481,98 @@ pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rect
                 let first_line = &piece.through_line.borrow_mut().ys;
                 for p in first_line.borrow_mut().iter_mut() {
                     if let Some(p) = p.upgrade() {
-                        let lp = &mut *p.borrow_mut();
+                        let lp = &*p.borrow_mut();
                         /*
-                        对于代表片段右边的所有片段进行全选处理，而左边的片段不处理。
+                        根据当前分片相对于选区的方位，对选中内容进行调整，以符合用户操作习惯。
+                        总计有20种情况需要判断处理。
                          */
-                        if lp.eq2(&piece) {
-                            // debug!("选区内代表片段：{}", lp.line);
-                            let mut from = 0;
-                            if let Some((old_from, old_to)) = lp.selected_range.get() {
-                                if (drag_area.1 + drag_area.3) > push_from.1 {
-                                    // 从起始点击位置向下拖动
-                                    if push_from.0 > panel_x + lp.next_x {
-                                        lp.selected_range.set(None);
-                                    } else {
-                                        if push_from.0 == drag_area.0 {
-                                            // 从起始点击位置向右拖动，起始选中索引不变，后续全部选中
-                                            from = old_from;
-                                        } else {
-                                            // 从起始点击位置向左拖动，起始索引改为选区内末尾字符，后续全部选中
-                                            from = old_to - 1;
-                                        }
-                                        lp.selected_range.set(Some((from, lp.line.chars().count())));
-                                    }
+                        let pos = find_position_of_piece(drag_area, push_from, panel_x, lp);
+                        match pos {
+                            PosOfDrag::UpInside => {
+                                // 向上拖选，选区位于当前片段内
+                                if drag_area.0 != push_from.0 {
+                                    // 从起始点向左划选，从选区左边界向右扩选。
+                                    extend_from_end(lp);
                                 } else {
-                                    // 从起始点击位置向上拖动
-                                    if drag_area.0 == push_from.0 {
-                                        // 向右上拖选
-                                        lp.selected_range.set(Some((old_to, lp.line.chars().count())));
-                                    } else {
-                                        // 向左上拖选
-                                        lp.selected_range.set(Some((old_from, lp.line.chars().count())));
-                                    }
+                                    // 从起始点向右划选，从选区右边界向右反选。
+                                    reverse_to_extend_from_end(lp);
                                 }
                             }
-
-                        } else {
-
-
+                            PosOfDrag::DownInside => {
+                                // 向下拖选，选区位于当前片段内。
+                                if drag_area.0 != push_from.0 {
+                                    // 向左划选，以选区末尾字符为起始向右扩选内容。
+                                    reverse_to_extend_from_end(lp);
+                                } else {
+                                    // 向右划选，扩选起点字符之后的内容
+                                    extend_from_end(lp);
+                                }
+                            }
+                            PosOfDrag::UpLeftInside | PosOfDrag::DownLeftOutside | PosOfDrag::DownLeft => {
+                                // 向上拖选，片段位于选区左部有交叉，不选
+                                lp.selected_range.set(None);
+                            }
+                            PosOfDrag::UpLeft | PosOfDrag::UpLeftOutside | PosOfDrag::DownLeftInside => {
+                                // 向上拖选，选区位于当前片段左侧外部，不选择。实际上维持不变。
+                            }
+                            PosOfDrag::UpRightInside | PosOfDrag::UpRight | PosOfDrag::DownRight | PosOfDrag::DownRightOutside => {
+                                // 向上拖选，当前片段在选区右部有交叉，全选
+                                lp.selected_range.set(Some((0, lp.line.chars().count())));
+                            }
+                            // PosOfDrag::UpLeftOutside => {
+                            //     // 向上拖选，当前片段在选区左部有交叉，维持不变
+                            // }
+                            // PosOfDrag::UpRight => {
+                            //     // 向上拖选，选区位于当前片段右侧外部，全选。
+                            //     lp.selected_range.set(Some((0, lp.line.chars().count())));
+                            // }
+                            PosOfDrag::UpRightOutside | PosOfDrag::DownRightInside => {
+                                // 向上拖选，片段位于选区右部有交叉，向右反选
+                                reverse_to_extend_from_end(lp);
+                            }
+                            PosOfDrag::DownCover => {
+                                // 向下拖选，选区包括片段，不选择。
+                                if drag_area.0 == push_from.0 {
+                                    // 选区起点在片段左外侧，全选
+                                    lp.selected_range.set(Some((0, lp.line.chars().count())));
+                                } else {
+                                    // 选区起点在片段右外侧，不选
+                                    lp.selected_range.set(None);
+                                }
+                            }
+                            PosOfDrag::UpCover => {
+                                // 向上拖选，选区包括片段
+                                if drag_area.0 != push_from.0 {
+                                    // 向左划选，全选。
+                                    lp.selected_range.set(Some((0, lp.line.chars().count())));
+                                } else {
+                                    // 向右划选，不选
+                                    lp.selected_range.set(None);
+                                }
+                            }
+                            // PosOfDrag::DownLeftInside => {
+                            //     // 向下拖选，选区位于当前片段右部，有交叉，维持不变。
+                            // }
+                            // PosOfDrag::DownLeft => {
+                            //     // 向下拖选，选区位于当前片段左侧外部，不选择。
+                            //     lp.selected_range.set(None);
+                            // }
+                            // PosOfDrag::DownRightInside => {
+                            //     // 向下拖选，当前片段在选区右部有交叉，以选区末尾字符为起始向右扩选内容。
+                            //     reverse_to_extend_from_end(lp);
+                            // }
+                            // PosOfDrag::DownRight => {
+                            //     // 向下拖选，选区位于当前片段右侧外部，全选。
+                            //     lp.selected_range.set(Some((0, lp.line.chars().count())));
+                            // }
+                            // PosOfDrag::DownRightOutside => {
+                            //     // 向下拖选，选区位于当前片段右侧外部，全选。
+                            //     lp.selected_range.set(Some((0, lp.line.chars().count())));
+                            // }
+                            // PosOfDrag::DownLeftOutside => {
+                            //     // 向下拖选，选区位于当前片段右侧外部，不选。
+                            //     lp.selected_range.set(None);
+                            // }
                         }
                     }
                 }
@@ -1484,6 +1594,221 @@ pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rect
         }
     }
     selected
+}
+
+/// 检查拖选区与当前分片的方位关系。
+///
+/// # Arguments
+///
+/// * `drag_area`: 拖选区范围。
+/// * `push_from`: 拖选起始坐标(x, y)。
+/// * `panel_x`: 面板的x坐标。
+/// * `piece`: 当前片段。
+///
+/// returns: PosOfDrag 返回对应的方位枚举。
+///
+/// # Examples
+///
+/// ```
+///
+/// ```
+fn find_position_of_piece(drag_area: &Rectangle, push_from: (i32, i32), panel_x: i32, piece: &LinePiece) -> PosOfDrag {
+    let to_down = drag_to_down(drag_area, push_from.1);
+    match drag_from_piece(drag_area, panel_x, push_from.0, piece) {
+        HorizonPosOfDrag::Inside => {
+            if to_down {
+                PosOfDrag::DownInside
+            } else {
+                PosOfDrag::UpInside
+            }
+        }
+        HorizonPosOfDrag::Left => {
+            if to_down {
+                PosOfDrag::DownLeft
+            } else {
+                PosOfDrag::UpLeft
+            }
+        },
+        HorizonPosOfDrag::Right => {
+            if to_down {
+                PosOfDrag::DownRight
+            } else {
+                PosOfDrag::UpRight
+            }
+        }
+        HorizonPosOfDrag::LeftInside => {
+            if to_down {
+                PosOfDrag::DownLeftInside
+            } else {
+                PosOfDrag::UpLeftInside
+            }
+        }
+        HorizonPosOfDrag::RightInside => {
+            if to_down {
+                PosOfDrag::DownRightInside
+            } else {
+                PosOfDrag::UpRightInside
+            }
+        }
+        HorizonPosOfDrag::RightOutside => {
+            if to_down {
+                PosOfDrag::DownRightOutside
+            } else {
+                PosOfDrag::UpRightOutside
+            }
+        }
+        HorizonPosOfDrag::LeftOutside => {
+            if to_down {
+                PosOfDrag::DownLeftOutside
+            } else {
+                PosOfDrag::UpLeftOutside
+            }
+        }
+        HorizonPosOfDrag::Cover => {
+            if to_down {
+                PosOfDrag::DownCover
+            } else {
+                PosOfDrag::UpCover
+            }
+        }
+    }
+}
+
+/// 检测拖拽起始位置是否位于片段内。
+///
+/// # Arguments
+///
+/// * `panel_x`: 面板x坐标。
+/// * `piece`: 片段。
+/// * `push_from_x`: 拖拽起始点x坐标。
+///
+/// returns: bool 若起始点位于片段内返回true，否则返回false。
+///
+/// # Examples
+///
+/// ```
+///
+/// ```
+fn drag_from_piece(drag_area: &Rectangle, panel_x: i32, push_from_x: i32, piece: &LinePiece) -> HorizonPosOfDrag {
+    if push_from_x >= panel_x + piece.x {
+        // 拖拽起始点位于当前片段起始点右侧
+        if piece.next_x > piece.x {
+            // 非右边顶头的片段
+            if push_from_x < panel_x + piece.next_x {
+                // 拖选起始点位于当前片段内部
+                if drag_area.0 >= panel_x + piece.x && drag_area.0 + drag_area.2 <= panel_x + piece.next_x {
+                    // 拖选范围在当前片段内部
+                    HorizonPosOfDrag::Inside
+                } else if drag_area.0 < panel_x + piece.x {
+                    // 拖选范围在起始点左侧，与当前片段有交叉
+                    HorizonPosOfDrag::RightInside
+                } else {
+                    // 拖选范围在起始点右侧，与当前片段有交叉
+                    HorizonPosOfDrag::LeftInside
+                }
+            } else {
+                // 拖选起始点位于当前片段右边外侧
+                if drag_area.0 < panel_x + piece.x {
+                    // 拖选范围涵盖当前片段
+                    HorizonPosOfDrag::Cover
+                } else if drag_area.0 < panel_x + piece.next_x {
+                    // 拖选范围在当前片段右侧，有交叉
+                    HorizonPosOfDrag::LeftOutside
+                } else {
+                    HorizonPosOfDrag::Left
+                }
+            }
+        } else {
+            // 右边顶头的片段
+            if drag_area.0 >= panel_x + piece.x {
+                // 拖选范围在当前片段内部，或偏右
+                HorizonPosOfDrag::Inside
+            } else {
+                // 拖选范围在当前片段左侧，有交叉
+                HorizonPosOfDrag::RightInside
+            }
+        }
+    } else {
+        // 拖选起始点位于当前片段左侧外部
+        if drag_area.0 + drag_area.2 > panel_x + piece.x {
+            if piece.next_x > piece.x {
+                // 非右边顶点片段
+                if drag_area.0 + drag_area.2 > panel_x + piece.next_x {
+                    // 拖选范围覆盖片段
+                    HorizonPosOfDrag::Cover
+                } else {
+                    // 拖选范围在当前片段左侧，有交叉
+                    HorizonPosOfDrag::RightOutside
+                }
+            } else {
+                // 右边顶点片段
+                HorizonPosOfDrag::RightOutside
+            }
+
+        } else {
+            HorizonPosOfDrag::Right
+        }
+    }
+}
+
+/// 检查拖选垂直方向。
+///
+/// # Arguments
+///
+/// * `drag_area`: 拖选区域。
+/// * `push_from_y`: 拖选起始点y坐标。
+///
+/// returns: bool 若向下返回true，否则返回false。
+///
+/// # Examples
+///
+/// ```
+///
+/// ```
+fn drag_to_down(drag_area: &Rectangle, push_from_y: i32) -> bool {
+    if drag_area.1 < push_from_y {
+        false
+    } else {
+        true
+    }
+}
+
+///
+///
+/// # Arguments
+///
+/// * `piece`:
+///
+/// returns: ()
+///
+/// # Examples
+///
+/// ```
+///
+/// ```
+fn reverse_to_extend_from_end(piece: &LinePiece) {
+    if let Some((_, old_to)) = piece.selected_range.get() {
+        piece.selected_range.set(Some((old_to - 1, piece.line.chars().count())));
+    }
+}
+
+/// 从选区起始字符，向右扩选片段内容。
+///
+/// # Arguments
+///
+/// * `piece`:
+///
+/// returns: ()
+///
+/// # Examples
+///
+/// ```
+///
+/// ```
+fn extend_from_end(piece: &LinePiece) {
+    if let Some((old_from, _)) = piece.selected_range.get() {
+        piece.selected_range.set(Some((old_from, piece.line.chars().count())));
+    }
 }
 
 #[cfg(test)]

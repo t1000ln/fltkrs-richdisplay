@@ -65,6 +65,7 @@ impl RichText {
         inner.end();
 
 
+
         let mut panel = Frame::new(x, y, w, h, None);
         inner.add(&panel);
 
@@ -76,7 +77,8 @@ impl RichText {
         let visible_lines = Rc::new(RefCell::new(HashMap::<Rectangle, LinePiece>::new()));
         let clickable_data = Rc::new(RefCell::new(HashMap::<Rectangle, usize>::new()));
         let notifier: Rc<RefCell<Option<tokio::sync::mpsc::Sender<UserData>>>> = Rc::new(RefCell::new(None));
-        let to_be_dropped_reviewer = Rc::new(Cell::new(None::<(Scroll, Frame)>));
+        let to_be_dropped_reviewer = Rc::new(Cell::new(None::<Scroll>));
+        let selected = Rc::new(Cell::new(false));
 
         panel.draw({
             let screen_rc = panel_screen.clone();
@@ -218,10 +220,6 @@ impl RichText {
                                 }
                             }
                         }
-                        Event::KeyDown => {
-                            debug!("key down: {:?}", app::event_key());
-
-                        }
                         _ => {}
                     }
                     false
@@ -243,14 +241,13 @@ impl RichText {
             let to_be_dropped_reviewer_rc = to_be_dropped_reviewer.clone();
             let mut push_from_x = 0;
             let mut push_from_y = 0;
-            let mut selected = false;
+            let selected = selected.clone();
             move |ctx, evt| {
                 if evt == LocalEvent::DROP_REVIEWER.into() {
                     // 销毁组件，回收内存，否则会有内存泄漏。
                     let target = to_be_dropped_reviewer_rc.replace(None);
-                    if let Some((scroller, panel)) = target {
+                    if let Some(scroller) = target {
                         app::delete_widget(scroller);
-                        // app::delete_widget(panel);
                     }
                     true
                 } else {
@@ -319,7 +316,7 @@ impl RichText {
                             let coords = app::event_coords();
                             push_from_x = coords.0;
                             push_from_y = coords.1;
-                            if selected {
+                            if selected.replace(false) {
                                 for (_, piece) in visible_lines_rc.borrow_mut().iter_mut() {
                                     piece.selected_range.set(None);
                                 }
@@ -333,7 +330,6 @@ impl RichText {
                                 );
                                 // ctx.redraw();
                                 ctx.set_damage(true);
-                                selected = false;
                             }
 
                             return true;
@@ -352,7 +348,7 @@ impl RichText {
                                 (push_from_x, push_from_y),
                                 ctx.x()
                             ) {
-                                selected = ret;
+                                selected.set(ret);
                             }
                             return true;
                         }
@@ -366,6 +362,7 @@ impl RichText {
 
         Self { panel, data_buffer, background_color, buffer_max_lines, notifier, inner, reviewer, panel_screen, visible_lines, clickable_data }
     }
+
 
     #[throttle(1, Duration::from_millis(100))]
     fn redraw_after_drag(selection_rect: Rectangle, offscreen: Rc<RefCell<Offscreen>>,
@@ -401,7 +398,7 @@ impl RichText {
         visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
         clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
         buffer_rc: Rc<RefCell<VecDeque<RichData>>>,
-    ) -> (bool, Option<(Scroll, Frame)>){
+    ) -> (bool, Option<Scroll>){
         if let Some(reviewer) = &*reviewer_rc.borrow() {
             let dy = reviewer.scroller.yposition();
             if dy == reviewer.panel.height() - reviewer.scroller.height() {
@@ -420,10 +417,9 @@ impl RichText {
                     clickable_data.clone(),
                     bg_rc.get(),
                     buffer_rc.clone(),
-
                 );
 
-                return (true, Some((reviewer.scroller.clone(), reviewer.panel.clone())));
+                return (true, Some(reviewer.scroller.clone()));
             }
         }
         return (false, None);

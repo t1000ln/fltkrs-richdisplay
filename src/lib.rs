@@ -10,7 +10,7 @@ use fltk::image::RgbImage;
 use fltk::prelude::ImageExt;
 
 use idgenerator_thin::YitIdHelper;
-use log::{debug, error};
+use log::{error};
 
 pub mod rich_text;
 pub mod rich_reviewer;
@@ -309,6 +309,31 @@ impl LinePiece {
 
     pub fn eq2(&self, other: &Self) -> bool {
         self.x == other.x && self.y == other.y && self.w == other.w && self.h == other.h && self.line.eq(&other.line)
+    }
+
+    pub fn deselect(&self) {
+        self.selected_range.set(None);
+    }
+
+    pub fn select_all(&self) {
+        self.selected_range.set(Some((0, self.line.chars().count())));
+    }
+
+    pub fn selection_text(&self) -> Option<String> {
+        if let Some((from, to)) = self.selected_range.get() {
+            Some(self.line.chars().skip(from).take(to - from).collect::<String>())
+        } else {
+            None
+        }
+    }
+
+    pub fn copy_selection(&self, selection: &mut String) {
+        if let Some((from, to)) = self.selected_range.get() {
+            self.line.chars().skip(from).take(to - from).for_each(|c| {
+                selection.push(c);
+            });
+            // selection.push_str(&self.line.chars().skip(from).take(to - from).collect::<String>());
+        }
     }
 }
 
@@ -1428,14 +1453,16 @@ pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rect
     }
 
     if selected && !column_mode {
-        // 选区有跨行情况
+        let selected_lines_clone = selected_lines.clone();
         if selected_lines.len() > 1 {
+            // 选区有跨行情况
             // 首先处理(消费)最后一行
             if let Some((_, piece)) = selected_lines.pop_last() {
                 let last_line = &piece.through_line.borrow_mut().ys;
                 for p in last_line.borrow_mut().iter_mut() {
                     if let Some(p) = p.upgrade() {
                         let lp = &mut *p.borrow_mut();
+
                         /*
                         对位于代表片段左边的所有分片进行全选处理，而代表片段右边的片段不处理(选中或未选中都不变)。
                          */
@@ -1466,13 +1493,15 @@ pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rect
                                 // 选区间隙，维持不变
                             }
                         } else {
+
                             if push_from.0 < panel_x + lp.x {
                                 if drag_area.1 < push_from.1 {
                                     // 右侧片段，向上拖选时不选
                                     lp.selected_range.set(None);
-                                } else {
-                                    // 右侧片段，向下拖选时维持选择状态
+                                } else if lp.next_x > lp.x && drag_area.0 + drag_area.2 > panel_x + lp.next_x {
+                                    lp.selected_range.set(Some((0, lp.line.chars().count())));
                                 }
+                                // 右侧片段，向下拖选时维持选择状态
                             } else if push_from.0 >= panel_x + lp.next_x {
                                 if drag_area.0 > panel_x + lp.x {
                                     // 左侧片段，全选
@@ -1486,9 +1515,13 @@ pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rect
                                     }
                                 }
                             } else {
-                                if drag_area.0 < panel_x + lp.x && (drag_area.1 + drag_area.3 > push_from.1){
+                                // 拖选起点位于片段两端之间
+                                if drag_area.0 < panel_x + lp.x && (drag_area.1 + drag_area.3 > push_from.1) {
                                     // 向左下拖选，左端大于选区左边界，不选择
                                     lp.selected_range.set(None);
+                                } else if push_from.1 == drag_area.1 && (drag_area.0 + drag_area.2 > panel_x + lp.next_x) {
+                                    // 向下拖选，选区右边界超出片段右边界，全选
+                                    lp.selected_range.set(Some((0, lp.line.chars().count())));
                                 } else {
                                     // 向左上拖选，维持原态
                                 }
@@ -1614,6 +1647,21 @@ pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rect
                 }
             });
         }
+
+        /*
+        拷贝至剪贴板
+         */
+        let mut selection = String::new();
+        for (_, piece) in selected_lines_clone.iter() {
+            let tl = &piece.through_line.borrow().ys;
+            for p in tl.borrow().iter() {
+                if let Some(p) = p.upgrade() {
+                    let lp = &*p.borrow();
+                    lp.copy_selection(&mut selection);
+                }
+            }
+        }
+        app::copy(selection.as_str());
     }
     selected
 }

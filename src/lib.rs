@@ -264,7 +264,7 @@ pub struct LinePiece {
 }
 
 impl LinePiece {
-    pub fn new(line: String, x: i32, y: i32, w: i32, h: i32, top_y: i32, spacing: i32, next_x: i32, next_y: i32, font_height: i32, through_line: Rc<RefCell<ThroughLine>>) -> Rc<RefCell<LinePiece>> {
+    pub fn new(line: String, x: i32, y: i32, w: i32, h: i32, top_y: i32, spacing: i32, next_x: i32, next_y: i32, font_height: i32, font: Font, font_size: i32, through_line: Rc<RefCell<ThroughLine>>) -> Rc<RefCell<LinePiece>> {
         let new_piece = Rc::new(RefCell::new(Self {
             line,
             x,
@@ -278,8 +278,8 @@ impl LinePiece {
             font_height,
             through_line: through_line.clone(),
             selected_range: Rc::new(Cell::new(None)),
-            font: Font::Helvetica,
-            font_size: 12,
+            font,
+            font_size,
         }));
         through_line.borrow_mut().add_piece(new_piece.clone());
         new_piece
@@ -768,6 +768,7 @@ impl RichData {
         let last_piece = last_piece.borrow().clone();
         let tw = Rc::new(RefCell::new(0));
         let text_len = text.chars().count();
+        let (font, font_size) = (self.font, self.font_size);
         if let Ok(stop_pos) = (0..text_len).collect::<Vec<usize>>().binary_search_by({
             let x = last_piece.next_x + PIECE_SPACING;
             let tw_rc = tw.clone();
@@ -806,7 +807,7 @@ impl RichData {
             let y = last_piece.next_y;
             let top_y = last_piece.next_y;
 
-            let new_piece = LinePiece::new(text.chars().take(stop_pos).collect::<String>(), last_piece.next_x, y, w, font_height, top_y, last_piece.spacing, next_x, next_y, font_height, through_line.clone());
+            let new_piece = LinePiece::new(text.chars().take(stop_pos).collect::<String>(), last_piece.next_x, y, w, font_height, top_y, last_piece.spacing, next_x, next_y, font_height, font, font_size,  through_line.clone());
             self.line_pieces.push(new_piece.clone());
 
             let rest_str = text.chars().skip(stop_pos).collect::<String>();
@@ -827,7 +828,7 @@ impl RichData {
                 }
 
                 let through_line = ThroughLine::create_or_update(PADDING.left, rest_x, font_height, original.clone(), false);
-                let new_piece = LinePiece::new(rest_str, rest_x, rest_y, rest_width, font_height, top_y, last_piece.spacing, rest_next_x, rest_next_y, font_height, through_line);
+                let new_piece = LinePiece::new(rest_str, rest_x, rest_y, rest_width, font_height, top_y, last_piece.spacing, rest_next_x, rest_next_y, font_height, font, font_size, through_line);
                 self.line_pieces.push(new_piece.clone());
                 new_piece
             }
@@ -835,7 +836,7 @@ impl RichData {
             // 从行首开始
             let through_line = ThroughLine::create_or_update(PADDING.left, PADDING.left, self.line_height, original.clone(), false);
             let y = last_piece.next_y + last_piece.through_line.borrow().max_h + last_piece.spacing;
-            let new_piece = LinePiece::new(text.to_string(), PADDING.left, y, measure_width, self.line_height, y, last_piece.spacing, PADDING.left, y, font_height, through_line);
+            let new_piece = LinePiece::new(text.to_string(), PADDING.left, y, measure_width, self.line_height, y, last_piece.spacing, PADDING.left, y, font_height, font, font_size, through_line);
             self.wrap_text_for_estimate(text, new_piece, max_width, measure_width, font_height)
         }
     }
@@ -906,27 +907,30 @@ impl LinedData for RichData {
 
                         #[cfg(target_os = "linux")]
                         draw_rectf(piece.x, y - piece.spacing + 2, piece.w, piece.font_height);
-                        // draw_rounded_rectf(piece.x, y - piece.spacing + 2, piece.w, piece.font_height, 4);
-
 
                         #[cfg(not(target_os = "linux"))]
-                        // draw_rounded_rectf(piece.x, y - piece.spacing, piece.w, piece.font_height, 4);
                         draw_rectf(piece.x, y - piece.spacing, piece.w, piece.font_height);
                     }
 
                     if let Some((from, to)) = piece.selected_range.get() {
                         // 绘制选中背景色
-                        set_draw_color(Color::Selection);
+                        let sel_color = if let Some(bg_color) = &self.bg_color {
+                            if *bg_color == Color::Blue || *bg_color == Color::DarkBlue {
+                                Color::DarkMagenta
+                            } else {
+                                Color::Selection
+                            }
+                        } else {
+                            Color::Selection
+                        };
+                        set_draw_color(sel_color);
                         let (skip_width, _) = measure(piece.line.chars().take(from).collect::<String>().as_str(), false);
                         let (fill_width, _) = measure(piece.line.chars().skip(from).take(to - from).collect::<String>().as_str(), false);
 
                         #[cfg(target_os = "linux")]
                         draw_rectf(piece.x + skip_width, y - piece.spacing + 2, fill_width, piece.font_height);
-                        // draw_rounded_rectf(piece.x + skip_width, y - piece.spacing + 2, fill_width, piece.font_height, 4);
-
 
                         #[cfg(not(target_os = "linux"))]
-                        // draw_rounded_rectf(piece.x + skip_width, y - piece.spacing, fill_width, piece.font_height, 4);
                         draw_rectf(piece.x + skip_width, y - piece.spacing, fill_width, piece.font_height);
                     }
 
@@ -979,6 +983,7 @@ impl LinedData for RichData {
         let mut ret = last_piece.clone();
         let last_piece = last_piece.borrow().clone();
         let (top_y, start_x) = (last_piece.next_y, last_piece.next_x);
+        let (font, font_size) = (self.font, self.font_size);
         match self.data_type {
             DataType::Text => {
                 set_font(self.font, self.font_size);
@@ -1016,7 +1021,7 @@ impl LinedData for RichData {
                                 let y = lp.next_y;
                                 let piece_top_y = lp.next_y;
                                 let through_line = ThroughLine::create_or_update(PADDING.left, lp.next_x, current_line_height, ret.clone(), false);
-                                new_piece = LinePiece::new(line.to_string(), lp.next_x, y, tw, current_line_height, piece_top_y, lp.spacing, next_x, next_y, ref_font_height, through_line);
+                                new_piece = LinePiece::new(line.to_string(), lp.next_x, y, tw, current_line_height, piece_top_y, lp.spacing, next_x, next_y, ref_font_height, font, font_size, through_line);
 
                             } else {
                                 let mut next_y = last_piece.next_y;
@@ -1031,7 +1036,7 @@ impl LinedData for RichData {
                                 let y = last_piece.next_y;
                                 let piece_top_y = last_piece.next_y;
                                 let through_line = ThroughLine::create_or_update(PADDING.left, last_piece.next_x, current_line_height, ret.clone(), false);
-                                new_piece = LinePiece::new(line.to_string(), last_piece.next_x, y, tw, self.line_height, piece_top_y, last_piece.spacing, next_x, next_y, ref_font_height, through_line);
+                                new_piece = LinePiece::new(line.to_string(), last_piece.next_x, y, tw, self.line_height, piece_top_y, last_piece.spacing, next_x, next_y, ref_font_height, font, font_size, through_line);
                             }
                             self.line_pieces.push(new_piece.clone());
                             ret = new_piece;
@@ -1050,7 +1055,7 @@ impl LinedData for RichData {
                     } else {
                         let y = top_y;
                         let through_line = ThroughLine::create_or_update(PADDING.left, start_x, ref_font_height, ret, false);
-                        let new_piece = LinePiece::new(self.text.clone(), start_x, y, tw, ref_font_height, top_y, current_line_spacing, start_x + tw + PIECE_SPACING, top_y, ref_font_height, through_line);
+                        let new_piece = LinePiece::new(self.text.clone(), start_x, y, tw, ref_font_height, top_y, current_line_spacing, start_x + tw + PIECE_SPACING, top_y, ref_font_height, font, font_size, through_line);
                         self.line_pieces.push(new_piece.clone());
                         ret = new_piece;
                     }
@@ -1065,7 +1070,7 @@ impl LinedData for RichData {
                     let next_x = x + self.image_width + IMAGE_PADDING_H;
                     let next_y = top_y + last_piece.through_line.borrow().max_h + IMAGE_PADDING_V;
                     let through_line = ThroughLine::new(self.image_height * IMAGE_PADDING_V * 2, true);
-                    let new_piece = LinePiece::new("".to_string(), x, next_y, self.image_width, self.image_height, piece_top_y, last_piece.spacing, next_x, next_y, 1, through_line);
+                    let new_piece = LinePiece::new("".to_string(), x, next_y, self.image_width, self.image_height, piece_top_y, last_piece.spacing, next_x, next_y, 1, font, font_size, through_line);
                     self.line_pieces.push(new_piece.clone());
                     ret = new_piece;
                 } else {
@@ -1076,7 +1081,7 @@ impl LinedData for RichData {
                         let y = top_y + IMAGE_PADDING_V;
                         let piece_top_y = y;
                         let through_line = ThroughLine::new(self.image_height * IMAGE_PADDING_V * 2, true);
-                        let new_piece = LinePiece::new("".to_string(), x, y, self.image_width, self.image_height, piece_top_y, last_piece.spacing, next_x, top_y, 1, through_line);
+                        let new_piece = LinePiece::new("".to_string(), x, y, self.image_width, self.image_height, piece_top_y, last_piece.spacing, next_x, top_y, 1, font, font_size, through_line);
                         self.line_pieces.push(new_piece.clone());
                         ret = new_piece;
                     } else {
@@ -1094,7 +1099,7 @@ impl LinedData for RichData {
                         let y = raw_y;
                         let piece_top_y = y;
                         let through_line = ThroughLine::create_or_update(PADDING.left + IMAGE_PADDING_H, x, self.image_height * IMAGE_PADDING_V * 2, ret, true);
-                        let new_piece = LinePiece::new("".to_string(), x, y, self.image_width, self.image_height, piece_top_y, last_piece.spacing, next_x, top_y + IMAGE_PADDING_V, 1, through_line);
+                        let new_piece = LinePiece::new("".to_string(), x, y, self.image_width, self.image_height, piece_top_y, last_piece.spacing, next_x, top_y + IMAGE_PADDING_V, 1, font, font_size, through_line);
                         self.line_pieces.push(new_piece.clone());
                         ret = new_piece;
                     }

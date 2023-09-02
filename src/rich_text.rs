@@ -49,6 +49,11 @@ impl RichText {
             // 初始化ID生成器。
             let options = IdGeneratorOptions::new(1);
             YitIdHelper::set_id_generator(options);
+            app::add_clipboard_notify3({
+                move |data| {
+                    debug!("clipboard data: {:?}", data);
+                }
+            });
             0
         });
 
@@ -213,6 +218,10 @@ impl RichText {
                                 }
                             }
                         }
+                        Event::KeyDown => {
+                            debug!("key down: {:?}", app::event_key());
+
+                        }
                         _ => {}
                     }
                     false
@@ -241,7 +250,7 @@ impl RichText {
                     let target = to_be_dropped_reviewer_rc.replace(None);
                     if let Some((scroller, panel)) = target {
                         app::delete_widget(scroller);
-                        app::delete_widget(panel);
+                        // app::delete_widget(panel);
                     }
                     true
                 } else {
@@ -322,7 +331,8 @@ impl RichText {
                                     bg_rc.get(),
                                     buffer_rc.clone()
                                 );
-                                ctx.redraw();
+                                // ctx.redraw();
+                                ctx.set_damage(true);
                                 selected = false;
                             }
 
@@ -375,7 +385,7 @@ impl RichText {
                 bg_color,
                 data_buffer
             );
-            panel.redraw();
+            panel.set_damage(true);
         }
 
         selected
@@ -452,11 +462,6 @@ impl RichText {
             rich_data.estimate(last_piece, drawable_max_width);
         }
 
-        for piece in rich_data.line_pieces.iter() {
-            piece.borrow_mut().font = rich_data.font;
-            piece.borrow_mut().font_size = rich_data.font_size;
-        }
-
         self.data_buffer.borrow_mut().push_back(rich_data);
         if self.data_buffer.borrow().len() > self.buffer_max_lines {
             self.data_buffer.borrow_mut().pop_front();
@@ -471,7 +476,8 @@ impl RichText {
             self.data_buffer.clone(),
         );
 
-        self.panel.redraw();
+        // self.panel.redraw();
+        self.panel.set_damage(true);
     }
 
     fn new_offline(
@@ -695,7 +701,8 @@ impl RichText {
             reviewer.update_data(options);
         }
 
-        self.inner.redraw();
+        // self.inner.redraw();
+        self.inner.set_damage(true);
     }
 
     /// 禁用数据片段的互动能力，同时伴随显示效果会有变化。
@@ -791,7 +798,8 @@ impl RichText {
             reviewer.disable_data(id);
         }
 
-        self.inner.redraw();
+        // self.inner.redraw();
+        self.inner.set_damage(true);
     }
 
     /// 自动关闭回顾区的接口。当回顾区滚动条已抵达最底部时会关闭回顾区，否则不关闭也不产生额外干扰。

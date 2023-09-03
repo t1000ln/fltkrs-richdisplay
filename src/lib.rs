@@ -2,6 +2,7 @@ use std::cell::{Cell, RefCell};
 use std::cmp::{max, min, Ordering};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::{Debug};
+use std::ops::Deref;
 use std::rc::{Rc, Weak};
 use fltk::{app, draw};
 use fltk::draw::{descent, draw_image, draw_line, draw_rectf, draw_text2, measure, set_draw_color, set_font};
@@ -10,7 +11,7 @@ use fltk::image::RgbImage;
 use fltk::prelude::ImageExt;
 
 use idgenerator_thin::YitIdHelper;
-use log::{error};
+use log::{debug, error};
 
 pub mod rich_text;
 pub mod rich_reviewer;
@@ -134,6 +135,25 @@ impl Rectangle {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct ClickPoint {
+    pub x: i32,
+    pub y: i32,
+}
+
+impl ClickPoint {
+
+    pub fn new(x: i32, y: i32) -> ClickPoint {
+        Self {x, y}
+    }
+    pub fn as_rect(&self) -> Rectangle {
+        Rectangle::new(self.x, self.y, 0, 0)
+    }
+
+    pub fn towards_down(&self, another: &Self) -> bool {
+        self.y < another.y
+    }
+}
 
 /// 同一行内多个分片之间共享的信息。通过Rc<RefCell<ThroughLine>>进行链接。
 #[derive(Debug, Clone)]
@@ -334,6 +354,10 @@ impl LinePiece {
             });
             // selection.push_str(&self.line.chars().skip(from).take(to - from).collect::<String>());
         }
+    }
+
+    pub fn rect(&self, offset_y: i32) -> Rectangle {
+        Rectangle::new(self.x, self.y - offset_y, self.w, self.h)
     }
 }
 
@@ -831,7 +855,6 @@ impl RichData {
 
             let y = last_piece.next_y;
             let top_y = last_piece.next_y;
-
             let new_piece = LinePiece::new(text.chars().take(stop_pos).collect::<String>(), last_piece.next_x, y, w, font_height, top_y, last_piece.spacing, next_x, next_y, font_height, font, font_size,  through_line.clone());
             self.line_pieces.push(new_piece.clone());
 
@@ -1132,9 +1155,15 @@ impl LinedData for RichData {
             }
         }
 
+        let (mut _is_first_line, mut bound_x) = (true, 0);
         let mut to_be_updated: Vec<(Rc<RefCell<LinePiece>>, i32)> = Vec::new();
         for line_piece in self.line_pieces.iter() {
             let lp = &*line_piece.borrow();
+            if _is_first_line {
+                bound_x = lp.x;
+                _is_first_line = false;
+            }
+
             let tl = &mut *lp.through_line.borrow_mut();
             let ys = &*tl.ys.borrow_mut();
             let mut max_h = 1;
@@ -1186,7 +1215,7 @@ impl LinedData for RichData {
             // bottom_y = lp.y + lp.through_line.borrow().max_h;
             bottom_y = lp.top_y + lp.through_line.borrow().max_h;
         }
-        self.set_v_bounds(top_y, bottom_y, start_x);
+        self.set_v_bounds(top_y, bottom_y, bound_x);
         ret
     }
 
@@ -1879,6 +1908,50 @@ fn extend_from_end(piece: &LinePiece) {
     if let Some((old_from, _)) = piece.selected_range.get() {
         piece.selected_range.set(Some((old_from, piece.line.chars().count())));
     }
+}
+
+pub fn locate_piece_at_point(visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>, win_point: ClickPoint, offset_y: i32) -> Option<LinePiece> {
+    for (_, piece) in visible_lines.borrow().iter() {
+        if is_overlap(&piece.rect(offset_y), &win_point.as_rect()) {
+            debug!("piece y: {}, offset_y: {}", piece.y, offset_y);
+            return Some(piece.clone());
+        }
+    }
+    None
+}
+
+pub fn select_text2(from_point: ClickPoint, to_point: ClickPoint, data_buffer: Rc<RefCell<Vec<RichData>>>, selected_pieces: Rc<RefCell<Vec<LinePiece>>>) -> bool {
+    // debug!("from_point: {:?}, to_point: {:?}", from_point, to_point);
+    /*
+    选择片段的原则：应选择起点右下方的第一行片段，结束点左上方的第一行片段，以及两点之间的中间行片段。
+     */
+    let index_vec = (0..data_buffer.borrow().len()).collect::<Vec<usize>>();
+    let (first_piece, last_piece) = (Rc::new(RefCell::new(LinePiece::init_piece())), Rc::new(RefCell::new(LinePiece::init_piece())));
+    if from_point.towards_down(&to_point) {
+        // 向下选择。
+        if let Ok(_) = index_vec.binary_search_by({
+            let fp = first_piece.clone();
+            let buffer_rc = data_buffer.clone();
+            move |row| {
+                let rd = &(&*buffer_rc.borrow())[*row];
+                if let Some((rd_top_y, rd_bottom_y, rd_x)) = rd.v_bounds {
+                    debug!("from_point: {:?}, to_point: {:?}, rd_top_y: {:} rd_bottom_y: {:} rd_x: {}", from_point, to_point, rd_top_y, rd_bottom_y, rd_x);
+                }
+                if let Some(first_piece) = rd.line_pieces.first() {
+                    debug!("first_piece: {}", first_piece.borrow().line);
+                }
+
+                Ordering::Equal
+            }
+        }) {
+
+        }
+    } else {
+        // 向上选择。
+
+    }
+
+    false
 }
 
 #[cfg(test)]

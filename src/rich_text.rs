@@ -526,16 +526,15 @@ impl RichText {
                 // 暂存主体任意部分可见的数据行信息
                 for piece in rich_data.line_pieces.iter() {
                     let piece = &*piece.borrow();
-                    let y = piece.y - offset_y;
-                    vl.insert(Rectangle::new(piece.x + panel_x, y + panel_y, piece.w, piece.h), piece.clone());
+                    let y = piece.y - offset_y + panel_y;
+                    vl.insert(Rectangle::new(piece.x + panel_x, y, piece.w, piece.h), piece.clone());
 
                     // 暂存可操作数据信息
                     if rich_data.clickable {
-                        cd.insert(Rectangle::new(piece.x + panel_x, y + panel_y, piece.w, piece.h), idx);
+                        cd.insert(Rectangle::new(piece.x + panel_x, y, piece.w, piece.h), idx);
                     }
                 }
 
-                // rich_data.draw(offset_y, idx, visible_lines.clone(),clickable_data.clone(), panel_x, panel_y);
                 rich_data.draw(offset_y);
             }
         }

@@ -4,6 +4,7 @@ use std::cell::{Cell, RefCell};
 use std::cmp::{max, min};
 use std::collections::{HashMap};
 use std::rc::Rc;
+use std::time::Duration;
 use fltk::draw::{draw_rect_fill, draw_xyline, LineStyle, Offscreen, set_draw_color, set_line_style};
 use fltk::enums::{Align, Color, Cursor, Event};
 use fltk::frame::Frame;
@@ -11,7 +12,8 @@ use fltk::group::{Scroll, ScrollType};
 use fltk::prelude::{GroupExt, WidgetBase, WidgetExt};
 use fltk::{app, draw, widget_extends};
 use log::{debug, error};
-use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData};
+use throttle_my_fn::throttle;
+use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData, locate_piece_at_point, ClickPoint, select_text2};
 use crate::rich_text::{PANEL_PADDING};
 
 #[derive(Clone, Debug)]
@@ -100,12 +102,15 @@ impl RichReviewer {
             let last_window_size = Rc::new(Cell::new((w, h)));
             let notifier_rc = notifier.clone();
             let screen_rc = reviewer_screen.clone();
+            let visible_lines_rc = visible_lines.clone();
             let panel_rc = panel.clone();
             let new_scroll_y_rc = scroll_panel_to_y_after_resize.clone();
             let resize_panel_after_resize_rc = resize_panel_after_resize.clone();
             let clickable_data_rc = clickable_data.clone();
-            let mut push_from_x = 0;
-            let mut push_from_y = 0;
+            let bg_rc = background_color.clone();
+            let mut selected = false;
+            let mut sel_from_point = ClickPoint::new(0, 0);
+            let selected_pieces = Rc::new(RefCell::new(Vec::<LinePiece>::new()));
             move |scroller, evt| {
                 match evt {
                     Event::Resize => {
@@ -191,21 +196,64 @@ impl RichReviewer {
                         }
                     }
                     Event::Push => {
-                        let coords = app::event_coords();
-                        push_from_x = coords.0;
-                        push_from_y = coords.1;
+                        let (push_from_x, push_from_y) = app::event_coords();
+                        if selected {
+                            for piece in selected_pieces.borrow().iter() {
+                                piece.selected_range.set(None);
+                            }
+                            selected_pieces.borrow_mut().clear();
+                            scroller.set_damage(true);
+                            selected = false;
+                        }
+
+                        let (p_offset_x, p_offset_y) = (scroller.x(), scroller.y());
+                        let mut offset_y = scroller.yposition() - PANEL_PADDING;
+                        // 处理数据相对位移
+                        if let Some(first) = buffer_rc.borrow().first() {
+                            if let Some((y, _, _)) = first.v_bounds {
+                                offset_y += y;
+                            }
+                        }
+                        sel_from_point.x = push_from_x - p_offset_x;
+                        sel_from_point.y = push_from_y + offset_y - p_offset_y;
+
                         return true;
                     }
                     Event::Drag => {
                         let yp = scroller.yposition();
                         let cy = app::event_y();
                         let max_scroll = panel_rc.height() - scroller.height();
+                        let (current_x, current_y) = app::event_coords();
 
                         // 拖动时如果鼠标超出scroll组件边界，但滚动条未到达底部或顶部时，自动滚动内容。
                         if cy > (scroller.y() + scroller.h()) && yp < max_scroll {
                             scroller.scroll_to(0, min(yp + 10, max_scroll));
                         } else if cy < scroller.y() && yp > 0 {
                             scroller.scroll_to(0, max(yp - 10, 0));
+                        }
+
+                        let (p_offset_x, p_offset_y) = (scroller.x(), scroller.y());
+                        let mut offset_y = scroller.yposition() - PANEL_PADDING;
+                        // 处理数据相对位移
+                        if let Some(first) = buffer_rc.borrow().first() {
+                            if let Some((y, _, _)) = first.v_bounds {
+                                offset_y += y;
+                            }
+                        }
+                        if offset_y < 0 {offset_y = 0;}
+
+                        if let Some(ret) = Self::redraw_after_drag(
+                            sel_from_point,
+                            ClickPoint::new(current_x - p_offset_x, current_y + offset_y - p_offset_y),
+                            buffer_rc.clone(),
+                            selected_pieces.clone(),
+                            screen_rc.clone(),
+                            scroller,
+                            visible_lines_rc.clone(),
+                            clickable_data_rc.clone(),
+                            bg_rc.get()
+                        ) {
+                            selected = ret;
                         }
 
                         return true;
@@ -217,6 +265,33 @@ impl RichReviewer {
         });
 
         Self { scroller, panel, data_buffer, background_color, visible_lines, clickable_data, reviewer_screen, scroll_panel_to_y_after_resize, resize_panel_after_resize, notifier }
+    }
+
+    #[throttle(1, Duration::from_millis(100))]
+    fn redraw_after_drag(
+        push_from_point: ClickPoint,
+        current_point: ClickPoint,
+        data_buffer: Rc<RefCell<Vec<RichData>>>,
+        selected_pieces: Rc<RefCell<Vec<LinePiece>>>,
+        screen: Rc<RefCell<Offscreen>>,
+        scroller: &mut Scroll,
+        visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
+        clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
+        background_color: Color,) -> bool {
+
+        let selected = select_text2(push_from_point, current_point, data_buffer.clone(), selected_pieces);
+        if selected {
+            RichReviewer::draw_offline(
+                screen,
+                scroller,
+                visible_lines,
+                clickable_data,
+                data_buffer,
+                background_color
+            );
+            scroller.set_damage(true);
+        }
+        selected
     }
 
     pub fn set_background_color(&self, color: Color) {
@@ -365,10 +440,11 @@ impl RichReviewer {
 
             for piece in rich_data.line_pieces.iter() {
                 let piece = &*piece.borrow();
-                let y = piece.y - offset_y;
-                vl.insert(Rectangle::new(piece.x + scroller_x, y + scroller_y, piece.w, piece.h), piece.clone());
+                let x = piece.x + scroller_x;
+                let y = piece.y - offset_y + scroller_y;
+                vl.insert(Rectangle::new(x, y, piece.w, piece.h), piece.clone());
                 if rich_data.clickable {
-                    cd.insert(Rectangle::new(piece.x + scroller_x, y + scroller_y, piece.w, piece.h), idx + from_index);
+                    cd.insert(Rectangle::new(x, y, piece.w, piece.h), idx + from_index);
                 }
             }
         }

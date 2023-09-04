@@ -1,17 +1,20 @@
 //! 内容源自rich_text的快照，可滚动的浏览的组件。
 
 use std::cell::{Cell, RefCell};
+use std::cmp::{max, min};
 use std::collections::{HashMap};
 use std::rc::Rc;
-use fltk::draw::{draw_rect_fill, draw_rounded_rectf, draw_xyline, LineStyle, Offscreen, set_draw_color, set_line_style};
+use std::time::Duration;
+use fltk::draw::{draw_rect_fill, draw_xyline, LineStyle, Offscreen, set_draw_color, set_line_style};
 use fltk::enums::{Align, Color, Cursor, Event};
 use fltk::frame::Frame;
 use fltk::group::{Scroll, ScrollType};
 use fltk::prelude::{GroupExt, WidgetBase, WidgetExt};
 use fltk::{app, draw, widget_extends};
-use log::{error};
-use crate::{Coordinates, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, UserData};
-use crate::rich_text::{MAIN_PANEL_FIX_HEIGHT, PANEL_PADDING};
+use log::{debug, error};
+use throttle_my_fn::throttle;
+use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData, locate_piece_at_point, ClickPoint, select_text2};
+use crate::rich_text::{PANEL_PADDING};
 
 #[derive(Clone, Debug)]
 pub struct RichReviewer {
@@ -19,6 +22,8 @@ pub struct RichReviewer {
     pub(crate) panel: Frame,
     data_buffer: Rc<RefCell<Vec<RichData>>>,
     background_color: Rc<Cell<Color>>,
+    visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
+    clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
     reviewer_screen: Rc<RefCell<Offscreen>>,
     notifier: Rc<RefCell<Option<tokio::sync::mpsc::Sender<UserData>>>>,
     pub resize_panel_after_resize: Rc<Cell<(i32, i32, i32, i32)>>,
@@ -43,7 +48,8 @@ impl RichReviewer {
 
         let data_buffer: Rc<RefCell<Vec<RichData>>> = Rc::new(RefCell::new(vec![]));
         let background_color = Rc::new(Cell::new(Color::Black));
-        let visible_lines = Rc::new(RefCell::new(HashMap::<Coordinates, usize>::new()));
+        let visible_lines = Rc::new(RefCell::new(HashMap::<Rectangle, LinePiece>::new()));
+        let clickable_data = Rc::new(RefCell::new(HashMap::<Rectangle, usize>::new()));
         let notifier: Rc<RefCell<Option<tokio::sync::mpsc::Sender<UserData>>>> = Rc::new(RefCell::new(None));
         let reviewer_screen = Rc::new(RefCell::new(Offscreen::new(w, h).unwrap()));
         let scroll_panel_to_y_after_resize = Rc::new(Cell::new(0));
@@ -53,16 +59,16 @@ impl RichReviewer {
             let data_buffer_rc = data_buffer.clone();
             let scroll_rc = scroller.clone();
             let visible_lines_rc = visible_lines.clone();
+            let clickable_data_rc = clickable_data.clone();
             let bg_rc = background_color.clone();
             let screen_rc = reviewer_screen.clone();
             move |_| {
                 /*
                 先离线绘制内容面板，再根据面板大小复制所需区域内容。这样做是为了避免在线绘制时，会出现绘制内容超出面板边界的问题。
                  */
-                Self::draw_offline(screen_rc.clone(), &scroll_rc, data_buffer_rc.clone(), bg_rc.get(), visible_lines_rc.clone());
+                Self::draw_offline(screen_rc.clone(), &scroll_rc, visible_lines_rc.clone(), clickable_data_rc.clone(), data_buffer_rc.clone(), bg_rc.get());
 
-                let (x, y, window_width, window_height) = (scroll_rc.x(), scroll_rc.y(), scroll_rc.width(), scroll_rc.height());
-                screen_rc.borrow().copy(x, y, window_width, window_height, 0, 0);
+                screen_rc.borrow().copy(scroll_rc.x(), scroll_rc.y(), scroll_rc.width(), scroll_rc.height(), 0, 0);
             }
         });
 
@@ -93,13 +99,18 @@ impl RichReviewer {
 
         scroller.handle({
             let buffer_rc = data_buffer.clone();
-            let last_window_size = Rc::new(Cell::new((w, h - MAIN_PANEL_FIX_HEIGHT - PANEL_PADDING)));
+            let last_window_size = Rc::new(Cell::new((w, h)));
             let notifier_rc = notifier.clone();
             let screen_rc = reviewer_screen.clone();
+            let visible_lines_rc = visible_lines.clone();
             let panel_rc = panel.clone();
             let new_scroll_y_rc = scroll_panel_to_y_after_resize.clone();
             let resize_panel_after_resize_rc = resize_panel_after_resize.clone();
-            let visible_lines_rc = visible_lines.clone();
+            let clickable_data_rc = clickable_data.clone();
+            let bg_rc = background_color.clone();
+            let mut selected = false;
+            let mut sel_from_point = ClickPoint::new(0, 0);
+            let selected_pieces = Rc::new(RefCell::new(Vec::<LinePiece>::new()));
             move |scroller, evt| {
                 match evt {
                     Event::Resize => {
@@ -143,7 +154,7 @@ impl RichReviewer {
                             需要获取缩放前的滚动偏移量比例，并按照同比在缩放完成重绘后强制滚动到对应比例处。
                             这个操作需要延迟到自动滚动完毕后再执行，此处通过异步信号来达成预期效果。
                              */
-                            if old_scroll_y > 0 {
+                            if old_scroll_y > 0 && last_height > 0 {
                                 let pos_percent = old_scroll_y as f64 / (last_panel_height - last_height) as f64;
                                 let new_scroll_y = ((new_panel_height - current_height) as f64 * pos_percent).round() as i32;
                                 new_scroll_y_rc.replace(new_scroll_y);
@@ -155,7 +166,7 @@ impl RichReviewer {
                     }
                     Event::Move => {
                         // 检测鼠标进入可互动区域，改变鼠标样式
-                        if mouse_enter(visible_lines_rc.clone()) {
+                        if mouse_enter(clickable_data_rc.clone()) {
                             draw::set_cursor(Cursor::Hand);
                         } else {
                             draw::set_cursor(Cursor::Default);
@@ -166,8 +177,8 @@ impl RichReviewer {
                     }
                     Event::Released => {
                         // 检测鼠标点击可互动区域，执行用户自定义操作
-                        for (area, idx) in visible_lines_rc.borrow().iter() {
-                            let (x, y, w, h) = area.to_rect();
+                        for (area, idx) in clickable_data_rc.borrow().iter() {
+                            let (x, y, w, h) = area.tup();
                             if app::event_inside(x, y, w, h) {
                                 if let Some(rd) = buffer_rc.borrow().get(*idx) {
                                     let sd = rd.into();
@@ -184,13 +195,103 @@ impl RichReviewer {
                             }
                         }
                     }
+                    Event::Push => {
+                        let (push_from_x, push_from_y) = app::event_coords();
+                        if selected {
+                            for piece in selected_pieces.borrow().iter() {
+                                piece.selected_range.set(None);
+                            }
+                            selected_pieces.borrow_mut().clear();
+                            scroller.set_damage(true);
+                            selected = false;
+                        }
+
+                        let (p_offset_x, p_offset_y) = (scroller.x(), scroller.y());
+                        let mut offset_y = scroller.yposition() - PANEL_PADDING;
+                        // 处理数据相对位移
+                        if let Some(first) = buffer_rc.borrow().first() {
+                            if let Some((y, _, _, _)) = first.v_bounds {
+                                offset_y += y;
+                            }
+                        }
+                        sel_from_point.x = push_from_x - p_offset_x;
+                        sel_from_point.y = push_from_y + offset_y - p_offset_y;
+
+                        return true;
+                    }
+                    Event::Drag => {
+                        let yp = scroller.yposition();
+                        let cy = app::event_y();
+                        let max_scroll = panel_rc.height() - scroller.height();
+                        let (current_x, current_y) = app::event_coords();
+
+                        // 拖动时如果鼠标超出scroll组件边界，但滚动条未到达底部或顶部时，自动滚动内容。
+                        if cy > (scroller.y() + scroller.h()) && yp < max_scroll {
+                            scroller.scroll_to(0, min(yp + 10, max_scroll));
+                        } else if cy < scroller.y() && yp > 0 {
+                            scroller.scroll_to(0, max(yp - 10, 0));
+                        }
+
+                        let (p_offset_x, p_offset_y) = (scroller.x(), scroller.y());
+                        let mut offset_y = scroller.yposition() - PANEL_PADDING;
+                        // 处理数据相对位移
+                        if let Some(first) = buffer_rc.borrow().first() {
+                            if let Some((y, _, _, _)) = first.v_bounds {
+                                offset_y += y;
+                            }
+                        }
+                        if offset_y < 0 {offset_y = 0;}
+
+                        if let Some(ret) = Self::redraw_after_drag(
+                            sel_from_point,
+                            ClickPoint::new(current_x - p_offset_x, current_y + offset_y - p_offset_y),
+                            buffer_rc.clone(),
+                            selected_pieces.clone(),
+                            screen_rc.clone(),
+                            scroller,
+                            visible_lines_rc.clone(),
+                            clickable_data_rc.clone(),
+                            bg_rc.get()
+                        ) {
+                            selected = ret;
+                        }
+
+                        return true;
+                    }
                     _ => {}
                 }
                 false
             }
         });
 
-        Self { scroller, panel, data_buffer, background_color, reviewer_screen, scroll_panel_to_y_after_resize, resize_panel_after_resize, notifier }
+        Self { scroller, panel, data_buffer, background_color, visible_lines, clickable_data, reviewer_screen, scroll_panel_to_y_after_resize, resize_panel_after_resize, notifier }
+    }
+
+    #[throttle(1, Duration::from_millis(100))]
+    fn redraw_after_drag(
+        push_from_point: ClickPoint,
+        current_point: ClickPoint,
+        data_buffer: Rc<RefCell<Vec<RichData>>>,
+        selected_pieces: Rc<RefCell<Vec<LinePiece>>>,
+        screen: Rc<RefCell<Offscreen>>,
+        scroller: &mut Scroll,
+        visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
+        clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
+        background_color: Color,) -> bool {
+
+        let selected = select_text2(push_from_point, current_point, data_buffer.clone(), selected_pieces);
+        if selected {
+            RichReviewer::draw_offline(
+                screen,
+                scroller,
+                visible_lines,
+                clickable_data,
+                data_buffer,
+                background_color
+            );
+            scroller.set_damage(true);
+        }
+        selected
     }
 
     pub fn set_background_color(&self, color: Color) {
@@ -206,19 +307,6 @@ impl RichReviewer {
         // 设置新的窗口尺寸
         let panel_height = Self::calc_panel_height(self.data_buffer.clone(), scroller_height);
         self.panel.resize(self.panel.x(), self.panel.y(), scroller_width, panel_height);
-        // self.resize_panel_after_resize.replace((self.scroller.x(), self.scroller.y(), scroller_width, panel_height));
-        // if let Err(e) = app::handle_main(LocalEvent::RESIZE) {
-        //     error!("发送缩放信号失败:{e}");
-        // }
-
-
-
-        // 滚动到最底部
-        // self.scroller.scroll_to(0, panel_height - scroller_height);
-        // self.scroll_panel_to_y_after_resize.replace(panel_height - scroller_height);
-        // if let Err(e) = app::handle_main(LocalEvent::SCROLL_TO) {
-        //     error!("发送滚动信号失败:{e}");
-        // }
     }
 
     /// 根据当前回顾`scroller`窗口大小创建对应的离线绘图板，并设置滚动条到最底部。
@@ -265,12 +353,12 @@ impl RichReviewer {
         let buffer = &*buffer_rc.borrow();
         let (mut top, mut bottom) = (0, 0);
         if let Some(first) = buffer.first() {
-            if let Some((top_y, _, _)) = first.v_bounds {
+            if let Some((top_y, _, _, _)) = first.v_bounds {
                 top = top_y;
             }
         }
         if let Some(last) = buffer.last() {
-            if let Some((_, bottom_y, _)) = last.v_bounds {
+            if let Some((_, bottom_y, _, _)) = last.v_bounds {
                 bottom = bottom_y;
             }
         }
@@ -282,11 +370,24 @@ impl RichReviewer {
         }
     }
 
-    pub fn draw_offline(screen: Rc<RefCell<Offscreen>>, scroller: &Scroll, data_buffer: Rc<RefCell<Vec<RichData>>>, background_color: Color, visible_lines: Rc<RefCell<HashMap<Coordinates, usize>>>) {
+    fn draw_offline(
+        screen: Rc<RefCell<Offscreen>>,
+        scroller: &Scroll,
+        visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
+        clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
+        data_buffer: Rc<RefCell<Vec<RichData>>>,
+        background_color: Color,
+        ) {
+
         screen.borrow().begin();
         let (scroller_x, scroller_y, window_width, window_height) = (scroller.x(), scroller.y(), scroller.width(), scroller.height());
         let drawable_height = window_height - PANEL_PADDING;
-        visible_lines.borrow_mut().clear();
+
+        let mut vl = visible_lines.borrow_mut();
+        let mut cd = clickable_data.borrow_mut();
+        vl.clear();
+        cd.clear();
+
         // 滚动条滚动的高度在0到(panel.height - scroll.height)之间。
         let mut base_y = scroller.yposition();
         if base_y < 0 {
@@ -297,16 +398,17 @@ impl RichReviewer {
 
         // 处理数据相对位移
         if let Some(first) = data_buffer.borrow().first() {
-            if let Some((y, _, _)) = first.v_bounds {
+            if let Some((y, _, _, _)) = first.v_bounds {
                 top_y += y;
                 bottom_y += y;
             }
         }
 
+        // let offset_y = top_y - PADDING.top + PADDING.bottom;
         let offset_y = top_y - PADDING.top;
 
         // 填充背景色
-        draw_rect_fill(0, 0, window_width, drawable_height, background_color);
+        draw_rect_fill(0, 0, window_width, window_height, background_color);
 
         let data = &*data_buffer.borrow();
 
@@ -333,21 +435,31 @@ impl RichReviewer {
         }
 
         for (idx, rich_data) in data[from_index..to_index].iter().enumerate() {
-            rich_data.draw(offset_y, idx, visible_lines.clone(), scroller_x, scroller_y);
+            // rich_data.draw(offset_y, idx + from_index, visible_lines.clone(), clickable_data.clone(), scroller_x, scroller_y);
+            rich_data.draw(offset_y);
+
+            for piece in rich_data.line_pieces.iter() {
+                let piece = &*piece.borrow();
+                let x = piece.x + scroller_x;
+                let y = piece.y - offset_y + scroller_y;
+                vl.insert(Rectangle::new(x, y, piece.w, piece.h), piece.clone());
+                if rich_data.clickable {
+                    cd.insert(Rectangle::new(x, y, piece.w, piece.h), idx + from_index);
+                }
+            }
         }
 
         /*
         绘制分界线
          */
-        // 象牙白底色
-        set_draw_color(Color::from_rgb(235, 229, 209));
-        draw_rounded_rectf(0, drawable_height, window_width, PANEL_PADDING, 4);
-
-        // 暗金色虚线
-        set_draw_color(Color::from_rgb(136, 102, 0));
-        set_line_style(LineStyle::DashDotDot, PANEL_PADDING / 3);
-        draw_xyline(scroller_x + 6, drawable_height + (PANEL_PADDING / 2), scroller_x + window_width - 6);
+        draw_rect_fill(0, drawable_height, window_width, PANEL_PADDING, background_color);
+        set_draw_color(Color::White);
+        set_line_style(LineStyle::DashDotDot, (PANEL_PADDING as f32 / 3f32).floor() as i32);
+        draw_xyline(0, drawable_height + (PANEL_PADDING / 2), scroller_x + window_width);
         set_line_style(LineStyle::Solid, 1);
+
+        // 填充顶部边界空白
+        draw_rect_fill(0, 0, window_width, PADDING.top, background_color);
 
         screen.borrow().end();
     }
@@ -369,4 +481,70 @@ impl RichReviewer {
         self.notifier.replace(Some(notifier));
     }
 
+    /// 更改数据属性。
+    ///
+    /// # Arguments
+    ///
+    /// * `id`: 数据ID。
+    /// * `clickable`:
+    /// * `underline`:
+    /// * `expired`:
+    /// * `text`:
+    /// * `fg_color`:
+    /// * `bg_color`:
+    ///
+    /// returns: ()
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
+    pub fn update_data(&mut self, options: RichDataOptions) {
+        let mut find_out = false;
+        let mut target_idx = 0;
+        if let Ok(idx) = self.data_buffer.borrow().binary_search_by_key(&options.id, |rd| rd.id) {
+            target_idx = idx;
+            find_out = true;
+        }
+
+        if find_out {
+            if let Some(rd) = self.data_buffer.borrow_mut().get_mut(target_idx) {
+                update_data_properties(options, rd);
+            }
+            Self::draw_offline(
+                self.reviewer_screen.clone(),
+                &self.scroller,
+                self.visible_lines.clone(),
+                self.clickable_data.clone(),
+                self.data_buffer.clone(),
+                self.background_color.get(),
+            );
+        }
+    }
+
+    pub fn disable_data(&mut self, id: i64) {
+        let mut find_out = false;
+        let mut target_idx = 0;
+        if let Ok(idx) = self.data_buffer.borrow().binary_search_by_key(&id, |rd| rd.id) {
+            target_idx = idx;
+            find_out = true;
+        }
+
+        if find_out {
+            if let Some(rd) = self.data_buffer.borrow_mut().get_mut(target_idx) {
+                disable_data(rd);
+            }
+
+            // Self::draw_offline(self.reviewer_screen.clone(), &self.scroller, self.data_buffer.clone(), self.background_color.get(), self.visible_lines.clone());
+            Self::draw_offline(
+                self.reviewer_screen.clone(),
+                &self.scroller,
+                self.visible_lines.clone(),
+                self.clickable_data.clone(),
+                self.data_buffer.clone(),
+                self.background_color.get(),
+            );
+        }
+    }
 }

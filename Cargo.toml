@@ -6,12 +6,12 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-fltk = "^1.4.9"
+fltk = "^1.4.10"
 tokio = { version = "1.32", features = ["full"] }
 idgenerator-thin = "0.1.2"
 log = "^0.4"
+throttle_my_fn = "0.2.6"
+parking_lot = "0.12.1"
 
 [dev-dependencies]
 simple_logger = "4.2"
-[target.'cfg(unix)'.dependencies]
-backtrace-on-stack-overflow = "0.3.0"

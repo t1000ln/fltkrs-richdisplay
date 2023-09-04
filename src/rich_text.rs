@@ -4,26 +4,28 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use fltk::draw::{draw_rect_fill, Offscreen};
-use fltk::enums::{Color, ColorDepth, Cursor, Event};
+use fltk::enums::{Color, Cursor, Event};
 use fltk::frame::Frame;
-use fltk::prelude::{GroupExt, ImageExt, WidgetBase, WidgetExt};
+use fltk::prelude::{GroupExt, WidgetBase, WidgetExt};
 use fltk::{app, draw, widget_extends};
 use fltk::app::MouseWheel;
 use fltk::group::{Flex, Scroll};
-use fltk::image::{RgbImage};
-use crate::{Coordinates, DataType, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, UserData};
+use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData, select_text};
 
 use idgenerator_thin::{IdGeneratorOptions, YitIdHelper};
 use log::{debug, error};
+use throttle_my_fn::throttle;
 use crate::rich_reviewer::RichReviewer;
 
 static ID_GENERATOR_INIT: OnceLock<u8> = OnceLock::new();
 
 pub const MAIN_PANEL_FIX_HEIGHT: i32 = 200;
-pub const PANEL_PADDING: i32 = 12;
+pub const PANEL_PADDING: i32 = 8;
 
+/// rich-display主面板结构。
 #[derive(Debug, Clone)]
 pub struct RichText {
     panel: Frame,
@@ -34,7 +36,8 @@ pub struct RichText {
     inner: Flex,
     reviewer: Rc<RefCell<Option<RichReviewer>>>,
     panel_screen: Rc<RefCell<Offscreen>>,
-    visible_lines: Rc<RefCell<HashMap<Coordinates, usize>>>
+    clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
+    visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
 }
 widget_extends!(RichText, Flex, inner);
 
@@ -46,6 +49,11 @@ impl RichText {
             // 初始化ID生成器。
             let options = IdGeneratorOptions::new(1);
             YitIdHelper::set_id_generator(options);
+            app::add_clipboard_notify3({
+                move |data| {
+                    debug!("clipboard data: {:?}", data);
+                }
+            });
             0
         });
 
@@ -53,7 +61,9 @@ impl RichText {
         let reviewer = Rc::new(RefCell::new(None::<RichReviewer>));
 
         let mut inner = Flex::new(x, y, w, h, title).column();
+        inner.set_pad(0);
         inner.end();
+
 
 
         let mut panel = Frame::new(x, y, w, h, None);
@@ -64,18 +74,22 @@ impl RichText {
         let buffer_max_lines = 100;
         let data_buffer = Rc::new(RefCell::new(VecDeque::<RichData>::with_capacity(buffer_max_lines + 1)));
 
-        let visible_lines = Rc::new(RefCell::new(HashMap::<Coordinates, usize>::new()));
+        let visible_lines = Rc::new(RefCell::new(HashMap::<Rectangle, LinePiece>::new()));
+        let clickable_data = Rc::new(RefCell::new(HashMap::<Rectangle, usize>::new()));
         let notifier: Rc<RefCell<Option<tokio::sync::mpsc::Sender<UserData>>>> = Rc::new(RefCell::new(None));
-        let to_be_dropped_reviewer = Rc::new(Cell::new(None::<(Scroll, Frame)>));
+        let to_be_dropped_reviewer = Rc::new(Cell::new(None::<Scroll>));
+        let selected = Rc::new(Cell::new(false));
 
         panel.draw({
             let screen_rc = panel_screen.clone();
             move |ctx| {
-                let (x, y, window_width, window_height) = (ctx.x(), ctx.y(), ctx.width(), ctx.height());
-                screen_rc.borrow().copy(x, y, window_width, window_height, 0, 0);
+                screen_rc.borrow().copy(ctx.x(), ctx.y(), ctx.width(), ctx.height(), 0, 0);
             }
         });
 
+        /*
+        处理主面板容器的动作事件，打开或关闭回顾区。
+         */
         inner.handle({
             let last_window_size = Rc::new(Cell::new((0, 0)));
             let panel_rc = panel.clone();
@@ -83,118 +97,157 @@ impl RichText {
             let buffer_rc = data_buffer.clone();
             let bg_rc = background_color.clone();
             let visible_lines_rc = visible_lines.clone();
+            let clickable_data_rc = clickable_data.clone();
             let screen_rc = panel_screen.clone();
             let to_be_dropped_reviewer_rc = to_be_dropped_reviewer.clone();
             let notifier_rc = notifier.clone();
             move |flex, evt| {
-                match evt {
-                    Event::Resize => {
-                        let (current_width, current_height) = (flex.width(), flex.height());
-                        let (last_width, last_height) = last_window_size.get();
-                        if last_width != current_width || last_height != current_height {
-                            last_window_size.replace((current_width, current_height));
-                            let panel_height = if reviewer_rc.borrow().is_some() {
-                                MAIN_PANEL_FIX_HEIGHT
-                            } else {
-                                current_height
-                            };
-                            flex.fixed(&panel_rc, panel_height);
-                            flex.recalc();
+                if evt == LocalEvent::DROP_REVIEWER_FROM_EXTERNAL.into() {
+                    // 隐藏回顾区
+                    let (should_remove, drop_target) = Self::should_hide_reviewer(
+                        reviewer_rc.clone(),
+                        flex,
+                        &panel_rc,
+                        screen_rc.clone(),
+                        bg_rc.clone(),
+                        visible_lines_rc.clone(),
+                        clickable_data_rc.clone(),
+                        buffer_rc.clone()
+                    );
+                    return if should_remove {
+                        reviewer_rc.replace(None);
+                        to_be_dropped_reviewer_rc.replace(drop_target);
+                        if let Err(e) = app::handle_main(LocalEvent::DROP_REVIEWER) {
+                            error!("发送删除回顾事件时发生错误：{}", e);
                         }
+                        true
+                    } else {
+                        false
                     }
-                    Event::MouseWheel => {
-                        /*
-                        显示或隐藏回顾区。
-                         */
-                        if app::event_dy() == MouseWheel::Down && !buffer_rc.borrow().is_empty() && reviewer_rc.borrow().is_none() {
-                            // 显示回顾区
-                            let mut reviewer = RichReviewer::new(0, 0, flex.width(), flex.height() - MAIN_PANEL_FIX_HEIGHT, None);
-                            reviewer.set_background_color(bg_rc.get());
-                            if let Some(notifier_rc) = notifier_rc.borrow().as_ref() {
-                                reviewer.set_notifier(notifier_rc.clone());
-                            }
-                            let snapshot = Vec::from(buffer_rc.borrow().clone());
-                            reviewer.set_data(snapshot);
-                            flex.insert(&reviewer.scroller, 0);
-                            flex.fixed(&panel_rc, MAIN_PANEL_FIX_HEIGHT);
-                            flex.recalc();
+                } else if evt == LocalEvent::OPEN_REVIEWER_FROM_EXTERNAL.into() {
+                    let mut reviewer = RichReviewer::new(0, 0, flex.width(), flex.height() - MAIN_PANEL_FIX_HEIGHT, None);
+                    reviewer.set_background_color(bg_rc.get());
+                    if let Some(notifier_rc) = notifier_rc.borrow().as_ref() {
+                        reviewer.set_notifier(notifier_rc.clone());
+                    }
+                    let snapshot = Vec::from(buffer_rc.borrow().clone());
+                    reviewer.set_data(snapshot);
+                    flex.insert(&reviewer.scroller, 0);
+                    flex.fixed(&panel_rc, MAIN_PANEL_FIX_HEIGHT);
+                    flex.recalc();
 
-                            // 替换新的离线绘制板
-                            Self::new_offline(
-                                flex.width(),
-                                MAIN_PANEL_FIX_HEIGHT,
-                                screen_rc.clone(),
-                                &panel_rc,
-                                visible_lines_rc.clone(),
-                                bg_rc.get(),
-                                buffer_rc.clone()
-                            );
+                    // 替换新的离线绘制板
+                    Self::new_offline(
+                        flex.width(),
+                        MAIN_PANEL_FIX_HEIGHT,
+                        screen_rc.clone(),
+                        &panel_rc,
+                        visible_lines_rc.clone(),
+                        clickable_data_rc.clone(),
+                        bg_rc.get(),
+                        buffer_rc.clone()
+                    );
 
-                            // reviewer.renew_offscreen(reviewer.width(), reviewer.height());
-                            reviewer.scroll_to_bottom();
-
-                            reviewer_rc.replace(Some(reviewer));
-
-                        } else if app::event_dy() == MouseWheel::Up && reviewer_rc.borrow().is_some() {
-                            // 隐藏回顾区
-                            let mut should_remove = false;
-                            let mut drop_target: Option<(Scroll, Frame)> = None;
-                            if let Some(reviewer) = &*reviewer_rc.borrow() {
-                                let dy = reviewer.scroller.yposition();
-                                if dy == reviewer.panel.height() - reviewer.scroller.height() {
-                                    let full_height = flex.height();
-                                    flex.remove(&reviewer.scroller);
-                                    flex.fixed(&panel_rc, flex.height());
-                                    flex.recalc();
-                                    should_remove = true;
-
-                                    drop_target.replace((reviewer.scroller.clone(), reviewer.panel.clone()));
-
-                                    // 替换新的离线绘制板
-                                    Self::new_offline(
-                                        flex.width(),
-                                        full_height,
-                                        screen_rc.clone(),
-                                        &panel_rc,
-                                        visible_lines_rc.clone(),
-                                        bg_rc.get(),
-                                        buffer_rc.clone()
-                                    );
-                                }
-                            }
-                            if should_remove {
-                                reviewer_rc.replace(None);
-                                to_be_dropped_reviewer_rc.replace(drop_target);
-                                if let Err(e) = app::handle_main(LocalEvent::DROP_REVIEWER) {
-                                    error!("发送删除回顾事件时发生错误：{}", e);
-                                }
+                    reviewer.scroll_to_bottom();
+                    reviewer_rc.replace(Some(reviewer));
+                    true
+                } else {
+                    match evt {
+                        Event::Resize => {
+                            let (current_width, current_height) = (flex.width(), flex.height());
+                            let (last_width, last_height) = last_window_size.get();
+                            if last_width != current_width || last_height != current_height {
+                                last_window_size.replace((current_width, current_height));
+                                let panel_height = if reviewer_rc.borrow().is_some() {
+                                    MAIN_PANEL_FIX_HEIGHT
+                                } else {
+                                    current_height
+                                };
+                                flex.fixed(&panel_rc, panel_height);
+                                // flex.recalc();
                             }
                         }
+                        Event::MouseWheel => {
+                            /*
+                            显示或隐藏回顾区。
+                             */
+                            if app::event_dy() == MouseWheel::Down && !buffer_rc.borrow().is_empty() && reviewer_rc.borrow().is_none() {
+                                // 显示回顾区
+                                let mut reviewer = RichReviewer::new(0, 0, flex.width(), flex.height() - MAIN_PANEL_FIX_HEIGHT, None);
+                                reviewer.set_background_color(bg_rc.get());
+                                if let Some(notifier_rc) = notifier_rc.borrow().as_ref() {
+                                    reviewer.set_notifier(notifier_rc.clone());
+                                }
+                                let snapshot = Vec::from(buffer_rc.borrow().clone());
+                                reviewer.set_data(snapshot);
+                                flex.insert(&reviewer.scroller, 0);
+                                flex.fixed(&panel_rc, MAIN_PANEL_FIX_HEIGHT);
+                                flex.recalc();
+
+                                // 替换新的离线绘制板
+                                Self::new_offline(
+                                    flex.width(),
+                                    MAIN_PANEL_FIX_HEIGHT,
+                                    screen_rc.clone(),
+                                    &panel_rc,
+                                    visible_lines_rc.clone(),
+                                    clickable_data_rc.clone(),
+                                    bg_rc.get(),
+                                    buffer_rc.clone()
+                                );
+
+                                reviewer.scroll_to_bottom();
+                                reviewer_rc.replace(Some(reviewer));
+
+                            } else if app::event_dy() == MouseWheel::Up && reviewer_rc.borrow().is_some() {
+                                // 隐藏回顾区
+                                let (should_remove, drop_target) = Self::should_hide_reviewer(
+                                    reviewer_rc.clone(),
+                                    flex,
+                                    &panel_rc,
+                                    screen_rc.clone(),
+                                    bg_rc.clone(),
+                                    visible_lines_rc.clone(),
+                                    clickable_data_rc.clone(),
+                                    buffer_rc.clone(),
+                                );
+                                if should_remove {
+                                    reviewer_rc.replace(None);
+                                    to_be_dropped_reviewer_rc.replace(drop_target);
+                                    if let Err(e) = app::handle_main(LocalEvent::DROP_REVIEWER) {
+                                        error!("发送删除回顾事件时发生错误：{}", e);
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
                     }
-                    _ => {}
+                    false
                 }
-                false
             }
         });
 
         /*
-        处理窗口事件
+        处理主面板缩放及鼠标操作事件。
          */
         panel.handle({
             let buffer_rc = data_buffer.clone();
             let last_window_size = Rc::new(Cell::new((0, 0)));
             let visible_lines_rc = visible_lines.clone();
+            let clickable_data_rc = clickable_data.clone();
             let notifier_rc = notifier.clone();
             let screen_rc = panel_screen.clone();
             let bg_rc = background_color.clone();
             let to_be_dropped_reviewer_rc = to_be_dropped_reviewer.clone();
+            let mut push_from_x = 0;
+            let mut push_from_y = 0;
+            let selected = selected.clone();
             move |ctx, evt| {
                 if evt == LocalEvent::DROP_REVIEWER.into() {
-                    // 销毁组件，回收内存
+                    // 销毁组件，回收内存，否则会有内存泄漏。
                     let target = to_be_dropped_reviewer_rc.replace(None);
-                    if let Some((scroller, panel)) = target {
+                    if let Some(scroller) = target {
                         app::delete_widget(scroller);
-                        app::delete_widget(panel);
                     }
                     true
                 } else {
@@ -222,6 +275,7 @@ impl RichText {
                                     screen_rc.clone(),
                                     &ctx,
                                     visible_lines_rc.clone(),
+                                    clickable_data_rc.clone(),
                                     bg_rc.get(),
                                     buffer_rc.clone()
                                 );
@@ -229,7 +283,7 @@ impl RichText {
                         }
                         Event::Move => {
                             // 检测鼠标进入可互动区域，改变鼠标样式
-                            if mouse_enter(visible_lines_rc.clone()) {
+                            if mouse_enter(clickable_data_rc.clone()) {
                                 draw::set_cursor(Cursor::Hand);
                             } else {
                                 draw::set_cursor(Cursor::Default);
@@ -240,8 +294,8 @@ impl RichText {
                         }
                         Event::Released => {
                             // 检测鼠标点击可互动区域，执行用户自定义操作
-                            for (area, idx) in visible_lines_rc.borrow().iter() {
-                                let (x, y, w, h) = area.to_rect();
+                            for (area, idx) in clickable_data_rc.borrow().iter() {
+                                let (x, y, w, h) = area.tup();
                                 if app::event_inside(x, y, w, h) {
                                     if let Some(rd) = buffer_rc.borrow().get(*idx) {
                                         let sd = rd.into();
@@ -258,6 +312,46 @@ impl RichText {
                                 }
                             }
                         }
+                        Event::Push => {
+                            let coords = app::event_coords();
+                            push_from_x = coords.0;
+                            push_from_y = coords.1;
+                            if selected.replace(false) {
+                                for (_, piece) in visible_lines_rc.borrow_mut().iter_mut() {
+                                    piece.selected_range.set(None);
+                                }
+                                Self::draw_offline(
+                                    screen_rc.clone(),
+                                    &ctx,
+                                    visible_lines_rc.clone(),
+                                    clickable_data_rc.clone(),
+                                    bg_rc.get(),
+                                    buffer_rc.clone()
+                                );
+                                // ctx.redraw();
+                                ctx.set_damage(true);
+                            }
+
+                            return true;
+                        }
+                        Event::Drag => {
+                            let (ox, oy) = app::event_coords();
+                            let selection_rect = Rectangle::new(push_from_x, push_from_y, ox - push_from_x, oy - push_from_y);
+                            if let Some(ret) = Self::redraw_after_drag(
+                                selection_rect,
+                                screen_rc.clone(),
+                                ctx,
+                                visible_lines_rc.clone(),
+                                clickable_data_rc.clone(),
+                                bg_rc.get(),
+                                buffer_rc.clone(),
+                                (push_from_x, push_from_y),
+                                ctx.x()
+                            ) {
+                                selected.set(ret);
+                            }
+                            return true;
+                        }
                         _ => {}
                     }
                     false
@@ -266,7 +360,69 @@ impl RichText {
             }
         });
 
-        Self { panel, data_buffer, background_color, buffer_max_lines, notifier, inner, reviewer, panel_screen, visible_lines }
+        Self { panel, data_buffer, background_color, buffer_max_lines, notifier, inner, reviewer, panel_screen, visible_lines, clickable_data }
+    }
+
+
+    #[throttle(1, Duration::from_millis(100))]
+    fn redraw_after_drag(selection_rect: Rectangle, offscreen: Rc<RefCell<Offscreen>>,
+                         panel: &mut Frame,
+                         visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
+                         clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
+                         bg_color: Color, data_buffer: Rc<RefCell<VecDeque<RichData>>>,
+                         push_from: (i32, i32),
+                         panel_x: i32) -> bool {
+        let selected = select_text(&selection_rect, visible_lines.clone(), false, push_from, panel_x);
+        if selected {
+            RichText::draw_offline(
+                offscreen,
+                panel,
+                visible_lines,
+                clickable_data,
+                bg_color,
+                data_buffer
+            );
+            panel.set_damage(true);
+        }
+
+        selected
+    }
+
+    /// 检查是否应该关闭回顾区，若满足关闭条件则关闭回顾区并记录待销毁的回顾区组件。
+    fn should_hide_reviewer(
+        reviewer_rc: Rc<RefCell<Option<RichReviewer>>>,
+        flex: &mut Flex,
+        panel_rc: &Frame,
+        screen_rc: Rc<RefCell<Offscreen>>,
+        bg_rc: Rc<Cell<Color>>,
+        visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
+        clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
+        buffer_rc: Rc<RefCell<VecDeque<RichData>>>,
+    ) -> (bool, Option<Scroll>){
+        if let Some(reviewer) = &*reviewer_rc.borrow() {
+            let dy = reviewer.scroller.yposition();
+            if dy == reviewer.panel.height() - reviewer.scroller.height() {
+                let full_height = flex.height();
+                flex.remove(&reviewer.scroller);
+                flex.fixed(panel_rc, flex.height());
+                flex.recalc();
+
+                // 替换新的离线绘制板
+                Self::new_offline(
+                    flex.width(),
+                    full_height,
+                    screen_rc.clone(),
+                    panel_rc,
+                    visible_lines.clone(),
+                    clickable_data.clone(),
+                    bg_rc.get(),
+                    buffer_rc.clone(),
+                );
+
+                return (true, Some(reviewer.scroller.clone()));
+            }
+        }
+        return (false, None);
     }
 
     /// 向数据缓冲区中添加新的数据。新增数据时会计算其绘制所需信息，包括起始坐标和高度等。
@@ -307,32 +463,57 @@ impl RichText {
             self.data_buffer.borrow_mut().pop_front();
         }
 
-        Self::draw_offline(self.panel_screen.clone(), &self.panel, self.visible_lines.clone(), self.background_color.get(), self.data_buffer.clone());
+        Self::draw_offline(
+            self.panel_screen.clone(),
+            &self.panel,
+            self.visible_lines.clone(),
+            self.clickable_data.clone(),
+            self.background_color.get(),
+            self.data_buffer.clone(),
+        );
 
-        self.panel.redraw();
+        // self.panel.redraw();
+        self.panel.set_damage(true);
     }
 
-    pub fn new_offline(w: i32, h: i32, offscreen: Rc<RefCell<Offscreen>>, panel: &Frame, visible_lines: Rc<RefCell<HashMap<Coordinates, usize>>>, bg_color: Color, data_buffer: Rc<RefCell<VecDeque<RichData>>>) {
+    fn new_offline(
+        w: i32, h: i32, offscreen: Rc<RefCell<Offscreen>>,
+        panel: &Frame,
+        visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
+        clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
+        bg_color: Color, data_buffer: Rc<RefCell<VecDeque<RichData>>>
+        ) {
         if let Some(offs) = Offscreen::new(w, h) {
             offscreen.replace(offs);
-            Self::draw_offline(offscreen.clone(), &panel, visible_lines.clone(), bg_color, data_buffer.clone());
+            Self::draw_offline(offscreen.clone(), &panel, visible_lines.clone(), clickable_data, bg_color, data_buffer.clone());
         }
     }
 
-    pub fn draw_offline(offscreen: Rc<RefCell<Offscreen>>, panel: &Frame, visible_lines: Rc<RefCell<HashMap<Coordinates, usize>>>, bg_color: Color, data_buffer: Rc<RefCell<VecDeque<RichData>>>) {
+    fn draw_offline(
+        offscreen: Rc<RefCell<Offscreen>>,
+        panel: &Frame,
+        visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
+        clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
+        bg_color: Color, data_buffer: Rc<RefCell<VecDeque<RichData>>>) {
+
         offscreen.borrow().begin();
         let (panel_x, panel_y, window_width, window_height) = (panel.x(), panel.y(), panel.width(), panel.height());
         let mut offset_y = 0;
-        visible_lines.borrow_mut().clear();
+
+        let mut vl = visible_lines.borrow_mut();
+        let mut cd = clickable_data.borrow_mut();
+        vl.clear();
+        cd.clear();
 
         // 填充背景
         draw_rect_fill(0, 0, window_width, window_height, bg_color);
 
-        let data = data_buffer.borrow();
 
+        // 绘制数据内容
+        let data = data_buffer.borrow();
         let mut set_offset_y = false;
         for (idx, rich_data) in data.iter().enumerate().rev() {
-            if let Some((_, bottom_y, _)) = rich_data.v_bounds {
+            if let Some((_, bottom_y, _, _)) = rich_data.v_bounds {
                 if !set_offset_y && bottom_y > window_height {
                     offset_y = bottom_y - window_height + PADDING.bottom;
                     set_offset_y = true;
@@ -341,13 +522,42 @@ impl RichText {
                 if bottom_y < offset_y {
                     break;
                 }
-                rich_data.draw(offset_y, idx, visible_lines.clone(), panel_x, panel_y);
-            }
 
+                // 暂存主体任意部分可见的数据行信息
+                for piece in rich_data.line_pieces.iter() {
+                    let piece = &*piece.borrow();
+                    let y = piece.y - offset_y + panel_y;
+                    vl.insert(Rectangle::new(piece.x + panel_x, y, piece.w, piece.h), piece.clone());
+
+                    // 暂存可操作数据信息
+                    if rich_data.clickable {
+                        cd.insert(Rectangle::new(piece.x + panel_x, y, piece.w, piece.h), idx);
+                    }
+                }
+
+                rich_data.draw(offset_y);
+            }
         }
+
+        // 填充顶部边界空白
+        draw_rect_fill(0, 0, window_width, PADDING.top, bg_color);
+
         offscreen.borrow().end();
     }
 
+    /// 设置面板背景色。
+    ///
+    /// # Arguments
+    ///
+    /// * `background_color`: 背景色。
+    ///
+    /// returns: ()
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
     pub fn set_background_color(&mut self, background_color: Color) {
         self.background_color.replace(background_color);
         if let Some(reviewer) = self.reviewer.borrow().as_ref() {
@@ -355,7 +565,7 @@ impl RichText {
         }
     }
 
-    /// 设置缓冲区最大数据条数，并非行数。
+    /// 设置数据缓存最大条数，并非行数。
     ///
     /// # Arguments
     ///
@@ -399,20 +609,66 @@ impl RichText {
     ///
     /// # Arguments
     ///
-    /// * `id`: 数据ID。
-    /// * `clickable`:
-    /// * `underline`:
-    /// * `expired`:
-    /// * `text`:
-    /// * `fg_color`:
-    /// * `bg_color`:
+    /// * `options`: 调整属性。
     ///
     /// returns: ()
     ///
     /// # Examples
     ///
     /// ```
+    /// use fltk::{app, window};
+    /// use fltk::enums::Color;
+    /// use fltk::prelude::{GroupExt, WidgetExt};
+    /// use fltkrs_richdisplay::rich_text::RichText;
+    /// use fltkrs_richdisplay::{RichDataOptions, UserData};
     ///
+    /// pub enum GlobalMessage {
+    ///     ContentData(UserData),
+    ///     UpdateData(RichDataOptions),
+    ///     DisableData(i64),
+    /// }
+    ///
+    /// let app = app::App::default();
+    /// let mut win = window::Window::default().with_size(1000, 600);
+    /// let mut rich_text = RichText::new(100, 100, 800, 400, None);
+    /// win.end();
+    /// win.show();
+    ///
+    /// let (sender, mut receiver) = tokio::sync::mpsc::channel::<UserData>(100);
+    /// let (global_sender, global_receiver) = app::channel::<GlobalMessage>();
+    /// let (global_sender, global_receiver) = app::channel::<GlobalMessage>();
+    ///
+    /// let global_sender_rc = global_sender.clone();
+    /// tokio::spawn(async move {
+    ///     while let Some(data) = receiver.recv().await {
+    ///         if data.text.starts_with("14") {
+    ///             let toggle = !data.underline;
+    ///             let update_options = RichDataOptions::new(data.id).underline(toggle);
+    ///             global_sender_rc.send(GlobalMessage::UpdateData(update_options));
+    ///         } else if data.text.starts_with("22") {
+    ///             global_sender_rc.send(GlobalMessage::DisableData(data.id));
+    ///         }
+    ///     }
+    /// });
+    ///
+    /// while app.wait() {
+    ///     if let Some(msg) = global_receiver.recv() {
+    ///         match msg {
+    ///             GlobalMessage::ContentData(data) => {
+    ///                 rich_text.append(data);
+    ///             }
+    ///             GlobalMessage::UpdateData(options) => {
+    ///                 rich_text.update_data(options);
+    ///             }
+    ///             GlobalMessage::DisableData(id) => {
+    ///                 rich_text.disable_data(id);
+    ///             }
+    ///         }
+    ///     }
+    ///
+    ///     app::sleep(0.001);
+    ///     app::awake();
+    /// }
     /// ```
     pub fn update_data(&mut self, options: RichDataOptions) {
         let mut find_out = false;
@@ -424,35 +680,92 @@ impl RichText {
 
         if find_out {
             if let Some(rd) = self.data_buffer.borrow_mut().get_mut(target_idx) {
-                if let Some(clickable) = options.clickable {
-                    rd.clickable = clickable;
-                    if !clickable {
-                        draw::set_cursor(Cursor::Default);
-                    }
-                }
-                if let Some(underline) = options.underline {
-                    rd.underline = underline;
-                }
-                if let Some(expired) = options.expired {
-                    rd.expired = expired;
-                }
-                if let Some(text) = options.text {
-                    rd.text = text;
-                }
-                if let Some(fg_color) = options.fg_color {
-                    rd.fg_color = fg_color;
-                }
-                if let Some(bg_color) = options.bg_color {
-                    rd.bg_color = Some(bg_color);
-                }
-                if let Some(strike_through) = options.strike_through {
-                    rd.strike_through = strike_through;
-                }
-                self.panel.redraw();
+                update_data_properties(options.clone(), rd);
             }
+            Self::draw_offline(
+                self.panel_screen.clone(),
+                &self.panel,
+                self.visible_lines.clone(),
+                self.clickable_data.clone(),
+                self.background_color.get(),
+                self.data_buffer.clone()
+            );
         }
+
+        if let Some(reviewer) = self.reviewer.borrow_mut().as_mut() {
+            reviewer.update_data(options);
+        }
+
+        // self.inner.redraw();
+        self.inner.set_damage(true);
     }
 
+    /// 禁用数据片段的互动能力，同时伴随显示效果会有变化。
+    /// 对于文本段会增加删除线，对于图像会增加灰色遮罩层。
+    ///
+    /// # Arguments
+    ///
+    /// * `id`: 数据片段的ID。
+    ///
+    /// returns: ()
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fltk::{app, window};
+    /// use fltk::enums::Color;
+    /// use fltk::prelude::{GroupExt, WidgetExt};
+    /// use fltkrs_richdisplay::rich_text::RichText;
+    /// use fltkrs_richdisplay::{RichDataOptions, UserData};
+    ///
+    /// pub enum GlobalMessage {
+    ///     ContentData(UserData),
+    ///     UpdateData(RichDataOptions),
+    ///     DisableData(i64),
+    /// }
+    ///
+    /// let app = app::App::default();
+    /// let mut win = window::Window::default().with_size(1000, 600);
+    /// let mut rich_text = RichText::new(100, 100, 800, 400, None);
+    /// win.end();
+    /// win.show();
+    ///
+    /// let (sender, mut receiver) = tokio::sync::mpsc::channel::<UserData>(100);
+    /// let (global_sender, global_receiver) = app::channel::<GlobalMessage>();
+    /// let (global_sender, global_receiver) = app::channel::<GlobalMessage>();
+    ///
+    /// let global_sender_rc = global_sender.clone();
+    /// tokio::spawn(async move {
+    ///     while let Some(data) = receiver.recv().await {
+    ///         if data.text.starts_with("14") {
+    ///             let toggle = !data.underline;
+    ///             let update_options = RichDataOptions::new(data.id).underline(toggle);
+    ///             global_sender_rc.send(GlobalMessage::UpdateData(update_options));
+    ///         } else if data.text.starts_with("22") {
+    ///             global_sender_rc.send(GlobalMessage::DisableData(data.id));
+    ///         }
+    ///     }
+    /// });
+    ///
+    /// while app.wait() {
+    ///     if let Some(msg) = global_receiver.recv() {
+    ///         match msg {
+    ///             GlobalMessage::ContentData(data) => {
+    ///                 rich_text.append(data);
+    ///             }
+    ///             GlobalMessage::UpdateData(options) => {
+    ///                 rich_text.update_data(options);
+    ///             }
+    ///             GlobalMessage::DisableData(id) => {
+    ///                 rich_text.disable_data(id);
+    ///             }
+    ///         }
+    ///     }
+    ///
+    ///     app::sleep(0.001);
+    ///     app::awake();
+    /// }
+    /// ```
     pub fn disable_data(&mut self, id: i64) {
         let mut find_out = false;
         let mut target_idx = 0;
@@ -463,26 +776,132 @@ impl RichText {
 
         if find_out {
             if let Some(rd) = self.data_buffer.borrow_mut().get_mut(target_idx) {
-                rd.set_clickable(false);
-                draw::set_cursor(Cursor::Default);
-
-                match rd.data_type {
-                    DataType::Image => {
-                        if let Some(image) = rd.image.as_mut() {
-                            if let Ok(mut ni) = RgbImage::new(image.as_slice(), rd.image_width, rd.image_height, ColorDepth::Rgb8) {
-                                ni.inactive();
-                                image.clear();
-                                image.append(&mut ni.to_rgb_data());
-                            }
-                        }
-                    }
-                    DataType::Text => {
-                        rd.strike_through = true;
-                    }
-                }
-
-                self.panel.redraw();
+                disable_data(rd);
             }
+
+            Self::draw_offline(
+                self.panel_screen.clone(),
+                &self.panel,
+                self.visible_lines.clone(),
+                self.clickable_data.clone(),
+                self.background_color.get(),
+                self.data_buffer.clone(),
+            );
+        }
+
+        if let Some(reviewer) = self.reviewer.borrow_mut().as_mut() {
+            reviewer.disable_data(id);
+        }
+
+        // self.inner.redraw();
+        self.inner.set_damage(true);
+    }
+
+    /// 自动关闭回顾区的接口。当回顾区滚动条已抵达最底部时会关闭回顾区，否则不关闭也不产生额外干扰。
+    ///
+    /// 该方法适合在调用者的事件处理器当中使用。
+    ///
+    /// returns: bool 当满足关闭条件时，返回 `true`，否则返回 `false`。对于事件处理器来说，当本方法返回 `true` 时，提示事件应被消耗，否则应忽略当前事件。
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fltk::enums::{Event, Key};
+    /// use fltk::{app, window};
+    /// use fltk::prelude::{GroupExt, WidgetBase, WidgetExt};
+    /// use fltkrs_richdisplay::rich_text::RichText;
+    ///
+    /// let app = app::App::default();
+    /// let mut win = window::Window::default().with_size(1000, 600);
+    /// let rich_text = RichText::new(100, 100, 800, 400, None);
+    /// win.handle({
+    ///     let rich_text_rc = rich_text.clone();
+    ///     move |_, evt| {
+    ///         let mut handled = false;
+    ///         match evt {
+    ///             Event::KeyDown => {
+    ///                 if app::event_key_down(Key::PageDown) {
+    ///                     handled = rich_text_rc.auto_close_reviewer();
+    ///                 } else if app::event_key_down(Key::PageUp) {
+    ///                     handled = rich_text_rc.auto_open_reviewer();
+    ///                 }
+    ///
+    ///             }
+    ///             _ => {}
+    ///         }
+    ///         handled
+    ///     }
+    /// });
+    /// win.end();
+    /// win.show();
+    /// app.run().unwrap();
+    /// ```
+    pub fn auto_close_reviewer(&self) -> bool {
+        return if self.reviewer.borrow().is_some() {
+            let handle_result = app::handle_main(LocalEvent::DROP_REVIEWER_FROM_EXTERNAL);
+            match handle_result {
+                Ok(handled) => {handled}
+                Err(e) => {
+                    error!("从外部发送关闭回顾区组件事件时出错: {:?}", e);
+                    false
+                }
+            }
+        } else {
+            false
+        }
+    }
+
+    /// 自动打开回顾区的接口。当没有显示回顾区时自动打开回顾区，否则不关闭也不产生额外干扰。
+    ///
+    /// 该方法适合在调用者的事件处理器当中使用。
+    ///
+    /// returns: bool 当满足关闭条件时，返回 `true`，否则返回 `false`。对于事件处理器来说，当本方法返回 `true` 时，提示事件应被消耗，否则应忽略当前事件。
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fltk::enums::{Event, Key};
+    /// use fltk::{app, window};
+    /// use fltk::prelude::{GroupExt, WidgetBase, WidgetExt};
+    /// use fltkrs_richdisplay::rich_text::RichText;
+    ///
+    /// let app = app::App::default();
+    /// let mut win = window::Window::default().with_size(1000, 600);
+    /// let mut rich_text = RichText::new(100, 100, 800, 400, None);
+    /// win.handle({
+    ///     let mut rich_text_rc = rich_text.clone();
+    ///     move |_, evt| {
+    ///         let mut handled = false;
+    ///         match evt {
+    ///             Event::KeyDown => {
+    ///                 if app::event_key_down(Key::PageDown) {
+    ///                     handled = rich_text_rc.auto_close_reviewer();
+    ///                 } else if app::event_key_down(Key::PageUp) {
+    ///                     handled = rich_text_rc.auto_open_reviewer();
+    ///                 }
+    ///
+    ///             }
+    ///             _ => {}
+    ///         }
+    ///         handled
+    ///     }
+    /// });
+    /// win.end();
+    /// win.show();
+    /// app.run().unwrap();
+    /// ```
+    pub fn auto_open_reviewer(&self) -> bool {
+        return if !self.data_buffer.borrow().is_empty() && self.reviewer.borrow().is_none() {
+            let handle_result = app::handle_main(LocalEvent::OPEN_REVIEWER_FROM_EXTERNAL);
+            match handle_result {
+                Ok(handled) => {handled}
+                Err(e) => {
+                    error!("从外部发送打开回顾区组件事件时出错: {:?}", e);
+                    false
+                }
+            }
+        } else {
+            false
         }
     }
 }

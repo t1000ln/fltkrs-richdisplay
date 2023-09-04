@@ -375,7 +375,7 @@ pub trait LinedData {
     /// ```
     ///
     /// ```
-    fn set_v_bounds(&mut self, top_y: i32, bottom_y: i32, start_x: i32);
+    fn set_v_bounds(&mut self, top_y: i32, bottom_y: i32, start_x: i32, end_x: i32);
 
     /// 获取绘制区域高度。
     fn height(&self) -> i32;
@@ -734,8 +734,8 @@ pub struct RichData {
     expired: bool,
     pub strike_through: bool,
     pub line_height: i32,
-    /// 当前内容在面板垂直高度中的起始和截至y坐标，以及起始x坐标。
-    v_bounds: Option<(i32, i32, i32)>,
+    /// 当前内容在面板垂直高度中的起始和截至y坐标，以及起始和结尾x坐标。
+    v_bounds: Option<(i32, i32, i32, i32)>,
 
     /// 对当前数据进行试算后，分割成适配单行宽度的分片保存起来。由于无需跨线程传输，因此也不考虑线程安全问题。
     pub(crate) line_pieces: Vec<Rc<RefCell<LinePiece>>>,
@@ -892,8 +892,8 @@ impl RichData {
 
 
 impl LinedData for RichData {
-    fn set_v_bounds(&mut self, top_y: i32, bottom_y: i32, start_x: i32) {
-        self.v_bounds = Some((top_y, bottom_y, start_x));
+    fn set_v_bounds(&mut self, top_y: i32, bottom_y: i32, start_x: i32, end_x: i32,) {
+        self.v_bounds = Some((top_y, bottom_y, start_x, end_x));
     }
 
     fn height(&self) -> i32 {
@@ -1155,12 +1155,12 @@ impl LinedData for RichData {
             }
         }
 
-        let (mut _is_first_line, mut bound_x) = (true, 0);
+        let (mut _is_first_line, mut bound_start_x, mut bound_end_x) = (true, 0, 0);
         let mut to_be_updated: Vec<(Rc<RefCell<LinePiece>>, i32)> = Vec::new();
         for line_piece in self.line_pieces.iter() {
             let lp = &*line_piece.borrow();
             if _is_first_line {
-                bound_x = lp.x;
+                bound_start_x = lp.x;
                 _is_first_line = false;
             }
 
@@ -1214,8 +1214,9 @@ impl LinedData for RichData {
             let lp = &*last_piece.borrow();
             // bottom_y = lp.y + lp.through_line.borrow().max_h;
             bottom_y = lp.top_y + lp.through_line.borrow().max_h;
+            bound_end_x = lp.x + lp.w;
         }
-        self.set_v_bounds(top_y, bottom_y, bound_x);
+        self.set_v_bounds(top_y, bottom_y, bound_start_x, bound_end_x);
         ret
     }
 
@@ -1934,8 +1935,8 @@ pub fn select_text2(from_point: ClickPoint, to_point: ClickPoint, data_buffer: R
             let buffer_rc = data_buffer.clone();
             move |row| {
                 let rd = &(&*buffer_rc.borrow())[*row];
-                if let Some((rd_top_y, rd_bottom_y, rd_x)) = rd.v_bounds {
-                    debug!("from_point: {:?}, to_point: {:?}, rd_top_y: {:} rd_bottom_y: {:} rd_x: {}", from_point, to_point, rd_top_y, rd_bottom_y, rd_x);
+                if let Some((rd_top_y, rd_bottom_y, rd_start_x, rd_end_x)) = rd.v_bounds {
+                    debug!("from_point: {:?}, to_point: {:?}, rd_top_y: {:} rd_bottom_y: {:} rd_start_x: {}, rd_end_x: {}", from_point, to_point, rd_top_y, rd_bottom_y, rd_start_x, rd_end_x);
                 }
                 if let Some(first_piece) = rd.line_pieces.first() {
                     debug!("first_piece: {}", first_piece.borrow().line);

@@ -513,7 +513,7 @@ impl RichText {
         let data = data_buffer.borrow();
         let mut set_offset_y = false;
         for (idx, rich_data) in data.iter().enumerate().rev() {
-            if let Some((_, bottom_y, _)) = rich_data.v_bounds {
+            if let Some((_, bottom_y, _, _)) = rich_data.v_bounds {
                 if !set_offset_y && bottom_y > window_height {
                     offset_y = bottom_y - window_height + PADDING.bottom;
                     set_offset_y = true;

@@ -210,7 +210,7 @@ impl RichReviewer {
                         let mut offset_y = scroller.yposition() - PANEL_PADDING;
                         // 处理数据相对位移
                         if let Some(first) = buffer_rc.borrow().first() {
-                            if let Some((y, _, _)) = first.v_bounds {
+                            if let Some((y, _, _, _)) = first.v_bounds {
                                 offset_y += y;
                             }
                         }
@@ -236,7 +236,7 @@ impl RichReviewer {
                         let mut offset_y = scroller.yposition() - PANEL_PADDING;
                         // 处理数据相对位移
                         if let Some(first) = buffer_rc.borrow().first() {
-                            if let Some((y, _, _)) = first.v_bounds {
+                            if let Some((y, _, _, _)) = first.v_bounds {
                                 offset_y += y;
                             }
                         }
@@ -353,12 +353,12 @@ impl RichReviewer {
         let buffer = &*buffer_rc.borrow();
         let (mut top, mut bottom) = (0, 0);
         if let Some(first) = buffer.first() {
-            if let Some((top_y, _, _)) = first.v_bounds {
+            if let Some((top_y, _, _, _)) = first.v_bounds {
                 top = top_y;
             }
         }
         if let Some(last) = buffer.last() {
-            if let Some((_, bottom_y, _)) = last.v_bounds {
+            if let Some((_, bottom_y, _, _)) = last.v_bounds {
                 bottom = bottom_y;
             }
         }
@@ -398,7 +398,7 @@ impl RichReviewer {
 
         // 处理数据相对位移
         if let Some(first) = data_buffer.borrow().first() {
-            if let Some((y, _, _)) = first.v_bounds {
+            if let Some((y, _, _, _)) = first.v_bounds {
                 top_y += y;
                 bottom_y += y;
             }

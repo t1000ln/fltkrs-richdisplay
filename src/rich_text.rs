@@ -104,7 +104,7 @@ impl RichText {
             move |flex, evt| {
                 if evt == LocalEvent::DROP_REVIEWER_FROM_EXTERNAL.into() {
                     // 隐藏回顾区
-                    let (should_remove, drop_target) = Self::should_hide_reviewer(
+                    if let Some((should_remove, drop_target)) = Self::should_hide_reviewer(
                         reviewer_rc.clone(),
                         flex,
                         &panel_rc,
@@ -113,17 +113,17 @@ impl RichText {
                         visible_lines_rc.clone(),
                         clickable_data_rc.clone(),
                         buffer_rc.clone()
-                    );
-                    return if should_remove {
-                        reviewer_rc.replace(None);
-                        to_be_dropped_reviewer_rc.replace(drop_target);
-                        if let Err(e) = app::handle_main(LocalEvent::DROP_REVIEWER) {
-                            error!("发送删除回顾事件时发生错误：{}", e);
+                    ) {
+                        if should_remove {
+                            reviewer_rc.replace(None);
+                            to_be_dropped_reviewer_rc.replace(drop_target);
+                            if let Err(e) = app::handle_main(LocalEvent::DROP_REVIEWER) {
+                                error!("发送删除回顾事件时发生错误：{}", e);
+                            }
+                            return true;
                         }
-                        true
-                    } else {
-                        false
                     }
+                    false
                 } else if evt == LocalEvent::OPEN_REVIEWER_FROM_EXTERNAL.into() {
                     let mut reviewer = RichReviewer::new(0, 0, flex.width(), flex.height() - MAIN_PANEL_FIX_HEIGHT, None);
                     reviewer.set_background_color(bg_rc.get());
@@ -201,7 +201,7 @@ impl RichText {
 
                             } else if app::event_dy() == MouseWheel::Up && reviewer_rc.borrow().is_some() {
                                 // 隐藏回顾区
-                                let (should_remove, drop_target) = Self::should_hide_reviewer(
+                                if let Some((should_remove, drop_target)) = Self::should_hide_reviewer(
                                     reviewer_rc.clone(),
                                     flex,
                                     &panel_rc,
@@ -210,14 +210,18 @@ impl RichText {
                                     visible_lines_rc.clone(),
                                     clickable_data_rc.clone(),
                                     buffer_rc.clone(),
-                                );
-                                if should_remove {
-                                    reviewer_rc.replace(None);
-                                    to_be_dropped_reviewer_rc.replace(drop_target);
-                                    if let Err(e) = app::handle_main(LocalEvent::DROP_REVIEWER) {
-                                        error!("发送删除回顾事件时发生错误：{}", e);
+                                ) {
+                                    if should_remove {
+
+                                        // reviewer_rc.replace(None);
+                                        debug!("隐藏回顾区");
+                                        // to_be_dropped_reviewer_rc.replace(drop_target);
+                                        // if let Err(e) = app::handle_main(LocalEvent::DROP_REVIEWER) {
+                                        //     error!("发送删除回顾事件时发生错误：{}", e);
+                                        // }
                                     }
                                 }
+
                             }
                         }
                         _ => {}
@@ -244,11 +248,14 @@ impl RichText {
             let selected = selected.clone();
             move |ctx, evt| {
                 if evt == LocalEvent::DROP_REVIEWER.into() {
+                    println!("123");
                     // 销毁组件，回收内存，否则会有内存泄漏。
-                    let target = to_be_dropped_reviewer_rc.replace(None);
-                    if let Some(scroller) = target {
-                        app::delete_widget(scroller);
-                    }
+                    // let target = to_be_dropped_reviewer_rc.replace(None);
+                    // if let Some(scroller) = target {
+                    //     debug!("开始销毁回顾区组件");
+                    //     app::delete_widget(scroller);
+                    //     debug!("销毁回顾区组件请求已提交");
+                    // }
                     true
                 } else {
                     match evt {
@@ -389,6 +396,7 @@ impl RichText {
     }
 
     /// 检查是否应该关闭回顾区，若满足关闭条件则关闭回顾区并记录待销毁的回顾区组件。
+    #[throttle(1, Duration::from_millis(500))]
     fn should_hide_reviewer(
         reviewer_rc: Rc<RefCell<Option<RichReviewer>>>,
         flex: &mut Flex,
@@ -399,6 +407,7 @@ impl RichText {
         clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
         buffer_rc: Rc<RefCell<VecDeque<RichData>>>,
     ) -> (bool, Option<Scroll>){
+        debug!("检查回顾区是否需要隐藏");
         if let Some(reviewer) = &*reviewer_rc.borrow() {
             let dy = reviewer.scroller.yposition();
             if dy == reviewer.panel.height() - reviewer.scroller.height() {
@@ -408,7 +417,7 @@ impl RichText {
                 flex.recalc();
 
                 // 替换新的离线绘制板
-                Self::new_offline(
+                RichText::new_offline(
                     flex.width(),
                     full_height,
                     screen_rc.clone(),

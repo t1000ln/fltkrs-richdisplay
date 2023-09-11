@@ -111,7 +111,7 @@ async fn main() {
 
 
     tokio::spawn(async move {
-        for i in 0..10 {
+        for i in 0..1 {
             let turn = i * 13;
             let mut data: Vec<UserData> = Vec::from([
                 // UserData::new_text(format!("{}由于多线程可以同时运行，所以将计算操作拆分至多个线程可以提高性能。", turn + 1)).set_font(Font::Courier, 9).set_bg_color(Some(Color::Green)).set_fg_color(Color::Red),

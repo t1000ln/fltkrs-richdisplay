@@ -16,7 +16,7 @@ use fltk::group::{Flex};
 use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData, select_text};
 
 use idgenerator_thin::{IdGeneratorOptions, YitIdHelper};
-use log::{debug, error};
+use log::{error};
 use throttle_my_fn::throttle;
 use crate::rich_reviewer::RichReviewer;
 
@@ -49,11 +49,6 @@ impl RichText {
             // 初始化ID生成器。
             let options = IdGeneratorOptions::new(1);
             YitIdHelper::set_id_generator(options);
-            app::add_clipboard_notify3({
-                move |data| {
-                    debug!("clipboard data: {:?}", data);
-                }
-            });
             0
         });
 
@@ -63,7 +58,6 @@ impl RichText {
         let mut inner = Flex::new(x, y, w, h, title).column();
         inner.set_pad(0);
         inner.end();
-
 
 
         let mut panel = Frame::new(x, y, w, h, None);
@@ -78,10 +72,32 @@ impl RichText {
         let clickable_data = Rc::new(RefCell::new(HashMap::<Rectangle, usize>::new()));
         let notifier: Rc<RefCell<Option<tokio::sync::mpsc::Sender<UserData>>>> = Rc::new(RefCell::new(None));
         let selected = Rc::new(Cell::new(false));
+        let should_resize_content = Rc::new(Cell::new(0));
 
         panel.draw({
             let screen_rc = panel_screen.clone();
+            let resize_to = should_resize_content.clone();
+            let flex = inner.clone();
+            let visible_lines_rc = visible_lines.clone();
+            let clickable_data_rc = clickable_data.clone();
+            let bg_rc = background_color.clone();
+            let buffer_rc = data_buffer.clone();
             move |ctx| {
+
+                let h = resize_to.replace(0);
+                if h != 0 {
+                    Self::new_offline(
+                        flex.width(),
+                        h,
+                        screen_rc.clone(),
+                        ctx,
+                        visible_lines_rc.clone(),
+                        clickable_data_rc.clone(),
+                        bg_rc.get(),
+                        buffer_rc.clone()
+                    );
+                }
+
                 screen_rc.borrow().copy(ctx.x(), ctx.y(), ctx.width(), ctx.height(), 0, 0);
             }
         });
@@ -95,10 +111,8 @@ impl RichText {
             let reviewer_rc = reviewer.clone();
             let buffer_rc = data_buffer.clone();
             let bg_rc = background_color.clone();
-            let visible_lines_rc = visible_lines.clone();
-            let clickable_data_rc = clickable_data.clone();
-            let screen_rc = panel_screen.clone();
             let notifier_rc = notifier.clone();
+            let should_resize = should_resize_content.clone();
             move |flex, evt| {
                 if evt == LocalEvent::DROP_REVIEWER_FROM_EXTERNAL.into() {
                     // 隐藏回顾区
@@ -106,11 +120,7 @@ impl RichText {
                         reviewer_rc.clone(),
                         flex,
                         &panel_rc,
-                        screen_rc.clone(),
-                        bg_rc.clone(),
-                        visible_lines_rc.clone(),
-                        clickable_data_rc.clone(),
-                        buffer_rc.clone()
+                        should_resize.clone()
                     );
                     true
                 } else if evt == LocalEvent::OPEN_REVIEWER_FROM_EXTERNAL.into() {
@@ -126,16 +136,7 @@ impl RichText {
                     flex.recalc();
 
                     // 替换新的离线绘制板
-                    Self::new_offline(
-                        flex.width(),
-                        MAIN_PANEL_FIX_HEIGHT,
-                        screen_rc.clone(),
-                        &panel_rc,
-                        visible_lines_rc.clone(),
-                        clickable_data_rc.clone(),
-                        bg_rc.get(),
-                        buffer_rc.clone()
-                    );
+                    should_resize.set(MAIN_PANEL_FIX_HEIGHT);
 
                     reviewer.scroll_to_bottom();
                     reviewer_rc.replace(Some(reviewer));
@@ -173,17 +174,7 @@ impl RichText {
                                 flex.fixed(&panel_rc, MAIN_PANEL_FIX_HEIGHT);
                                 flex.recalc();
 
-                                // 替换新的离线绘制板
-                                Self::new_offline(
-                                    flex.width(),
-                                    MAIN_PANEL_FIX_HEIGHT,
-                                    screen_rc.clone(),
-                                    &panel_rc,
-                                    visible_lines_rc.clone(),
-                                    clickable_data_rc.clone(),
-                                    bg_rc.get(),
-                                    buffer_rc.clone()
-                                );
+                                should_resize.set(MAIN_PANEL_FIX_HEIGHT);
 
                                 reviewer.scroll_to_bottom();
                                 reviewer_rc.replace(Some(reviewer));
@@ -194,11 +185,7 @@ impl RichText {
                                     reviewer_rc.clone(),
                                     flex,
                                     &panel_rc,
-                                    screen_rc.clone(),
-                                    bg_rc.clone(),
-                                    visible_lines_rc.clone(),
-                                    clickable_data_rc.clone(),
-                                    buffer_rc.clone(),
+                                    should_resize.clone()
                                 );
                             }
                         }
@@ -223,6 +210,7 @@ impl RichText {
             let mut push_from_x = 0;
             let mut push_from_y = 0;
             let selected = selected.clone();
+            let should_resize = should_resize_content.clone();
             move |ctx, evt| {
                 match evt {
                     Event::Resize => {
@@ -242,16 +230,7 @@ impl RichText {
                             }
 
                             // 替换新的离线绘制板
-                            Self::new_offline(
-                                current_width,
-                                current_height,
-                                screen_rc.clone(),
-                                &ctx,
-                                visible_lines_rc.clone(),
-                                clickable_data_rc.clone(),
-                                bg_rc.get(),
-                                buffer_rc.clone()
-                            );
+                            should_resize.set(current_height);
                         }
                     }
                     Event::Move => {
@@ -364,32 +343,19 @@ impl RichText {
         reviewer_rc: Rc<RefCell<Option<RichReviewer>>>,
         flex: &mut Flex,
         panel_rc: &Frame,
-        screen_rc: Rc<RefCell<Offscreen>>,
-        bg_rc: Rc<Cell<Color>>,
-        visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
-        clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
-        buffer_rc: Rc<RefCell<VecDeque<RichData>>>,
+        should_resize: Rc<Cell<i32>>
     ) {
         let mut should_remove = false;
         if let Some(reviewer) = &*reviewer_rc.borrow() {
             let dy = reviewer.scroller.yposition();
             if dy == reviewer.panel.height() - reviewer.scroller.height() {
-                let full_height = flex.height();
+                let h = flex.h();
                 flex.remove(&reviewer.scroller);
-                flex.fixed(panel_rc, flex.height());
+                flex.fixed(panel_rc, h);
                 flex.recalc();
 
                 // 替换新的离线绘制板
-                Self::new_offline(
-                    flex.width(),
-                    full_height,
-                    screen_rc.clone(),
-                    panel_rc,
-                    visible_lines.clone(),
-                    clickable_data.clone(),
-                    bg_rc.get(),
-                    buffer_rc.clone(),
-                );
+                should_resize.set(h);
                 flex.set_damage(true);
                 should_remove = true;
             }
@@ -504,11 +470,12 @@ impl RichText {
                 for piece in rich_data.line_pieces.iter() {
                     let piece = &*piece.borrow();
                     let y = piece.y - offset_y + panel_y;
-                    vl.insert(Rectangle::new(piece.x + panel_x, y, piece.w, piece.h), piece.clone());
+                    let rect = Rectangle::new(piece.x + panel_x, y, piece.w, piece.h);
+                    vl.insert(rect.clone(), piece.clone());
 
                     // 暂存可操作数据信息
                     if rich_data.clickable {
-                        cd.insert(Rectangle::new(piece.x + panel_x, y, piece.w, piece.h), idx);
+                        cd.insert(rect, idx);
                     }
                 }
 

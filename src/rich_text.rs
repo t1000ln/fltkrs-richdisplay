@@ -16,7 +16,7 @@ use fltk::group::{Flex};
 use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData, select_text};
 
 use idgenerator_thin::{IdGeneratorOptions, YitIdHelper};
-use log::{error};
+use log::{debug, error};
 use throttle_my_fn::throttle;
 use crate::rich_reviewer::RichReviewer;
 
@@ -154,6 +154,12 @@ impl RichText {
                                     current_height
                                 };
                                 flex.fixed(&panel_rc, panel_height);
+                                if panel_height != current_height {
+                                    // 包含有回顾区，在fltk-rs 1.4.12版本中，需要手动设置其尺寸
+                                    if let Some(rv) = &*reviewer_rc.borrow() {
+                                        flex.fixed(&rv.scroller, current_height - panel_height);
+                                    }
+                                }
                                 // flex.recalc();
                             }
                         }
@@ -171,6 +177,7 @@ impl RichText {
                                 let snapshot = Vec::from(buffer_rc.borrow().clone());
                                 reviewer.set_data(snapshot);
                                 flex.insert(&reviewer.scroller, 0);
+                                // flex.resizable(&reviewer.scroller);
                                 flex.fixed(&panel_rc, MAIN_PANEL_FIX_HEIGHT);
                                 flex.recalc();
 

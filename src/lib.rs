@@ -704,7 +704,6 @@ pub fn disable_data(rd: &mut RichData) {
         DataType::Image => {
             if let Some(image) = rd.image.as_mut() {
                 if let Ok(mut ni) = RgbImage::new(image.as_slice(), rd.image_width, rd.image_height, ColorDepth::Rgb8) {
-                    debug!("灰度处理图片");
                     ni.inactive();
                     image.clear();
                     image.append(&mut ni.to_rgb_data());

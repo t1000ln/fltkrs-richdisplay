@@ -12,7 +12,7 @@ use fltk::frame::Frame;
 use fltk::prelude::{GroupExt, WidgetBase, WidgetExt};
 use fltk::{app, draw, widget_extends};
 use fltk::app::MouseWheel;
-use fltk::group::{Flex, Scroll};
+use fltk::group::{Flex};
 use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData, select_text};
 
 use idgenerator_thin::{IdGeneratorOptions, YitIdHelper};
@@ -49,11 +49,6 @@ impl RichText {
             // 初始化ID生成器。
             let options = IdGeneratorOptions::new(1);
             YitIdHelper::set_id_generator(options);
-            app::add_clipboard_notify3({
-                move |data| {
-                    debug!("clipboard data: {:?}", data);
-                }
-            });
             0
         });
 
@@ -63,7 +58,6 @@ impl RichText {
         let mut inner = Flex::new(x, y, w, h, title).column();
         inner.set_pad(0);
         inner.end();
-
 
 
         let mut panel = Frame::new(x, y, w, h, None);
@@ -77,12 +71,33 @@ impl RichText {
         let visible_lines = Rc::new(RefCell::new(HashMap::<Rectangle, LinePiece>::new()));
         let clickable_data = Rc::new(RefCell::new(HashMap::<Rectangle, usize>::new()));
         let notifier: Rc<RefCell<Option<tokio::sync::mpsc::Sender<UserData>>>> = Rc::new(RefCell::new(None));
-        let to_be_dropped_reviewer = Rc::new(Cell::new(None::<Scroll>));
         let selected = Rc::new(Cell::new(false));
+        let should_resize_content = Rc::new(Cell::new(0));
 
         panel.draw({
             let screen_rc = panel_screen.clone();
+            let resize_to = should_resize_content.clone();
+            let flex = inner.clone();
+            let visible_lines_rc = visible_lines.clone();
+            let clickable_data_rc = clickable_data.clone();
+            let bg_rc = background_color.clone();
+            let buffer_rc = data_buffer.clone();
             move |ctx| {
+
+                let h = resize_to.replace(0);
+                if h != 0 {
+                    Self::new_offline(
+                        flex.width(),
+                        h,
+                        screen_rc.clone(),
+                        ctx,
+                        visible_lines_rc.clone(),
+                        clickable_data_rc.clone(),
+                        bg_rc.get(),
+                        buffer_rc.clone()
+                    );
+                }
+
                 screen_rc.borrow().copy(ctx.x(), ctx.y(), ctx.width(), ctx.height(), 0, 0);
             }
         });
@@ -96,34 +111,18 @@ impl RichText {
             let reviewer_rc = reviewer.clone();
             let buffer_rc = data_buffer.clone();
             let bg_rc = background_color.clone();
-            let visible_lines_rc = visible_lines.clone();
-            let clickable_data_rc = clickable_data.clone();
-            let screen_rc = panel_screen.clone();
-            let to_be_dropped_reviewer_rc = to_be_dropped_reviewer.clone();
             let notifier_rc = notifier.clone();
+            let should_resize = should_resize_content.clone();
             move |flex, evt| {
                 if evt == LocalEvent::DROP_REVIEWER_FROM_EXTERNAL.into() {
                     // 隐藏回顾区
-                    if let Some((should_remove, drop_target)) = Self::should_hide_reviewer(
+                    Self::should_hide_reviewer(
                         reviewer_rc.clone(),
                         flex,
                         &panel_rc,
-                        screen_rc.clone(),
-                        bg_rc.clone(),
-                        visible_lines_rc.clone(),
-                        clickable_data_rc.clone(),
-                        buffer_rc.clone()
-                    ) {
-                        if should_remove {
-                            reviewer_rc.replace(None);
-                            to_be_dropped_reviewer_rc.replace(drop_target);
-                            if let Err(e) = app::handle_main(LocalEvent::DROP_REVIEWER) {
-                                error!("发送删除回顾事件时发生错误：{}", e);
-                            }
-                            return true;
-                        }
-                    }
-                    false
+                        should_resize.clone()
+                    );
+                    true
                 } else if evt == LocalEvent::OPEN_REVIEWER_FROM_EXTERNAL.into() {
                     let mut reviewer = RichReviewer::new(0, 0, flex.width(), flex.height() - MAIN_PANEL_FIX_HEIGHT, None);
                     reviewer.set_background_color(bg_rc.get());
@@ -137,16 +136,7 @@ impl RichText {
                     flex.recalc();
 
                     // 替换新的离线绘制板
-                    Self::new_offline(
-                        flex.width(),
-                        MAIN_PANEL_FIX_HEIGHT,
-                        screen_rc.clone(),
-                        &panel_rc,
-                        visible_lines_rc.clone(),
-                        clickable_data_rc.clone(),
-                        bg_rc.get(),
-                        buffer_rc.clone()
-                    );
+                    should_resize.set(MAIN_PANEL_FIX_HEIGHT);
 
                     reviewer.scroll_to_bottom();
                     reviewer_rc.replace(Some(reviewer));
@@ -164,6 +154,12 @@ impl RichText {
                                     current_height
                                 };
                                 flex.fixed(&panel_rc, panel_height);
+                                if panel_height != current_height {
+                                    // 包含有回顾区，在fltk-rs 1.4.12版本中，需要手动设置其尺寸
+                                    if let Some(rv) = &*reviewer_rc.borrow() {
+                                        flex.fixed(&rv.scroller, current_height - panel_height);
+                                    }
+                                }
                                 // flex.recalc();
                             }
                         }
@@ -181,47 +177,23 @@ impl RichText {
                                 let snapshot = Vec::from(buffer_rc.borrow().clone());
                                 reviewer.set_data(snapshot);
                                 flex.insert(&reviewer.scroller, 0);
+                                // flex.resizable(&reviewer.scroller);
                                 flex.fixed(&panel_rc, MAIN_PANEL_FIX_HEIGHT);
                                 flex.recalc();
 
-                                // 替换新的离线绘制板
-                                Self::new_offline(
-                                    flex.width(),
-                                    MAIN_PANEL_FIX_HEIGHT,
-                                    screen_rc.clone(),
-                                    &panel_rc,
-                                    visible_lines_rc.clone(),
-                                    clickable_data_rc.clone(),
-                                    bg_rc.get(),
-                                    buffer_rc.clone()
-                                );
+                                should_resize.set(MAIN_PANEL_FIX_HEIGHT);
 
                                 reviewer.scroll_to_bottom();
                                 reviewer_rc.replace(Some(reviewer));
 
                             } else if app::event_dy() == MouseWheel::Up && reviewer_rc.borrow().is_some() {
                                 // 隐藏回顾区
-                                if let Some((should_remove, drop_target)) = Self::should_hide_reviewer(
+                                Self::should_hide_reviewer(
                                     reviewer_rc.clone(),
                                     flex,
                                     &panel_rc,
-                                    screen_rc.clone(),
-                                    bg_rc.clone(),
-                                    visible_lines_rc.clone(),
-                                    clickable_data_rc.clone(),
-                                    buffer_rc.clone(),
-                                ) {
-                                    if should_remove {
-
-                                        // reviewer_rc.replace(None);
-                                        debug!("隐藏回顾区");
-                                        // to_be_dropped_reviewer_rc.replace(drop_target);
-                                        // if let Err(e) = app::handle_main(LocalEvent::DROP_REVIEWER) {
-                                        //     error!("发送删除回顾事件时发生错误：{}", e);
-                                        // }
-                                    }
-                                }
-
+                                    should_resize.clone()
+                                );
                             }
                         }
                         _ => {}
@@ -242,128 +214,106 @@ impl RichText {
             let notifier_rc = notifier.clone();
             let screen_rc = panel_screen.clone();
             let bg_rc = background_color.clone();
-            let to_be_dropped_reviewer_rc = to_be_dropped_reviewer.clone();
             let mut push_from_x = 0;
             let mut push_from_y = 0;
             let selected = selected.clone();
+            let should_resize = should_resize_content.clone();
             move |ctx, evt| {
-                if evt == LocalEvent::DROP_REVIEWER.into() {
-                    println!("123");
-                    // 销毁组件，回收内存，否则会有内存泄漏。
-                    // let target = to_be_dropped_reviewer_rc.replace(None);
-                    // if let Some(scroller) = target {
-                    //     debug!("开始销毁回顾区组件");
-                    //     app::delete_widget(scroller);
-                    //     debug!("销毁回顾区组件请求已提交");
-                    // }
-                    true
-                } else {
-                    match evt {
-                        Event::Resize => {
-                            // 缩放窗口后重新计算分片绘制信息。
-                            let (current_width, current_height) = (ctx.width(), ctx.height());
-                            let (last_width, last_height) = last_window_size.get();
-                            if last_width != current_width || last_height != current_height {
-                                last_window_size.replace((current_width, current_height));
-                                if last_width != current_width {
-                                    // 当窗口宽度发生变化时，需要重新计算数据分片坐标信息。
-                                    let drawable_max_width = current_width - PADDING.left - PADDING.right;
-                                    let mut last_piece = LinePiece::init_piece();
-                                    for rich_data in buffer_rc.borrow_mut().iter_mut() {
-                                        rich_data.line_pieces.clear();
-                                        last_piece = rich_data.estimate(last_piece, drawable_max_width);
-                                    }
+                match evt {
+                    Event::Resize => {
+                        // 缩放窗口后重新计算分片绘制信息。
+                        let (current_width, current_height) = (ctx.width(), ctx.height());
+                        let (last_width, last_height) = last_window_size.get();
+                        if last_width != current_width || last_height != current_height {
+                            last_window_size.replace((current_width, current_height));
+                            if last_width != current_width {
+                                // 当窗口宽度发生变化时，需要重新计算数据分片坐标信息。
+                                let drawable_max_width = current_width - PADDING.left - PADDING.right;
+                                let mut last_piece = LinePiece::init_piece();
+                                for rich_data in buffer_rc.borrow_mut().iter_mut() {
+                                    rich_data.line_pieces.clear();
+                                    last_piece = rich_data.estimate(last_piece, drawable_max_width);
                                 }
+                            }
 
-                                // 替换新的离线绘制板
-                                Self::new_offline(
-                                    current_width,
-                                    current_height,
-                                    screen_rc.clone(),
-                                    &ctx,
-                                    visible_lines_rc.clone(),
-                                    clickable_data_rc.clone(),
-                                    bg_rc.get(),
-                                    buffer_rc.clone()
-                                );
-                            }
+                            // 替换新的离线绘制板
+                            should_resize.set(current_height);
                         }
-                        Event::Move => {
-                            // 检测鼠标进入可互动区域，改变鼠标样式
-                            if mouse_enter(clickable_data_rc.clone()) {
-                                draw::set_cursor(Cursor::Hand);
-                            } else {
-                                draw::set_cursor(Cursor::Default);
-                            }
-                        }
-                        Event::Leave => {
+                    }
+                    Event::Move => {
+                        // 检测鼠标进入可互动区域，改变鼠标样式
+                        if mouse_enter(clickable_data_rc.clone()) {
+                            draw::set_cursor(Cursor::Hand);
+                        } else {
                             draw::set_cursor(Cursor::Default);
                         }
-                        Event::Released => {
-                            // 检测鼠标点击可互动区域，执行用户自定义操作
-                            for (area, idx) in clickable_data_rc.borrow().iter() {
-                                let (x, y, w, h) = area.tup();
-                                if app::event_inside(x, y, w, h) {
-                                    if let Some(rd) = buffer_rc.borrow().get(*idx) {
-                                        let sd = rd.into();
-                                        if let Some(notifier) = notifier_rc.borrow().as_ref() {
-                                            let notifier = notifier.clone();
-                                            tokio::spawn(async move {
-                                                if let Err(e) = notifier.send(sd).await {
-                                                    error!("send error: {:?}", e);
-                                                }
-                                            });
-                                        }
+                    }
+                    Event::Leave => {
+                        draw::set_cursor(Cursor::Default);
+                    }
+                    Event::Released => {
+                        // 检测鼠标点击可互动区域，执行用户自定义操作
+                        for (area, idx) in clickable_data_rc.borrow().iter() {
+                            let (x, y, w, h) = area.tup();
+                            if app::event_inside(x, y, w, h) {
+                                if let Some(rd) = buffer_rc.borrow().get(*idx) {
+                                    let sd = rd.into();
+                                    if let Some(notifier) = notifier_rc.borrow().as_ref() {
+                                        let notifier = notifier.clone();
+                                        tokio::spawn(async move {
+                                            if let Err(e) = notifier.send(sd).await {
+                                                error!("send error: {:?}", e);
+                                            }
+                                        });
                                     }
-                                    break;
                                 }
+                                break;
                             }
                         }
-                        Event::Push => {
-                            let coords = app::event_coords();
-                            push_from_x = coords.0;
-                            push_from_y = coords.1;
-                            if selected.replace(false) {
-                                for (_, piece) in visible_lines_rc.borrow_mut().iter_mut() {
-                                    piece.selected_range.set(None);
-                                }
-                                Self::draw_offline(
-                                    screen_rc.clone(),
-                                    &ctx,
-                                    visible_lines_rc.clone(),
-                                    clickable_data_rc.clone(),
-                                    bg_rc.get(),
-                                    buffer_rc.clone()
-                                );
-                                // ctx.redraw();
-                                ctx.set_damage(true);
+                    }
+                    Event::Push => {
+                        let coords = app::event_coords();
+                        push_from_x = coords.0;
+                        push_from_y = coords.1;
+                        if selected.replace(false) {
+                            for (_, piece) in visible_lines_rc.borrow_mut().iter_mut() {
+                                piece.selected_range.set(None);
                             }
-
-                            return true;
-                        }
-                        Event::Drag => {
-                            let (ox, oy) = app::event_coords();
-                            let selection_rect = Rectangle::new(push_from_x, push_from_y, ox - push_from_x, oy - push_from_y);
-                            if let Some(ret) = Self::redraw_after_drag(
-                                selection_rect,
+                            Self::draw_offline(
                                 screen_rc.clone(),
-                                ctx,
+                                &ctx,
                                 visible_lines_rc.clone(),
                                 clickable_data_rc.clone(),
                                 bg_rc.get(),
-                                buffer_rc.clone(),
-                                (push_from_x, push_from_y),
-                                ctx.x()
-                            ) {
-                                selected.set(ret);
-                            }
-                            return true;
+                                buffer_rc.clone()
+                            );
+                            // ctx.redraw();
+                            ctx.set_damage(true);
                         }
-                        _ => {}
-                    }
-                    false
-                }
 
+                        return true;
+                    }
+                    Event::Drag => {
+                        let (ox, oy) = app::event_coords();
+                        let selection_rect = Rectangle::new(push_from_x, push_from_y, ox - push_from_x, oy - push_from_y);
+                        if let Some(ret) = Self::redraw_after_drag(
+                            selection_rect,
+                            screen_rc.clone(),
+                            ctx,
+                            visible_lines_rc.clone(),
+                            clickable_data_rc.clone(),
+                            bg_rc.get(),
+                            buffer_rc.clone(),
+                            (push_from_x, push_from_y),
+                            ctx.x()
+                        ) {
+                            selected.set(ret);
+                        }
+                        return true;
+                    }
+                    _ => {}
+                }
+                false
             }
         });
 
@@ -396,42 +346,33 @@ impl RichText {
     }
 
     /// 检查是否应该关闭回顾区，若满足关闭条件则关闭回顾区并记录待销毁的回顾区组件。
-    #[throttle(1, Duration::from_millis(500))]
     fn should_hide_reviewer(
         reviewer_rc: Rc<RefCell<Option<RichReviewer>>>,
         flex: &mut Flex,
         panel_rc: &Frame,
-        screen_rc: Rc<RefCell<Offscreen>>,
-        bg_rc: Rc<Cell<Color>>,
-        visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
-        clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
-        buffer_rc: Rc<RefCell<VecDeque<RichData>>>,
-    ) -> (bool, Option<Scroll>){
-        debug!("检查回顾区是否需要隐藏");
+        should_resize: Rc<Cell<i32>>
+    ) {
+        let mut should_remove = false;
         if let Some(reviewer) = &*reviewer_rc.borrow() {
             let dy = reviewer.scroller.yposition();
             if dy == reviewer.panel.height() - reviewer.scroller.height() {
-                let full_height = flex.height();
+                let h = flex.h();
                 flex.remove(&reviewer.scroller);
-                flex.fixed(panel_rc, flex.height());
+                flex.fixed(panel_rc, h);
                 flex.recalc();
 
                 // 替换新的离线绘制板
-                RichText::new_offline(
-                    flex.width(),
-                    full_height,
-                    screen_rc.clone(),
-                    panel_rc,
-                    visible_lines.clone(),
-                    clickable_data.clone(),
-                    bg_rc.get(),
-                    buffer_rc.clone(),
-                );
-
-                return (true, Some(reviewer.scroller.clone()));
+                should_resize.set(h);
+                flex.set_damage(true);
+                should_remove = true;
             }
         }
-        return (false, None);
+
+        if should_remove {
+            if let Some(rv) = reviewer_rc.replace(None) {
+                app::delete_widget(rv.scroller);
+            }
+        }
     }
 
     /// 向数据缓冲区中添加新的数据。新增数据时会计算其绘制所需信息，包括起始坐标和高度等。
@@ -536,11 +477,12 @@ impl RichText {
                 for piece in rich_data.line_pieces.iter() {
                     let piece = &*piece.borrow();
                     let y = piece.y - offset_y + panel_y;
-                    vl.insert(Rectangle::new(piece.x + panel_x, y, piece.w, piece.h), piece.clone());
+                    let rect = Rectangle::new(piece.x + panel_x, y, piece.w, piece.h);
+                    vl.insert(rect.clone(), piece.clone());
 
                     // 暂存可操作数据信息
                     if rich_data.clickable {
-                        cd.insert(Rectangle::new(piece.x + panel_x, y, piece.w, piece.h), idx);
+                        cd.insert(rect, idx);
                     }
                 }
 

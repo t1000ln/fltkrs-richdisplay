@@ -38,14 +38,11 @@ impl LocalEvent {
     /// 缩放事件。
     pub const RESIZE: i32 = 101;
 
-    /// 清理回顾区组件事件。
-    pub const DROP_REVIEWER: i32 = 102;
-
     /// 从rich-display容器外部发起关闭回顾区的事件。
-    pub const DROP_REVIEWER_FROM_EXTERNAL: i32 = 103;
+    pub const DROP_REVIEWER_FROM_EXTERNAL: i32 = 102;
 
     /// 从rich-display容器外部发起打开回顾区的事件。
-    pub const OPEN_REVIEWER_FROM_EXTERNAL: i32 = 104;
+    pub const OPEN_REVIEWER_FROM_EXTERNAL: i32 = 103;
 
 }
 
@@ -707,6 +704,7 @@ pub fn disable_data(rd: &mut RichData) {
         DataType::Image => {
             if let Some(image) = rd.image.as_mut() {
                 if let Ok(mut ni) = RgbImage::new(image.as_slice(), rd.image_width, rd.image_height, ColorDepth::Rgb8) {
+                    debug!("灰度处理图片");
                     ni.inactive();
                     image.clear();
                     image.append(&mut ni.to_rgb_data());

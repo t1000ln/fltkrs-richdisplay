@@ -1990,6 +1990,7 @@ pub fn select_text2(from_point: &ClickPoint, to_point: ClickPoint, data_buffer: 
         br_p = from_point;
     };
 
+    // TODO: 测试中失去响应，待跟踪
     // debug!("rd_range: {:?}, drag_rect: {:?}, lt: {:?}, br: {:?}", rd_range, drag_rect, lt, br);
 
     // 清理上一次选择的区域

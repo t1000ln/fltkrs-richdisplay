@@ -3,7 +3,7 @@
 use std::cell::{Cell, RefCell};
 use std::cmp::{max, min};
 use std::collections::{HashMap};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::time::Duration;
 use fltk::draw::{draw_rect_fill, draw_xyline, LineStyle, Offscreen, set_draw_color, set_line_style};
 use fltk::enums::{Align, Color, Cursor, Event};
@@ -13,7 +13,7 @@ use fltk::prelude::{GroupExt, WidgetBase, WidgetExt};
 use fltk::{app, draw, widget_extends};
 use log::{debug, error};
 use throttle_my_fn::throttle;
-use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData, locate_piece_at_point, ClickPoint, select_text2};
+use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData, locate_piece_at_point, ClickPoint, select_text2, locate_target_rd, clear_selected_pieces};
 use crate::rich_text::{PANEL_PADDING};
 
 #[derive(Clone, Debug)]
@@ -109,8 +109,9 @@ impl RichReviewer {
             let clickable_data_rc = clickable_data.clone();
             let bg_rc = background_color.clone();
             let mut selected = false;
-            let mut sel_from_point = ClickPoint::new(0, 0);
-            let selected_pieces = Rc::new(RefCell::new(Vec::<LinePiece>::new()));
+            let mut push_from_point = ClickPoint::new(0, 0);
+            let mut select_from_row = 0;
+            let selected_pieces = Rc::new(RefCell::new(Vec::<Weak<RefCell<LinePiece>>>::new()));
             move |scroller, evt| {
                 match evt {
                     Event::Resize => {
@@ -198,24 +199,27 @@ impl RichReviewer {
                     Event::Push => {
                         let (push_from_x, push_from_y) = app::event_coords();
                         if selected {
-                            for piece in selected_pieces.borrow().iter() {
-                                piece.selected_range.set(None);
-                            }
-                            selected_pieces.borrow_mut().clear();
+                            clear_selected_pieces(selected_pieces.clone());
                             scroller.set_damage(true);
                             selected = false;
+                            select_from_row = 0;
                         }
 
                         let (p_offset_x, p_offset_y) = (scroller.x(), scroller.y());
                         let mut offset_y = scroller.yposition() - PANEL_PADDING;
                         // 处理数据相对位移
                         if let Some(first) = buffer_rc.borrow().first() {
-                            if let Some((y, _, _, _)) = first.v_bounds {
-                                offset_y += y;
-                            }
+                            offset_y += first.v_bounds.get().0;
                         }
-                        sel_from_point.x = push_from_x - p_offset_x;
-                        sel_from_point.y = push_from_y + offset_y - p_offset_y;
+                        push_from_point.x = push_from_x - p_offset_x;
+                        push_from_point.y = push_from_y + offset_y - p_offset_y + PADDING.top;
+
+                        // 尝试检测起始点击位置是否位于某个数据段内，可减少后续划选过程中的检测目标范围
+                        let index_vec = (0..buffer_rc.borrow().len()).collect::<Vec<usize>>();
+                        let push_rect = push_from_point.as_rect();
+                        if let Some(row) = locate_target_rd(&mut push_from_point, &push_rect, scroller.w(), buffer_rc.clone(), &index_vec) {
+                            select_from_row = row;
+                        }
 
                         return true;
                     }
@@ -236,15 +240,14 @@ impl RichReviewer {
                         let mut offset_y = scroller.yposition() - PANEL_PADDING;
                         // 处理数据相对位移
                         if let Some(first) = buffer_rc.borrow().first() {
-                            if let Some((y, _, _, _)) = first.v_bounds {
-                                offset_y += y;
-                            }
+                            offset_y += first.v_bounds.get().0;
                         }
                         if offset_y < 0 {offset_y = 0;}
 
                         if let Some(ret) = Self::redraw_after_drag(
-                            sel_from_point,
-                            ClickPoint::new(current_x - p_offset_x, current_y + offset_y - p_offset_y),
+                            push_from_point,
+                            select_from_row,
+                            ClickPoint::new(current_x - p_offset_x, current_y + offset_y - p_offset_y + PADDING.top),
                             buffer_rc.clone(),
                             selected_pieces.clone(),
                             screen_rc.clone(),
@@ -270,28 +273,52 @@ impl RichReviewer {
     #[throttle(1, Duration::from_millis(100))]
     fn redraw_after_drag(
         push_from_point: ClickPoint,
+        select_from_row: usize,
         current_point: ClickPoint,
         data_buffer: Rc<RefCell<Vec<RichData>>>,
-        selected_pieces: Rc<RefCell<Vec<LinePiece>>>,
+        selected_pieces: Rc<RefCell<Vec<Weak<RefCell<LinePiece>>>>>,
         screen: Rc<RefCell<Offscreen>>,
         scroller: &mut Scroll,
         visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
         clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
         background_color: Color,) -> bool {
 
-        let selected = select_text2(push_from_point, current_point, data_buffer.clone(), selected_pieces);
-        if selected {
-            RichReviewer::draw_offline(
-                screen,
-                scroller,
-                visible_lines,
-                clickable_data,
-                data_buffer,
-                background_color
-            );
+        let mut down = true;
+        let index_vec = if current_point.y >= push_from_point.y {
+            // 向下选择
+            (select_from_row..data_buffer.borrow().len()).collect::<Vec<usize>>()
+        } else {
+            // 向上选择
+            down = false;
+            (0..=select_from_row).collect::<Vec<usize>>()
+        };
+        // debug!("开始查找结束点所在数据段: {:?}", index_vec);
+        let mut point = current_point.clone();
+        if let Some(select_to_row) = locate_target_rd(&mut point, &current_point.as_rect(), scroller.w(), data_buffer.clone(), &index_vec) {
+            let rd_range = if down {
+                select_from_row..=(select_from_row + select_to_row)
+            } else {
+                select_to_row..=select_from_row
+            };
+            select_text2(&push_from_point, point, data_buffer, rd_range, selected_pieces, scroller.w());
             scroller.set_damage(true);
+            return true;
         }
-        selected
+
+        // let selected = select_text2(push_from_point, current_point, data_buffer.clone(), selected_pieces, scroller.w());
+        // if selected {
+        //     // RichReviewer::draw_offline(
+        //     //     screen,
+        //     //     scroller,
+        //     //     visible_lines,
+        //     //     clickable_data,
+        //     //     data_buffer,
+        //     //     background_color
+        //     // );
+        //     scroller.set_damage(true);
+        // }
+        // selected
+        false
     }
 
     pub fn set_background_color(&self, color: Color) {
@@ -353,14 +380,10 @@ impl RichReviewer {
         let buffer = &*buffer_rc.borrow();
         let (mut top, mut bottom) = (0, 0);
         if let Some(first) = buffer.first() {
-            if let Some((top_y, _, _, _)) = first.v_bounds {
-                top = top_y;
-            }
+            top = first.v_bounds.get().0;
         }
         if let Some(last) = buffer.last() {
-            if let Some((_, bottom_y, _, _)) = last.v_bounds {
-                bottom = bottom_y;
-            }
+            bottom = last.v_bounds.get().1;
         }
         let content_height = bottom - top + PADDING.bottom + PADDING.top;
         if content_height > scroller_height {
@@ -398,13 +421,11 @@ impl RichReviewer {
 
         // 处理数据相对位移
         if let Some(first) = data_buffer.borrow().first() {
-            if let Some((y, _, _, _)) = first.v_bounds {
-                top_y += y;
-                bottom_y += y;
-            }
+            let y = first.v_bounds.get().0;
+            top_y += y;
+            bottom_y += y;
         }
 
-        // let offset_y = top_y - PADDING.top + PADDING.bottom;
         let offset_y = top_y - PADDING.top;
 
         // 填充背景色
@@ -435,7 +456,6 @@ impl RichReviewer {
         }
 
         for (idx, rich_data) in data[from_index..to_index].iter().enumerate() {
-            // rich_data.draw(offset_y, idx + from_index, visible_lines.clone(), clickable_data.clone(), scroller_x, scroller_y);
             rich_data.draw(offset_y);
 
             for piece in rich_data.line_pieces.iter() {
@@ -536,7 +556,6 @@ impl RichReviewer {
                 disable_data(rd);
             }
 
-            // Self::draw_offline(self.reviewer_screen.clone(), &self.scroller, self.data_buffer.clone(), self.background_color.get(), self.visible_lines.clone());
             Self::draw_offline(
                 self.reviewer_screen.clone(),
                 &self.scroller,

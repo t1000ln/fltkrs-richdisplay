@@ -16,7 +16,7 @@ use fltk::group::{Flex};
 use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData, select_text};
 
 use idgenerator_thin::{IdGeneratorOptions, YitIdHelper};
-use log::{debug, error};
+use log::{error};
 use throttle_my_fn::throttle;
 use crate::rich_reviewer::RichReviewer;
 
@@ -458,36 +458,34 @@ impl RichText {
         // 填充背景
         draw_rect_fill(0, 0, window_width, window_height, bg_color);
 
-
         // 绘制数据内容
         let data = data_buffer.borrow();
         let mut set_offset_y = false;
         for (idx, rich_data) in data.iter().enumerate().rev() {
-            if let Some((_, bottom_y, _, _)) = rich_data.v_bounds {
-                if !set_offset_y && bottom_y > window_height {
-                    offset_y = bottom_y - window_height + PADDING.bottom;
-                    set_offset_y = true;
-                }
-
-                if bottom_y < offset_y {
-                    break;
-                }
-
-                // 暂存主体任意部分可见的数据行信息
-                for piece in rich_data.line_pieces.iter() {
-                    let piece = &*piece.borrow();
-                    let y = piece.y - offset_y + panel_y;
-                    let rect = Rectangle::new(piece.x + panel_x, y, piece.w, piece.h);
-                    vl.insert(rect.clone(), piece.clone());
-
-                    // 暂存可操作数据信息
-                    if rich_data.clickable {
-                        cd.insert(rect, idx);
-                    }
-                }
-
-                rich_data.draw(offset_y);
+            let bottom_y = rich_data.v_bounds.get().1;
+            if !set_offset_y && bottom_y > window_height {
+                offset_y = bottom_y - window_height + PADDING.bottom;
+                set_offset_y = true;
             }
+
+            if bottom_y < offset_y {
+                break;
+            }
+
+            // 暂存主体任意部分可见的数据行信息
+            for piece in rich_data.line_pieces.iter() {
+                let piece = &*piece.borrow();
+                let y = piece.y - offset_y + panel_y;
+                let rect = Rectangle::new(piece.x + panel_x, y, piece.w, piece.h);
+                vl.insert(rect.clone(), piece.clone());
+
+                // 暂存可操作数据信息
+                if rich_data.clickable {
+                    cd.insert(rect, idx);
+                }
+            }
+
+            rich_data.draw(offset_y);
         }
 
         // 填充顶部边界空白

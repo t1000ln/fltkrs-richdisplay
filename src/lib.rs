@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fmt::{Debug};
 use std::ops::{RangeInclusive};
 use std::rc::{Rc, Weak};
+use std::slice::Iter;
 use fltk::{app, draw};
 use fltk::draw::{descent, draw_image, draw_line, draw_rectf, draw_text2, measure, set_draw_color, set_font};
 use fltk::enums::{Align, Color, ColorDepth, Cursor, Font};
@@ -387,6 +388,18 @@ impl LinePiece {
         self.x == other.x && self.y == other.y && self.w == other.w && self.h == other.h && self.line.eq(&other.line)
     }
 
+    pub fn select_from(&self, from: usize) {
+        self.selected_range.set(Some((from, self.line.chars().count())));
+    }
+
+    pub fn select_to(&self, to: usize) {
+        self.selected_range.set(Some((0, to)));
+    }
+
+    pub fn select_range(&self, from: usize, to: usize) {
+        self.selected_range.set(Some((from, to)));
+    }
+
     pub fn deselect(&self) {
         self.selected_range.set(None);
     }
@@ -408,7 +421,6 @@ impl LinePiece {
             self.line.chars().skip(from).take(to - from).for_each(|c| {
                 selection.push(c);
             });
-            // selection.push_str(&self.line.chars().skip(from).take(to - from).collect::<String>());
         }
     }
 
@@ -432,9 +444,6 @@ pub trait LinedData {
     ///
     /// ```
     fn set_v_bounds(&mut self, top_y: i32, bottom_y: i32, start_x: i32, end_x: i32);
-
-    /// 获取绘制区域高度。
-    // fn height(&self) -> i32;
 
     /// 表明是否纯文本数据段。
     fn is_text_data(&self) -> bool;
@@ -1420,6 +1429,19 @@ enum HorizonPosOfDrag {
     Cover,
 }
 
+fn _check_pos(pos: usize, border: i32, x: i32, text: &str) -> Ordering {
+    if pos == 0 {
+        Ordering::Equal
+    } else {
+        let (pw2, _) = measure(text.chars().take(pos).collect::<String>().as_str(), false);
+        if x + pw2 <= border {
+            Ordering::Equal
+        } else {
+            Ordering::Greater
+        }
+    }
+}
+
 /// 通过鼠标选择文本时，根据划选区域和方向，自动选择符合用户习惯的文本内容范围。
 ///
 /// # Arguments
@@ -1437,7 +1459,7 @@ enum HorizonPosOfDrag {
 /// ```
 ///
 /// ```
-pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>, column_mode: bool, push_from: (i32, i32), panel_x: i32) -> bool {
+pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>, column_mode: bool, push_from: (i32, i32), panel_x: i32, line_max_width: i32) -> bool {
     /*
     遍历可见行，检查每一行的矩形范围是否与选区有重叠，若有重叠则继续检测出现重叠的行中哪些文字片段与选区有重叠。
      */
@@ -1445,7 +1467,8 @@ pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rect
     // 选中行的代表
     let mut selected_lines: BTreeMap<i32, LinePiece> = BTreeMap::new();
     for (line_rect, piece) in visible_lines.borrow_mut().iter_mut() {
-        if is_overlap(line_rect, drag_area) {
+        let extended_line_rect = Rectangle::new(line_rect.0, line_rect.1, line_max_width, line_rect.3);
+        if is_overlap(&extended_line_rect, drag_area) {
             /*
             记录每一行位于选择区域中最左边那个片段，作为每一行的代表片段。
             由于同一行内的不同片段可能绘制高度不同，但是都具有的top_y属性可以表示虚拟行高的顶部位置。
@@ -1475,21 +1498,12 @@ pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rect
                     if x + pw1 < left_border {
                         Ordering::Less
                     } else {
-                        if *pos == 0 {
-                            Ordering::Equal
-                        } else {
-                            let (pw2, _) = measure(text.chars().take(*pos).collect::<String>().as_str(), false);
-                            if x + pw2 <= left_border {
-                                Ordering::Equal
-                            } else {
-                                Ordering::Greater
-                            }
-                        }
+                        _check_pos(*pos, left_border, x, text)
                     }
                 }
             }) {
                 if from == len - 1 {
-                    piece.selected_range.set(Some((from, len)));
+                    piece.select_range(from, len);
                     selected = true;
                 } else {
                     // 查找右边界字符位置
@@ -1505,20 +1519,11 @@ pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rect
                                     Ordering::Less
                                 }
                             } else {
-                                if *pos == 0 {
-                                    Ordering::Equal
-                                } else {
-                                    let (pw2, _) = measure(text.chars().take(*pos).collect::<String>().as_str(), false);
-                                    if x + pw2 <= right_boarder {
-                                        Ordering::Equal
-                                    } else {
-                                        Ordering::Greater
-                                    }
-                                }
+                                _check_pos(*pos, right_boarder, x, text)
                             }
                         }
                     }) {
-                        piece.selected_range.set(Some((from, to_vec[to] + 1)));
+                        piece.select_range(from, to_vec[to] + 1);
                         selected = true;
                     } else {
                         error!("检测结尾时异常！")
@@ -1526,7 +1531,7 @@ pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rect
                 }
             }
         } else {
-            piece.selected_range.set(None);
+            piece.deselect();
         }
     }
 
@@ -1566,7 +1571,7 @@ pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rect
                                         }
                                     }
                                 }
-                                lp.selected_range.set(Some((0, new_to)));
+                                lp.select_to(new_to);
                             } else {
                                 // 选区间隙，维持不变
                             }
@@ -1575,19 +1580,19 @@ pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rect
                             if push_from.0 < panel_x + lp.x {
                                 if drag_area.1 < push_from.1 {
                                     // 右侧片段，向上拖选时不选
-                                    lp.selected_range.set(None);
+                                    lp.deselect();
                                 } else if lp.next_x > lp.x && drag_area.0 + drag_area.2 > panel_x + lp.next_x {
-                                    lp.selected_range.set(Some((0, lp.line.chars().count())));
+                                    lp.select_all();
                                 }
                                 // 右侧片段，向下拖选时维持选择状态
                             } else if push_from.0 >= panel_x + lp.next_x {
                                 if drag_area.0 > panel_x + lp.x {
                                     // 左侧片段，全选
-                                    lp.selected_range.set(Some((0, lp.line.chars().count())));
+                                    lp.select_all();
                                 } else {
                                     if drag_area.1 + drag_area.3 > push_from.1 {
                                         // 向左下拖选，选区片段左边界大于选区左边界，不选
-                                        lp.selected_range.set(None);
+                                        lp.deselect();
                                     } else {
                                         // 向左上拖选，当前片段维持原态
                                     }
@@ -1596,10 +1601,10 @@ pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rect
                                 // 拖选起点位于片段两端之间
                                 if drag_area.0 < panel_x + lp.x && (drag_area.1 + drag_area.3 > push_from.1) {
                                     // 向左下拖选，左端大于选区左边界，不选择
-                                    lp.selected_range.set(None);
+                                    lp.deselect();
                                 } else if push_from.1 == drag_area.1 && (drag_area.0 + drag_area.2 > panel_x + lp.next_x) {
                                     // 向下拖选，选区右边界超出片段右边界，全选
-                                    lp.selected_range.set(Some((0, lp.line.chars().count())));
+                                    lp.select_all();
                                 } else {
                                     // 向左上拖选，维持原态
                                 }
@@ -1643,14 +1648,14 @@ pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rect
                             }
                             PosOfDrag::UpLeftInside | PosOfDrag::DownLeftOutside | PosOfDrag::DownLeft => {
                                 // 向上拖选，片段位于选区左部有交叉，不选
-                                lp.selected_range.set(None);
+                                lp.deselect();
                             }
                             PosOfDrag::UpLeft | PosOfDrag::UpLeftOutside | PosOfDrag::DownLeftInside => {
                                 // 向上拖选，选区位于当前片段左侧外部，不选择。实际上维持不变。
                             }
                             PosOfDrag::UpRightInside | PosOfDrag::UpRight | PosOfDrag::DownRight | PosOfDrag::DownRightOutside => {
                                 // 向上拖选，当前片段在选区右部有交叉，全选
-                                lp.selected_range.set(Some((0, lp.line.chars().count())));
+                                lp.select_all();
                             }
                             // PosOfDrag::UpLeftOutside => {
                             //     // 向上拖选，当前片段在选区左部有交叉，维持不变
@@ -1667,20 +1672,20 @@ pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rect
                                 // 向下拖选，选区包括片段，不选择。
                                 if drag_area.0 == push_from.0 {
                                     // 选区起点在片段左外侧，全选
-                                    lp.selected_range.set(Some((0, lp.line.chars().count())));
+                                    lp.select_all();
                                 } else {
                                     // 选区起点在片段右外侧，不选
-                                    lp.selected_range.set(None);
+                                    lp.deselect();
                                 }
                             }
                             PosOfDrag::UpCover => {
                                 // 向上拖选，选区包括片段
                                 if drag_area.0 != push_from.0 {
                                     // 向左划选，全选。
-                                    lp.selected_range.set(Some((0, lp.line.chars().count())));
+                                    lp.select_all();
                                 } else {
                                     // 向右划选，不选
-                                    lp.selected_range.set(None);
+                                    lp.deselect();
                                 }
                             }
                             // PosOfDrag::DownLeftInside => {
@@ -1688,7 +1693,7 @@ pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rect
                             // }
                             // PosOfDrag::DownLeft => {
                             //     // 向下拖选，选区位于当前片段左侧外部，不选择。
-                            //     lp.selected_range.set(None);
+                            //     lp.deselect();
                             // }
                             // PosOfDrag::DownRightInside => {
                             //     // 向下拖选，当前片段在选区右部有交叉，以选区末尾字符为起始向右扩选内容。
@@ -1704,7 +1709,7 @@ pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rect
                             // }
                             // PosOfDrag::DownLeftOutside => {
                             //     // 向下拖选，选区位于当前片段右侧外部，不选。
-                            //     lp.selected_range.set(None);
+                            //     lp.deselect(;)
                             // }
                         }
                     }
@@ -1718,7 +1723,7 @@ pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rect
                         |p| {
                             if let Some(p) = p.upgrade() {
                                 let lp = &mut *p.borrow_mut();
-                                lp.selected_range.set(Some((0, lp.line.chars().count())));
+                                lp.select_all();
                             }
                         }
                     });
@@ -1732,16 +1737,20 @@ pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rect
         let mut selection = String::new();
         for (_, piece) in selected_lines_clone.iter() {
             let tl = &piece.through_line.borrow().ys;
-            for p in tl.borrow().iter() {
-                if let Some(p) = p.upgrade() {
-                    let lp = &*p.borrow();
-                    lp.copy_selection(&mut selection);
-                }
-            }
+            copy_pieces(tl.borrow().iter(), &mut selection);
         }
         app::copy(selection.as_str());
     }
     selected
+}
+
+fn copy_pieces(it: Iter<Weak<RefCell<LinePiece>>>, selection: &mut String) {
+    for p in it {
+        if let Some(p) = p.upgrade() {
+            let lp = &*p.borrow();
+            lp.copy_selection(selection);
+        }
+    }
 }
 
 /// 检查拖选区与当前分片的方位关系。
@@ -1936,7 +1945,7 @@ fn drag_to_down(drag_area: &Rectangle, push_from_y: i32) -> bool {
 /// ```
 fn reverse_to_extend_from_end(piece: &LinePiece) {
     if let Some((_, old_to)) = piece.selected_range.get() {
-        piece.selected_range.set(Some((old_to - 1, piece.line.chars().count())));
+        piece.select_from(old_to - 1);
     }
 }
 
@@ -1955,7 +1964,7 @@ fn reverse_to_extend_from_end(piece: &LinePiece) {
 /// ```
 fn extend_from_end(piece: &LinePiece) {
     if let Some((old_from, _)) = piece.selected_range.get() {
-        piece.selected_range.set(Some((old_from, piece.line.chars().count())));
+        piece.select_from(old_from);
     }
 }
 
@@ -1972,10 +1981,22 @@ pub fn locate_piece_at_point(visible_lines: Rc<RefCell<HashMap<Rectangle, LinePi
 pub(crate) fn clear_selected_pieces(selected_pieces: Rc<RefCell<Vec<Weak<RefCell<LinePiece>>>>>) {
     for piece in selected_pieces.borrow().iter() {
         if let Some(p) = piece.upgrade() {
-            p.borrow().selected_range.set(None);
+            p.borrow().deselect();
         }
     }
     selected_pieces.borrow_mut().clear();
+}
+
+fn select_piece_from_or_to(rd: &RichData, piece_index: usize, pos: usize, selected_pieces: Rc<RefCell<Vec<Weak<RefCell<LinePiece>>>>>, from: bool) {
+    if let Some(last_piece_rc) = rd.line_pieces.get(piece_index) {
+        let piece = &*last_piece_rc.borrow();
+        if from {
+            piece.select_from(pos);
+        } else {
+            piece.select_to(pos);
+        }
+        selected_pieces.borrow_mut().push(Rc::downgrade(last_piece_rc));
+    }
 }
 
 pub fn select_text2(from_point: &ClickPoint, to_point: ClickPoint, data_buffer: Rc<RefCell<Vec<RichData>>>, rd_range: RangeInclusive<usize>, selected_pieces: Rc<RefCell<Vec<Weak<RefCell<LinePiece>>>>>) {
@@ -2005,11 +2026,7 @@ pub fn select_text2(from_point: &ClickPoint, to_point: ClickPoint, data_buffer: 
         // debug!("选区超过一个数据段");
         if let Some(rd) = data_buffer.borrow().get(r_start) {
             // 选择第一个数据段起点之后的所有分片内容。
-            if let Some(first_piece_rc) = rd.line_pieces.get(f_p_i) {
-                let piece = &*first_piece_rc.borrow();
-                piece.selected_range.set(Some((lt_p.c_i, piece.line.chars().count())));
-                selected_pieces.borrow_mut().push(Rc::downgrade(first_piece_rc));
-            }
+            select_piece_from_or_to(rd, f_p_i, lt_p.c_i, selected_pieces.clone(), true);
             for p in rd.line_pieces.iter().skip(f_p_i + 1) {
                 let piece = &*p.borrow();
                 piece.select_all();
@@ -2037,11 +2054,7 @@ pub fn select_text2(from_point: &ClickPoint, to_point: ClickPoint, data_buffer: 
                 piece.select_all();
                 selected_pieces.borrow_mut().push(Rc::downgrade(p));
             }
-            if let Some(last_piece_rc) = rd.line_pieces.get(t_p_i) {
-                let piece = &*last_piece_rc.borrow();
-                piece.selected_range.set(Some((0, br_p.c_i + 1)));
-                selected_pieces.borrow_mut().push(Rc::downgrade(last_piece_rc));
-            }
+            select_piece_from_or_to(rd, t_p_i, br_p.c_i + 1, selected_pieces.clone(), false);
         }
     } else {
         // 只有一行
@@ -2051,11 +2064,7 @@ pub fn select_text2(from_point: &ClickPoint, to_point: ClickPoint, data_buffer: 
             if across_pieces > 0 {
                 // 超过一个分片
                 // debug!("选区超过一个分片");
-                if let Some(first_piece_rc) = rd.line_pieces.get(f_p_i) {
-                    let piece = &*first_piece_rc.borrow();
-                    piece.selected_range.set(Some((lt_p.c_i, piece.line.chars().count())));
-                    selected_pieces.borrow_mut().push(Rc::downgrade(first_piece_rc));
-                }
+                select_piece_from_or_to(rd, f_p_i, lt_p.c_i, selected_pieces.clone(), true);
 
                 // 超过两个分片
                 // debug!("选区超过两个分片");
@@ -2069,11 +2078,7 @@ pub fn select_text2(from_point: &ClickPoint, to_point: ClickPoint, data_buffer: 
                 }
                 selected_pieces.borrow_mut().append(&mut piece_rcs);
 
-                if let Some(last_piece_rc) = rd.line_pieces.get(t_p_i) {
-                    let piece = &*last_piece_rc.borrow();
-                    piece.selected_range.set(Some((0, br_p.c_i + 1)));
-                    selected_pieces.borrow_mut().push(Rc::downgrade(last_piece_rc));
-                }
+                select_piece_from_or_to(rd, t_p_i, br_p.c_i + 1, selected_pieces.clone(), false);
             } else {
                 // 在同一个分片内
                 if let Some(piece_rc) = rd.line_pieces.get(f_p_i) {
@@ -2083,7 +2088,7 @@ pub fn select_text2(from_point: &ClickPoint, to_point: ClickPoint, data_buffer: 
                         fci = br_p.c_i;
                         tci = lt_p.c_i + 1;
                     }
-                    piece_rc.borrow_mut().selected_range.set(Some((fci, tci)));
+                    piece_rc.borrow().select_range(fci, tci);
                     selected_pieces.borrow_mut().push(Rc::downgrade(piece_rc));
                 }
             }
@@ -2094,12 +2099,7 @@ pub fn select_text2(from_point: &ClickPoint, to_point: ClickPoint, data_buffer: 
     拷贝至剪贴板
      */
     let mut selection = String::new();
-    for p in selected_pieces.borrow().iter() {
-        if let Some(p) = p.upgrade() {
-            let lp = &*p.borrow();
-            lp.copy_selection(&mut selection);
-        }
-    }
+    copy_pieces(selected_pieces.borrow().iter(), &mut selection);
     app::copy(selection.as_str());
 }
 

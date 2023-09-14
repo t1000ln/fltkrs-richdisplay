@@ -4,14 +4,14 @@ use std::cell::{Cell, RefCell};
 use std::cmp::{max, min};
 use std::collections::{HashMap};
 use std::rc::{Rc, Weak};
-use std::time::{Duration, Instant};
+use std::time::{Duration};
 use fltk::draw::{draw_rect_fill, draw_xyline, LineStyle, Offscreen, set_draw_color, set_line_style};
 use fltk::enums::{Align, Color, Cursor, Event};
 use fltk::frame::Frame;
 use fltk::group::{Scroll, ScrollType};
 use fltk::prelude::{GroupExt, WidgetBase, WidgetExt};
 use fltk::{app, draw, widget_extends};
-use log::{error};
+use log::{debug, error};
 use throttle_my_fn::throttle;
 use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData, ClickPoint, select_text2, locate_target_rd, clear_selected_pieces};
 use crate::rich_text::{PANEL_PADDING};
@@ -264,7 +264,7 @@ impl RichReviewer {
         Self { scroller, panel, data_buffer, background_color, visible_lines, clickable_data, reviewer_screen, scroll_panel_to_y_after_resize, resize_panel_after_resize, notifier }
     }
 
-    #[throttle(1, Duration::from_millis(100))]
+    #[throttle(1, Duration::from_millis(50))]
     fn redraw_after_drag(
         push_from_point: ClickPoint,
         select_from_row: usize,
@@ -273,7 +273,6 @@ impl RichReviewer {
         selected_pieces: Rc<RefCell<Vec<Weak<RefCell<LinePiece>>>>>,
         scroller: &mut Scroll,) -> bool {
 
-        // let time_counter = Instant::now();
         let mut down = true;
         let index_vec = if current_point.y >= push_from_point.y {
             // 向下选择
@@ -293,7 +292,6 @@ impl RichReviewer {
             };
             select_text2(&push_from_point, point, data_buffer, rd_range, selected_pieces);
             scroller.set_damage(true);
-            // debug!("本次划选计算耗费时长：{:?}", time_counter.elapsed());
             return true;
         }
         false
@@ -479,6 +477,17 @@ impl RichReviewer {
         self.notifier.replace(Some(notifier));
     }
 
+    pub(crate) fn draw_offline2(&self) {
+        Self::draw_offline(
+            self.reviewer_screen.clone(),
+            &self.scroller,
+            self.visible_lines.clone(),
+            self.clickable_data.clone(),
+            self.data_buffer.clone(),
+            self.background_color.get(),
+        );
+    }
+
     /// 更改数据属性。
     ///
     /// # Arguments
@@ -510,14 +519,15 @@ impl RichReviewer {
             if let Some(rd) = self.data_buffer.borrow_mut().get_mut(target_idx) {
                 update_data_properties(options, rd);
             }
-            Self::draw_offline(
-                self.reviewer_screen.clone(),
-                &self.scroller,
-                self.visible_lines.clone(),
-                self.clickable_data.clone(),
-                self.data_buffer.clone(),
-                self.background_color.get(),
-            );
+            // Self::draw_offline(
+            //     self.reviewer_screen.clone(),
+            //     &self.scroller,
+            //     self.visible_lines.clone(),
+            //     self.clickable_data.clone(),
+            //     self.data_buffer.clone(),
+            //     self.background_color.get(),
+            // );
+            self.draw_offline2();
         }
     }
 
@@ -534,14 +544,15 @@ impl RichReviewer {
                 disable_data(rd);
             }
 
-            Self::draw_offline(
-                self.reviewer_screen.clone(),
-                &self.scroller,
-                self.visible_lines.clone(),
-                self.clickable_data.clone(),
-                self.data_buffer.clone(),
-                self.background_color.get(),
-            );
+            // Self::draw_offline(
+            //     self.reviewer_screen.clone(),
+            //     &self.scroller,
+            //     self.visible_lines.clone(),
+            //     self.clickable_data.clone(),
+            //     self.data_buffer.clone(),
+            //     self.background_color.get(),
+            // );
+            self.draw_offline2();
         }
     }
 }

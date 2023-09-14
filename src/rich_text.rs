@@ -403,6 +403,8 @@ impl RichText {
         let window_width = self.panel.width();
         let drawable_max_width = window_width - PADDING.left - PADDING.right;
 
+        // TODO: 待处理图片缓存问题，避免重复占用内存。待添加回顾区检索和定位API。
+
         /*
         试算单元绘制信息
          */

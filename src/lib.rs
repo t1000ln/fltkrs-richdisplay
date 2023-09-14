@@ -2,7 +2,7 @@ use std::cell::{Cell, RefCell};
 use std::cmp::{max, min, Ordering};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::{Debug};
-use std::ops::{Range, RangeInclusive};
+use std::ops::{RangeInclusive};
 use std::rc::{Rc, Weak};
 use fltk::{app, draw};
 use fltk::draw::{descent, draw_image, draw_line, draw_rectf, draw_text2, measure, set_draw_color, set_font};
@@ -1978,21 +1978,23 @@ pub(crate) fn clear_selected_pieces(selected_pieces: Rc<RefCell<Vec<Weak<RefCell
     selected_pieces.borrow_mut().clear();
 }
 
-pub fn select_text2(from_point: &ClickPoint, to_point: ClickPoint, data_buffer: Rc<RefCell<Vec<RichData>>>, rd_range: RangeInclusive<usize>, selected_pieces: Rc<RefCell<Vec<Weak<RefCell<LinePiece>>>>>, panel_width: i32) {
+pub fn select_text2(from_point: &ClickPoint, to_point: ClickPoint, data_buffer: Rc<RefCell<Vec<RichData>>>, rd_range: RangeInclusive<usize>, selected_pieces: Rc<RefCell<Vec<Weak<RefCell<LinePiece>>>>>) {
     /*
     选择片段的原则：应选择起点右下方的第一行片段，结束点左上方的第一行片段，以及两点之间的中间行片段。
      */
+    // debug!("传入的fp: {:?}, tp: {:?}", from_point, to_point);
     let drag_rect = from_point.to_rect(&to_point);
     let (lt, br) = drag_rect.corner_rect();
     let (mut lt_p, mut br_p) = (from_point, &to_point);
-    if br.0 == from_point.x && br.1 == from_point.y {
+    if (br.0 == from_point.x && br.1 == from_point.y) || (lt.0 == from_point.x && br.1 == from_point.y) {
+        // debug!("对换坐标点");
         lt_p = &to_point;
         br_p = from_point;
+
     };
+    let (f_p_i, t_p_i) = (lt_p.p_i, br_p.p_i);
 
-    // TODO: 测试中失去响应，待跟踪
-    // debug!("rd_range: {:?}, drag_rect: {:?}, lt: {:?}, br: {:?}", rd_range, drag_rect, lt, br);
-
+    // debug!("f_p_i: {f_p_i}, t_p_i: {t_p_i}, rd_range: {:?}, drag_rect: {:?}, lt: {:?}, br: {:?}", rd_range, drag_rect, lt, br);
     // 清理上一次选择的区域
     clear_selected_pieces(selected_pieces.clone());
 
@@ -2000,15 +2002,15 @@ pub fn select_text2(from_point: &ClickPoint, to_point: ClickPoint, data_buffer: 
     let across_rds = r_end - r_start;
     if across_rds > 0 {
         // 超过一行
-        debug!("选区超过一个数据段");
+        // debug!("选区超过一个数据段");
         if let Some(rd) = data_buffer.borrow().get(r_start) {
             // 选择第一个数据段起点之后的所有分片内容。
-            if let Some(first_piece_rc) = rd.line_pieces.get(lt_p.p_i) {
+            if let Some(first_piece_rc) = rd.line_pieces.get(f_p_i) {
                 let piece = &*first_piece_rc.borrow();
                 piece.selected_range.set(Some((lt_p.c_i, piece.line.chars().count())));
                 selected_pieces.borrow_mut().push(Rc::downgrade(first_piece_rc));
             }
-            for p in rd.line_pieces.iter().skip(lt_p.p_i + 1) {
+            for p in rd.line_pieces.iter().skip(f_p_i + 1) {
                 let piece = &*p.borrow();
                 piece.select_all();
                 selected_pieces.borrow_mut().push(Rc::downgrade(p));
@@ -2030,12 +2032,12 @@ pub fn select_text2(from_point: &ClickPoint, to_point: ClickPoint, data_buffer: 
 
         if let Some(rd) = data_buffer.borrow().get(r_end) {
             // 选择最后一个数据段终点之前的所有内容。
-            for p in rd.line_pieces.iter().take(br_p.p_i) {
+            for p in rd.line_pieces.iter().take(t_p_i) {
                 let piece = &*p.borrow();
                 piece.select_all();
                 selected_pieces.borrow_mut().push(Rc::downgrade(p));
             }
-            if let Some(last_piece_rc) = rd.line_pieces.get(br_p.p_i) {
+            if let Some(last_piece_rc) = rd.line_pieces.get(t_p_i) {
                 let piece = &*last_piece_rc.borrow();
                 piece.selected_range.set(Some((0, br_p.c_i + 1)));
                 selected_pieces.borrow_mut().push(Rc::downgrade(last_piece_rc));
@@ -2044,8 +2046,7 @@ pub fn select_text2(from_point: &ClickPoint, to_point: ClickPoint, data_buffer: 
     } else {
         // 只有一行
         // debug!("选区只有一个数据段");
-        if let Some(rd) = data_buffer.borrow().get(*rd_range.start()) {
-            let (f_p_i, t_p_i) = (lt_p.p_i, br_p.p_i);
+        if let Some(rd) = data_buffer.borrow().get(r_start) {
             let across_pieces = t_p_i - f_p_i;
             if across_pieces > 0 {
                 // 超过一个分片
@@ -2076,13 +2077,30 @@ pub fn select_text2(from_point: &ClickPoint, to_point: ClickPoint, data_buffer: 
             } else {
                 // 在同一个分片内
                 if let Some(piece_rc) = rd.line_pieces.get(f_p_i) {
-                    piece_rc.borrow_mut().selected_range.set(Some((lt_p.c_i, br_p.c_i + 1)));
+                    // debug!("selected range from: {} to: {}", lt_p.c_i, br_p.c_i + 1);
+                    let (mut fci, mut tci) = (lt_p.c_i, br_p.c_i + 1);
+                    if fci >= tci {
+                        fci = br_p.c_i;
+                        tci = lt_p.c_i + 1;
+                    }
+                    piece_rc.borrow_mut().selected_range.set(Some((fci, tci)));
                     selected_pieces.borrow_mut().push(Rc::downgrade(piece_rc));
-                    // debug!("选取位于同一个分片内： {:?}", piece_rc);
                 }
             }
         }
     }
+
+    /*
+    拷贝至剪贴板
+     */
+    let mut selection = String::new();
+    for p in selected_pieces.borrow().iter() {
+        if let Some(p) = p.upgrade() {
+            let lp = &*p.borrow();
+            lp.copy_selection(&mut selection);
+        }
+    }
+    app::copy(selection.as_str());
 }
 
 pub fn locate_target_rd(point: &mut ClickPoint, drag_rect: &Rectangle, panel_width: i32, data_buffer: Rc<RefCell<Vec<RichData>>>, index_vec: &Vec<usize>) -> Option<usize> {
@@ -2101,7 +2119,7 @@ pub fn locate_target_rd(point: &mut ClickPoint, drag_rect: &Rectangle, panel_wid
             let mut rd_extend_rect = Rectangle::zero();
             let rd = &(&*buffer_rc.borrow())[*row];
             // debug!("检测行 {row} : {}", rd.text);
-            let (rd_top_y, rd_bottom_y, rd_start_x, rd_end_x) = rd.v_bounds.get();
+            let (rd_top_y, rd_bottom_y, _, _) = rd.v_bounds.get();
             rd_extend_rect.replace(0, rd_top_y, panel_width, rd_bottom_y - rd_top_y);
             // debug!("rd_top_y: {}, rd_bottom_y: {}, drag_rect: {:?}", rd_top_y, rd_bottom_y, drag_rect);
 
@@ -2161,11 +2179,11 @@ pub fn locate_target_rd(point: &mut ClickPoint, drag_rect: &Rectangle, panel_wid
             return Some(idx);
         } else {
             // 选择了图片，不予处理。
-            debug!("选择了图片")
+            // debug!("选择了图片")
         }
 
     } else {
-        debug!("没找到目标数据段！")
+        // debug!("没找到目标数据段！")
     }
     None
 }

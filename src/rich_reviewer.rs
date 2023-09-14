@@ -4,16 +4,16 @@ use std::cell::{Cell, RefCell};
 use std::cmp::{max, min};
 use std::collections::{HashMap};
 use std::rc::{Rc, Weak};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use fltk::draw::{draw_rect_fill, draw_xyline, LineStyle, Offscreen, set_draw_color, set_line_style};
 use fltk::enums::{Align, Color, Cursor, Event};
 use fltk::frame::Frame;
 use fltk::group::{Scroll, ScrollType};
 use fltk::prelude::{GroupExt, WidgetBase, WidgetExt};
 use fltk::{app, draw, widget_extends};
-use log::{debug, error};
+use log::{error};
 use throttle_my_fn::throttle;
-use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData, locate_piece_at_point, ClickPoint, select_text2, locate_target_rd, clear_selected_pieces};
+use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData, ClickPoint, select_text2, locate_target_rd, clear_selected_pieces};
 use crate::rich_text::{PANEL_PADDING};
 
 #[derive(Clone, Debug)]
@@ -102,12 +102,10 @@ impl RichReviewer {
             let last_window_size = Rc::new(Cell::new((w, h)));
             let notifier_rc = notifier.clone();
             let screen_rc = reviewer_screen.clone();
-            let visible_lines_rc = visible_lines.clone();
             let panel_rc = panel.clone();
             let new_scroll_y_rc = scroll_panel_to_y_after_resize.clone();
             let resize_panel_after_resize_rc = resize_panel_after_resize.clone();
             let clickable_data_rc = clickable_data.clone();
-            let bg_rc = background_color.clone();
             let mut selected = false;
             let mut push_from_point = ClickPoint::new(0, 0);
             let mut select_from_row = 0;
@@ -250,11 +248,7 @@ impl RichReviewer {
                             ClickPoint::new(current_x - p_offset_x, current_y + offset_y - p_offset_y + PADDING.top),
                             buffer_rc.clone(),
                             selected_pieces.clone(),
-                            screen_rc.clone(),
                             scroller,
-                            visible_lines_rc.clone(),
-                            clickable_data_rc.clone(),
-                            bg_rc.get()
                         ) {
                             selected = ret;
                         }
@@ -277,12 +271,9 @@ impl RichReviewer {
         current_point: ClickPoint,
         data_buffer: Rc<RefCell<Vec<RichData>>>,
         selected_pieces: Rc<RefCell<Vec<Weak<RefCell<LinePiece>>>>>,
-        screen: Rc<RefCell<Offscreen>>,
-        scroller: &mut Scroll,
-        visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
-        clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
-        background_color: Color,) -> bool {
+        scroller: &mut Scroll,) -> bool {
 
+        // let time_counter = Instant::now();
         let mut down = true;
         let index_vec = if current_point.y >= push_from_point.y {
             // 向下选择
@@ -300,24 +291,11 @@ impl RichReviewer {
             } else {
                 select_to_row..=select_from_row
             };
-            select_text2(&push_from_point, point, data_buffer, rd_range, selected_pieces, scroller.w());
+            select_text2(&push_from_point, point, data_buffer, rd_range, selected_pieces);
             scroller.set_damage(true);
+            // debug!("本次划选计算耗费时长：{:?}", time_counter.elapsed());
             return true;
         }
-
-        // let selected = select_text2(push_from_point, current_point, data_buffer.clone(), selected_pieces, scroller.w());
-        // if selected {
-        //     // RichReviewer::draw_offline(
-        //     //     screen,
-        //     //     scroller,
-        //     //     visible_lines,
-        //     //     clickable_data,
-        //     //     data_buffer,
-        //     //     background_color
-        //     // );
-        //     scroller.set_damage(true);
-        // }
-        // selected
         false
     }
 

@@ -2,8 +2,9 @@ use std::cell::{Cell, RefCell};
 use std::cmp::{max, min, Ordering};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::{Debug};
-use std::ops::Deref;
+use std::ops::{RangeInclusive};
 use std::rc::{Rc, Weak};
+use std::slice::Iter;
 use fltk::{app, draw};
 use fltk::draw::{descent, draw_image, draw_line, draw_rectf, draw_text2, measure, set_draw_color, set_font};
 use fltk::enums::{Align, Color, ColorDepth, Cursor, Font};
@@ -46,7 +47,7 @@ impl LocalEvent {
 
 }
 
-/// 矩形结构，x/y表示左上角坐标，w/h表示宽和高，w/h不为负值。
+/// 矩形结构，元素0/1代表x/y坐标，表示左上角坐标；元素2/3代表w/h宽和高，w/h不为负值。
 #[derive(Debug, Clone, Eq, Hash, PartialEq)]
 pub struct Rectangle(i32, i32, i32, i32);
 
@@ -127,8 +128,34 @@ impl Rectangle {
         }
     }
 
+    /// 构建一个空矩形。
+    pub fn zero() -> Self {
+        Rectangle::new(0, 0, 0, 0)
+    }
+
+    pub fn replace(&mut self, x: i32, y: i32, w: i32, h: i32) {
+        self.0 = x;
+        self.1 = y;
+        self.2 = w;
+        self.3 = h;
+    }
+
+    pub fn is_below(&self, another: &Self) -> bool {
+        self.1 > another.1 + another.3
+    }
+
     pub fn tup(&self) -> (i32, i32, i32, i32) {
         (self.0, self.1, self.2, self.3)
+    }
+
+    /// 获得当前矩形左上角和右下角的坐标。
+    pub fn corner(&self) -> (ClickPoint, ClickPoint) {
+        (ClickPoint::new(self.0, self.1), ClickPoint::new(self.0 + self.2, self.1 + self.3))
+    }
+
+    /// 获得当前矩形左上角和右下角的空矩形。
+    pub fn corner_rect(&self) -> (Self, Self) {
+        (ClickPoint::new(self.0, self.1).as_rect(), ClickPoint::new(self.0 + self.2, self.1 + self.3).as_rect())
     }
 }
 
@@ -136,19 +163,47 @@ impl Rectangle {
 pub struct ClickPoint {
     pub x: i32,
     pub y: i32,
+    /// 点所在分片在数据段中的索引号。
+    pub p_i: usize,
+    /// 点所在字符在分片中的索引号。
+    pub c_i: usize,
 }
 
 impl ClickPoint {
 
     pub fn new(x: i32, y: i32) -> ClickPoint {
-        Self {x, y}
+        Self {x, y, p_i: 0, c_i: 0}
     }
+
+    /// 以一个点构建一个0宽高的举行结构。
     pub fn as_rect(&self) -> Rectangle {
         Rectangle::new(self.x, self.y, 0, 0)
     }
 
-    pub fn towards_down(&self, another: &Self) -> bool {
-        self.y < another.y
+    /// 依据两个点构建新的矩形结构，无需考虑两点之间的相对位置，构建出的矩形x/y始终代表左上角坐标，w/h始终大于等于0。
+    ///
+    /// # Arguments
+    ///
+    /// * `to_point`: 另一个点。
+    ///
+    /// returns: Rectangle
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fltkrs_richdisplay::ClickPoint;
+    /// let from_point = ClickPoint::new(120, 50);
+    /// let to_point = ClickPoint::new(60, 150);
+    /// let rect = from_point.to_rect(&to_point);
+    /// let t = rect.tup();
+    /// assert_eq!(t.0, 60);
+    /// assert_eq!(t.1, 50);
+    /// ```
+    pub fn to_rect(&self, to_point: &Self) -> Rectangle {
+        Rectangle::new(self.x, self.y, to_point.x - self.x, to_point.y - self.y)
+    }
+    pub fn towards_down(&self, to_point: &Self) -> bool {
+        self.y < to_point.y
     }
 }
 
@@ -278,10 +333,13 @@ pub struct LinePiece {
 
     pub font: Font,
     pub font_size: i32,
+
+    /// 分片所在数据段的边界数据引用。
+    pub rd_bounds: Rc<Cell<(i32, i32, i32, i32)>>,
 }
 
 impl LinePiece {
-    pub fn new(line: String, x: i32, y: i32, w: i32, h: i32, top_y: i32, spacing: i32, next_x: i32, next_y: i32, font_height: i32, font: Font, font_size: i32, through_line: Rc<RefCell<ThroughLine>>) -> Rc<RefCell<LinePiece>> {
+    pub fn new(line: String, x: i32, y: i32, w: i32, h: i32, top_y: i32, spacing: i32, next_x: i32, next_y: i32, font_height: i32, font: Font, font_size: i32, through_line: Rc<RefCell<ThroughLine>>, rd_bounds: Rc<Cell<(i32, i32, i32, i32)>>) -> Rc<RefCell<LinePiece>> {
         let new_piece = Rc::new(RefCell::new(Self {
             line,
             x,
@@ -297,6 +355,7 @@ impl LinePiece {
             selected_range: Rc::new(Cell::new(None)),
             font,
             font_size,
+            rd_bounds
         }));
         through_line.borrow_mut().add_piece(new_piece.clone());
         new_piece
@@ -319,6 +378,7 @@ impl LinePiece {
             selected_range: Rc::new(Cell::new(None)),
             font: Font::Helvetica,
             font_size: 12,
+            rd_bounds: Rc::new(Cell::new((0, 0, 0, 0))),
         }));
         through_line.borrow_mut().add_piece(init_piece.clone());
         init_piece
@@ -326,6 +386,18 @@ impl LinePiece {
 
     pub fn eq2(&self, other: &Self) -> bool {
         self.x == other.x && self.y == other.y && self.w == other.w && self.h == other.h && self.line.eq(&other.line)
+    }
+
+    pub fn select_from(&self, from: usize) {
+        self.selected_range.set(Some((from, self.line.chars().count())));
+    }
+
+    pub fn select_to(&self, to: usize) {
+        self.selected_range.set(Some((0, to)));
+    }
+
+    pub fn select_range(&self, from: usize, to: usize) {
+        self.selected_range.set(Some((from, to)));
     }
 
     pub fn deselect(&self) {
@@ -349,7 +421,6 @@ impl LinePiece {
             self.line.chars().skip(from).take(to - from).for_each(|c| {
                 selection.push(c);
             });
-            // selection.push_str(&self.line.chars().skip(from).take(to - from).collect::<String>());
         }
     }
 
@@ -373,9 +444,6 @@ pub trait LinedData {
     ///
     /// ```
     fn set_v_bounds(&mut self, top_y: i32, bottom_y: i32, start_x: i32, end_x: i32);
-
-    /// 获取绘制区域高度。
-    fn height(&self) -> i32;
 
     /// 表明是否纯文本数据段。
     fn is_text_data(&self) -> bool;
@@ -704,7 +772,6 @@ pub fn disable_data(rd: &mut RichData) {
         DataType::Image => {
             if let Some(image) = rd.image.as_mut() {
                 if let Ok(mut ni) = RgbImage::new(image.as_slice(), rd.image_width, rd.image_height, ColorDepth::Rgb8) {
-                    debug!("灰度处理图片");
                     ni.inactive();
                     image.clear();
                     image.append(&mut ni.to_rgb_data());
@@ -733,7 +800,7 @@ pub struct RichData {
     pub strike_through: bool,
     pub line_height: i32,
     /// 当前内容在面板垂直高度中的起始和截至y坐标，以及起始和结尾x坐标。
-    v_bounds: Option<(i32, i32, i32, i32)>,
+    v_bounds: Rc<Cell<(i32, i32, i32, i32)>>,
 
     /// 对当前数据进行试算后，分割成适配单行宽度的分片保存起来。由于无需跨线程传输，因此也不考虑线程安全问题。
     pub(crate) line_pieces: Vec<Rc<RefCell<LinePiece>>>,
@@ -759,7 +826,7 @@ impl From<UserData> for RichData {
                     expired: data.expired,
                     strike_through: data.strike_through,
                     line_height: 1,
-                    v_bounds: None,
+                    v_bounds: Rc::new(Cell::new((0, 0, 0, 0))),
                     line_pieces: vec![],
                     data_type: DataType::Text,
                     image: None,
@@ -780,7 +847,7 @@ impl From<UserData> for RichData {
                     expired: data.expired,
                     strike_through: data.strike_through,
                     line_height: 1,
-                    v_bounds: None,
+                    v_bounds: Rc::new(Cell::new((0, 0, 0, 0))),
                     line_pieces: Vec::with_capacity(0),
                     data_type: DataType::Image,
                     image: data.image,
@@ -853,7 +920,7 @@ impl RichData {
 
             let y = last_piece.next_y;
             let top_y = last_piece.next_y;
-            let new_piece = LinePiece::new(text.chars().take(stop_pos).collect::<String>(), last_piece.next_x, y, w, font_height, top_y, last_piece.spacing, next_x, next_y, font_height, font, font_size,  through_line.clone());
+            let new_piece = LinePiece::new(text.chars().take(stop_pos).collect::<String>(), last_piece.next_x, y, w, font_height, top_y, last_piece.spacing, next_x, next_y, font_height, font, font_size,  through_line.clone(), self.v_bounds.clone());
             self.line_pieces.push(new_piece.clone());
 
             let rest_str = text.chars().skip(stop_pos).collect::<String>();
@@ -874,7 +941,7 @@ impl RichData {
                 }
 
                 let through_line = ThroughLine::create_or_update(PADDING.left, rest_x, font_height, original.clone(), false);
-                let new_piece = LinePiece::new(rest_str, rest_x, rest_y, rest_width, font_height, top_y, last_piece.spacing, rest_next_x, rest_next_y, font_height, font, font_size, through_line);
+                let new_piece = LinePiece::new(rest_str, rest_x, rest_y, rest_width, font_height, top_y, last_piece.spacing, rest_next_x, rest_next_y, font_height, font, font_size, through_line, self.v_bounds.clone());
                 self.line_pieces.push(new_piece.clone());
                 new_piece
             }
@@ -882,7 +949,7 @@ impl RichData {
             // 从行首开始
             let through_line = ThroughLine::create_or_update(PADDING.left, PADDING.left, self.line_height, original.clone(), false);
             let y = last_piece.next_y + last_piece.through_line.borrow().max_h + last_piece.spacing;
-            let new_piece = LinePiece::new(text.to_string(), PADDING.left, y, measure_width, self.line_height, y, last_piece.spacing, PADDING.left, y, font_height, font, font_size, through_line);
+            let new_piece = LinePiece::new(text.to_string(), PADDING.left, y, measure_width, self.line_height, y, last_piece.spacing, PADDING.left, y, font_height, font, font_size, through_line, self.v_bounds.clone());
             self.wrap_text_for_estimate(text, new_piece, max_width, measure_width, font_height)
         }
     }
@@ -891,15 +958,7 @@ impl RichData {
 
 impl LinedData for RichData {
     fn set_v_bounds(&mut self, top_y: i32, bottom_y: i32, start_x: i32, end_x: i32,) {
-        self.v_bounds = Some((top_y, bottom_y, start_x, end_x));
-    }
-
-    fn height(&self) -> i32 {
-        if let Some(b) = &self.v_bounds {
-            b.1 - b.0
-        } else {
-            0
-        }
+        self.v_bounds.replace((top_y, bottom_y, start_x, end_x));
     }
 
     fn is_text_data(&self) -> bool {
@@ -930,11 +989,8 @@ impl LinedData for RichData {
     fn set_binary_data(&mut self, _: Vec<u8>) {}
 
     fn is_visible(&self, top_y: i32, bottom_y: i32) -> bool {
-        if let Some(b) = &self.v_bounds {
-            !(b.1 < top_y || b.0 > bottom_y)
-        } else {
-            true
-        }
+        let b = self.v_bounds.get();
+        !(b.1 < top_y || b.0 > bottom_y)
     }
 
     fn draw(&self, offset_y: i32) {
@@ -1067,7 +1123,7 @@ impl LinedData for RichData {
                                 let y = lp.next_y;
                                 let piece_top_y = lp.next_y;
                                 let through_line = ThroughLine::create_or_update(PADDING.left, lp.next_x, current_line_height, ret.clone(), false);
-                                new_piece = LinePiece::new(line.to_string(), lp.next_x, y, tw, current_line_height, piece_top_y, lp.spacing, next_x, next_y, ref_font_height, font, font_size, through_line);
+                                new_piece = LinePiece::new(line.to_string(), lp.next_x, y, tw, current_line_height, piece_top_y, lp.spacing, next_x, next_y, ref_font_height, font, font_size, through_line, self.v_bounds.clone());
 
                             } else {
                                 let mut next_y = last_piece.next_y;
@@ -1082,7 +1138,7 @@ impl LinedData for RichData {
                                 let y = last_piece.next_y;
                                 let piece_top_y = last_piece.next_y;
                                 let through_line = ThroughLine::create_or_update(PADDING.left, last_piece.next_x, current_line_height, ret.clone(), false);
-                                new_piece = LinePiece::new(line.to_string(), last_piece.next_x, y, tw, self.line_height, piece_top_y, last_piece.spacing, next_x, next_y, ref_font_height, font, font_size, through_line);
+                                new_piece = LinePiece::new(line.to_string(), last_piece.next_x, y, tw, self.line_height, piece_top_y, last_piece.spacing, next_x, next_y, ref_font_height, font, font_size, through_line, self.v_bounds.clone());
                             }
                             self.line_pieces.push(new_piece.clone());
                             ret = new_piece;
@@ -1101,7 +1157,7 @@ impl LinedData for RichData {
                     } else {
                         let y = top_y;
                         let through_line = ThroughLine::create_or_update(PADDING.left, start_x, ref_font_height, ret, false);
-                        let new_piece = LinePiece::new(self.text.clone(), start_x, y, tw, ref_font_height, top_y, current_line_spacing, start_x + tw + PIECE_SPACING, top_y, ref_font_height, font, font_size, through_line);
+                        let new_piece = LinePiece::new(self.text.clone(), start_x, y, tw, ref_font_height, top_y, current_line_spacing, start_x + tw + PIECE_SPACING, top_y, ref_font_height, font, font_size, through_line, self.v_bounds.clone());
                         self.line_pieces.push(new_piece.clone());
                         ret = new_piece;
                     }
@@ -1116,7 +1172,7 @@ impl LinedData for RichData {
                     let next_x = x + self.image_width + IMAGE_PADDING_H;
                     let next_y = top_y + last_piece.through_line.borrow().max_h + IMAGE_PADDING_V;
                     let through_line = ThroughLine::new(self.image_height * IMAGE_PADDING_V * 2, true);
-                    let new_piece = LinePiece::new("".to_string(), x, next_y, self.image_width, self.image_height, piece_top_y, last_piece.spacing, next_x, next_y, 1, font, font_size, through_line);
+                    let new_piece = LinePiece::new("".to_string(), x, next_y, self.image_width, self.image_height, piece_top_y, last_piece.spacing, next_x, next_y, 1, font, font_size, through_line, self.v_bounds.clone());
                     self.line_pieces.push(new_piece.clone());
                     ret = new_piece;
                 } else {
@@ -1127,7 +1183,7 @@ impl LinedData for RichData {
                         let y = top_y + IMAGE_PADDING_V;
                         let piece_top_y = y;
                         let through_line = ThroughLine::new(self.image_height * IMAGE_PADDING_V * 2, true);
-                        let new_piece = LinePiece::new("".to_string(), x, y, self.image_width, self.image_height, piece_top_y, last_piece.spacing, next_x, top_y, 1, font, font_size, through_line);
+                        let new_piece = LinePiece::new("".to_string(), x, y, self.image_width, self.image_height, piece_top_y, last_piece.spacing, next_x, top_y, 1, font, font_size, through_line, self.v_bounds.clone());
                         self.line_pieces.push(new_piece.clone());
                         ret = new_piece;
                     } else {
@@ -1145,7 +1201,7 @@ impl LinedData for RichData {
                         let y = raw_y;
                         let piece_top_y = y;
                         let through_line = ThroughLine::create_or_update(PADDING.left + IMAGE_PADDING_H, x, self.image_height * IMAGE_PADDING_V * 2, ret, true);
-                        let new_piece = LinePiece::new("".to_string(), x, y, self.image_width, self.image_height, piece_top_y, last_piece.spacing, next_x, top_y + IMAGE_PADDING_V, 1, font, font_size, through_line);
+                        let new_piece = LinePiece::new("".to_string(), x, y, self.image_width, self.image_height, piece_top_y, last_piece.spacing, next_x, top_y + IMAGE_PADDING_V, 1, font, font_size, through_line, self.v_bounds.clone());
                         self.line_pieces.push(new_piece.clone());
                         ret = new_piece;
                     }
@@ -1200,6 +1256,10 @@ impl LinedData for RichData {
 
             let (up_offset, _) = calc_v_center_offset(max_h, h);
             lp.borrow_mut().y = piece_top_y + up_offset;
+            let lpm = &mut*lp.borrow_mut();
+            let mut vb = lpm.rd_bounds.get();
+            vb.1 = piece_top_y + up_offset + lpm.h;
+            lpm.rd_bounds.set(vb);
         }
 
         let mut top_y = top_y;
@@ -1210,7 +1270,6 @@ impl LinedData for RichData {
         let mut bottom_y = top_y;
         if let Some(last_piece) = self.line_pieces.last() {
             let lp = &*last_piece.borrow();
-            // bottom_y = lp.y + lp.through_line.borrow().max_h;
             bottom_y = lp.top_y + lp.through_line.borrow().max_h;
             bound_end_x = lp.x + lp.w;
         }
@@ -1370,6 +1429,19 @@ enum HorizonPosOfDrag {
     Cover,
 }
 
+fn _check_pos(pos: usize, border: i32, x: i32, text: &str) -> Ordering {
+    if pos == 0 {
+        Ordering::Equal
+    } else {
+        let (pw2, _) = measure(text.chars().take(pos).collect::<String>().as_str(), false);
+        if x + pw2 <= border {
+            Ordering::Equal
+        } else {
+            Ordering::Greater
+        }
+    }
+}
+
 /// 通过鼠标选择文本时，根据划选区域和方向，自动选择符合用户习惯的文本内容范围。
 ///
 /// # Arguments
@@ -1387,7 +1459,7 @@ enum HorizonPosOfDrag {
 /// ```
 ///
 /// ```
-pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>, column_mode: bool, push_from: (i32, i32), panel_x: i32) -> bool {
+pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>, column_mode: bool, push_from: (i32, i32), panel_x: i32, line_max_width: i32) -> bool {
     /*
     遍历可见行，检查每一行的矩形范围是否与选区有重叠，若有重叠则继续检测出现重叠的行中哪些文字片段与选区有重叠。
      */
@@ -1395,7 +1467,8 @@ pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rect
     // 选中行的代表
     let mut selected_lines: BTreeMap<i32, LinePiece> = BTreeMap::new();
     for (line_rect, piece) in visible_lines.borrow_mut().iter_mut() {
-        if is_overlap(line_rect, drag_area) {
+        let extended_line_rect = Rectangle::new(line_rect.0, line_rect.1, line_max_width, line_rect.3);
+        if is_overlap(&extended_line_rect, drag_area) {
             /*
             记录每一行位于选择区域中最左边那个片段，作为每一行的代表片段。
             由于同一行内的不同片段可能绘制高度不同，但是都具有的top_y属性可以表示虚拟行高的顶部位置。
@@ -1425,21 +1498,12 @@ pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rect
                     if x + pw1 < left_border {
                         Ordering::Less
                     } else {
-                        if *pos == 0 {
-                            Ordering::Equal
-                        } else {
-                            let (pw2, _) = measure(text.chars().take(*pos).collect::<String>().as_str(), false);
-                            if x + pw2 <= left_border {
-                                Ordering::Equal
-                            } else {
-                                Ordering::Greater
-                            }
-                        }
+                        _check_pos(*pos, left_border, x, text)
                     }
                 }
             }) {
                 if from == len - 1 {
-                    piece.selected_range.set(Some((from, len)));
+                    piece.select_range(from, len);
                     selected = true;
                 } else {
                     // 查找右边界字符位置
@@ -1455,20 +1519,11 @@ pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rect
                                     Ordering::Less
                                 }
                             } else {
-                                if *pos == 0 {
-                                    Ordering::Equal
-                                } else {
-                                    let (pw2, _) = measure(text.chars().take(*pos).collect::<String>().as_str(), false);
-                                    if x + pw2 <= right_boarder {
-                                        Ordering::Equal
-                                    } else {
-                                        Ordering::Greater
-                                    }
-                                }
+                                _check_pos(*pos, right_boarder, x, text)
                             }
                         }
                     }) {
-                        piece.selected_range.set(Some((from, to_vec[to] + 1)));
+                        piece.select_range(from, to_vec[to] + 1);
                         selected = true;
                     } else {
                         error!("检测结尾时异常！")
@@ -1476,7 +1531,7 @@ pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rect
                 }
             }
         } else {
-            piece.selected_range.set(None);
+            piece.deselect();
         }
     }
 
@@ -1516,7 +1571,7 @@ pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rect
                                         }
                                     }
                                 }
-                                lp.selected_range.set(Some((0, new_to)));
+                                lp.select_to(new_to);
                             } else {
                                 // 选区间隙，维持不变
                             }
@@ -1525,19 +1580,19 @@ pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rect
                             if push_from.0 < panel_x + lp.x {
                                 if drag_area.1 < push_from.1 {
                                     // 右侧片段，向上拖选时不选
-                                    lp.selected_range.set(None);
+                                    lp.deselect();
                                 } else if lp.next_x > lp.x && drag_area.0 + drag_area.2 > panel_x + lp.next_x {
-                                    lp.selected_range.set(Some((0, lp.line.chars().count())));
+                                    lp.select_all();
                                 }
                                 // 右侧片段，向下拖选时维持选择状态
                             } else if push_from.0 >= panel_x + lp.next_x {
                                 if drag_area.0 > panel_x + lp.x {
                                     // 左侧片段，全选
-                                    lp.selected_range.set(Some((0, lp.line.chars().count())));
+                                    lp.select_all();
                                 } else {
                                     if drag_area.1 + drag_area.3 > push_from.1 {
                                         // 向左下拖选，选区片段左边界大于选区左边界，不选
-                                        lp.selected_range.set(None);
+                                        lp.deselect();
                                     } else {
                                         // 向左上拖选，当前片段维持原态
                                     }
@@ -1546,10 +1601,10 @@ pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rect
                                 // 拖选起点位于片段两端之间
                                 if drag_area.0 < panel_x + lp.x && (drag_area.1 + drag_area.3 > push_from.1) {
                                     // 向左下拖选，左端大于选区左边界，不选择
-                                    lp.selected_range.set(None);
+                                    lp.deselect();
                                 } else if push_from.1 == drag_area.1 && (drag_area.0 + drag_area.2 > panel_x + lp.next_x) {
                                     // 向下拖选，选区右边界超出片段右边界，全选
-                                    lp.selected_range.set(Some((0, lp.line.chars().count())));
+                                    lp.select_all();
                                 } else {
                                     // 向左上拖选，维持原态
                                 }
@@ -1593,14 +1648,14 @@ pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rect
                             }
                             PosOfDrag::UpLeftInside | PosOfDrag::DownLeftOutside | PosOfDrag::DownLeft => {
                                 // 向上拖选，片段位于选区左部有交叉，不选
-                                lp.selected_range.set(None);
+                                lp.deselect();
                             }
                             PosOfDrag::UpLeft | PosOfDrag::UpLeftOutside | PosOfDrag::DownLeftInside => {
                                 // 向上拖选，选区位于当前片段左侧外部，不选择。实际上维持不变。
                             }
                             PosOfDrag::UpRightInside | PosOfDrag::UpRight | PosOfDrag::DownRight | PosOfDrag::DownRightOutside => {
                                 // 向上拖选，当前片段在选区右部有交叉，全选
-                                lp.selected_range.set(Some((0, lp.line.chars().count())));
+                                lp.select_all();
                             }
                             // PosOfDrag::UpLeftOutside => {
                             //     // 向上拖选，当前片段在选区左部有交叉，维持不变
@@ -1617,20 +1672,20 @@ pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rect
                                 // 向下拖选，选区包括片段，不选择。
                                 if drag_area.0 == push_from.0 {
                                     // 选区起点在片段左外侧，全选
-                                    lp.selected_range.set(Some((0, lp.line.chars().count())));
+                                    lp.select_all();
                                 } else {
                                     // 选区起点在片段右外侧，不选
-                                    lp.selected_range.set(None);
+                                    lp.deselect();
                                 }
                             }
                             PosOfDrag::UpCover => {
                                 // 向上拖选，选区包括片段
                                 if drag_area.0 != push_from.0 {
                                     // 向左划选，全选。
-                                    lp.selected_range.set(Some((0, lp.line.chars().count())));
+                                    lp.select_all();
                                 } else {
                                     // 向右划选，不选
-                                    lp.selected_range.set(None);
+                                    lp.deselect();
                                 }
                             }
                             // PosOfDrag::DownLeftInside => {
@@ -1638,7 +1693,7 @@ pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rect
                             // }
                             // PosOfDrag::DownLeft => {
                             //     // 向下拖选，选区位于当前片段左侧外部，不选择。
-                            //     lp.selected_range.set(None);
+                            //     lp.deselect();
                             // }
                             // PosOfDrag::DownRightInside => {
                             //     // 向下拖选，当前片段在选区右部有交叉，以选区末尾字符为起始向右扩选内容。
@@ -1654,7 +1709,7 @@ pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rect
                             // }
                             // PosOfDrag::DownLeftOutside => {
                             //     // 向下拖选，选区位于当前片段右侧外部，不选。
-                            //     lp.selected_range.set(None);
+                            //     lp.deselect(;)
                             // }
                         }
                     }
@@ -1668,7 +1723,7 @@ pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rect
                         |p| {
                             if let Some(p) = p.upgrade() {
                                 let lp = &mut *p.borrow_mut();
-                                lp.selected_range.set(Some((0, lp.line.chars().count())));
+                                lp.select_all();
                             }
                         }
                     });
@@ -1682,16 +1737,20 @@ pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rect
         let mut selection = String::new();
         for (_, piece) in selected_lines_clone.iter() {
             let tl = &piece.through_line.borrow().ys;
-            for p in tl.borrow().iter() {
-                if let Some(p) = p.upgrade() {
-                    let lp = &*p.borrow();
-                    lp.copy_selection(&mut selection);
-                }
-            }
+            copy_pieces(tl.borrow().iter(), &mut selection);
         }
         app::copy(selection.as_str());
     }
     selected
+}
+
+fn copy_pieces(it: Iter<Weak<RefCell<LinePiece>>>, selection: &mut String) {
+    for p in it {
+        if let Some(p) = p.upgrade() {
+            let lp = &*p.borrow();
+            lp.copy_selection(selection);
+        }
+    }
 }
 
 /// 检查拖选区与当前分片的方位关系。
@@ -1886,7 +1945,7 @@ fn drag_to_down(drag_area: &Rectangle, push_from_y: i32) -> bool {
 /// ```
 fn reverse_to_extend_from_end(piece: &LinePiece) {
     if let Some((_, old_to)) = piece.selected_range.get() {
-        piece.selected_range.set(Some((old_to - 1, piece.line.chars().count())));
+        piece.select_from(old_to - 1);
     }
 }
 
@@ -1905,7 +1964,7 @@ fn reverse_to_extend_from_end(piece: &LinePiece) {
 /// ```
 fn extend_from_end(piece: &LinePiece) {
     if let Some((old_from, _)) = piece.selected_range.get() {
-        piece.selected_range.set(Some((old_from, piece.line.chars().count())));
+        piece.select_from(old_from);
     }
 }
 
@@ -1919,38 +1978,242 @@ pub fn locate_piece_at_point(visible_lines: Rc<RefCell<HashMap<Rectangle, LinePi
     None
 }
 
-pub fn select_text2(from_point: ClickPoint, to_point: ClickPoint, data_buffer: Rc<RefCell<Vec<RichData>>>, selected_pieces: Rc<RefCell<Vec<LinePiece>>>) -> bool {
-    // debug!("from_point: {:?}, to_point: {:?}", from_point, to_point);
+pub(crate) fn clear_selected_pieces(selected_pieces: Rc<RefCell<Vec<Weak<RefCell<LinePiece>>>>>) {
+    for piece in selected_pieces.borrow().iter() {
+        if let Some(p) = piece.upgrade() {
+            p.borrow().deselect();
+        }
+    }
+    selected_pieces.borrow_mut().clear();
+}
+
+fn select_piece_from_or_to(rd: &RichData, piece_index: usize, pos: usize, selected_pieces: Rc<RefCell<Vec<Weak<RefCell<LinePiece>>>>>, from: bool) {
+    if let Some(last_piece_rc) = rd.line_pieces.get(piece_index) {
+        let piece = &*last_piece_rc.borrow();
+        if from {
+            piece.select_from(pos);
+        } else {
+            piece.select_to(pos);
+        }
+        selected_pieces.borrow_mut().push(Rc::downgrade(last_piece_rc));
+    }
+}
+
+pub fn select_text2(from_point: &ClickPoint, to_point: ClickPoint, data_buffer: Rc<RefCell<Vec<RichData>>>, rd_range: RangeInclusive<usize>, selected_pieces: Rc<RefCell<Vec<Weak<RefCell<LinePiece>>>>>) {
     /*
     选择片段的原则：应选择起点右下方的第一行片段，结束点左上方的第一行片段，以及两点之间的中间行片段。
      */
-    let index_vec = (0..data_buffer.borrow().len()).collect::<Vec<usize>>();
-    let (first_piece, last_piece) = (Rc::new(RefCell::new(LinePiece::init_piece())), Rc::new(RefCell::new(LinePiece::init_piece())));
-    if from_point.towards_down(&to_point) {
-        // 向下选择。
-        if let Ok(_) = index_vec.binary_search_by({
-            let fp = first_piece.clone();
-            let buffer_rc = data_buffer.clone();
-            move |row| {
-                let rd = &(&*buffer_rc.borrow())[*row];
-                if let Some((rd_top_y, rd_bottom_y, rd_start_x, rd_end_x)) = rd.v_bounds {
-                    debug!("from_point: {:?}, to_point: {:?}, rd_top_y: {:} rd_bottom_y: {:} rd_start_x: {}, rd_end_x: {}", from_point, to_point, rd_top_y, rd_bottom_y, rd_start_x, rd_end_x);
-                }
-                if let Some(first_piece) = rd.line_pieces.first() {
-                    debug!("first_piece: {}", first_piece.borrow().line);
-                }
+    // debug!("传入的fp: {:?}, tp: {:?}", from_point, to_point);
+    let drag_rect = from_point.to_rect(&to_point);
+    let (lt, br) = drag_rect.corner_rect();
+    let (mut lt_p, mut br_p) = (from_point, &to_point);
+    if (br.0 == from_point.x && br.1 == from_point.y) || (lt.0 == from_point.x && br.1 == from_point.y) {
+        // debug!("对换坐标点");
+        lt_p = &to_point;
+        br_p = from_point;
 
-                Ordering::Equal
+    };
+    let (f_p_i, t_p_i) = (lt_p.p_i, br_p.p_i);
+
+    // debug!("f_p_i: {f_p_i}, t_p_i: {t_p_i}, rd_range: {:?}, drag_rect: {:?}, lt: {:?}, br: {:?}", rd_range, drag_rect, lt, br);
+    // 清理上一次选择的区域
+    clear_selected_pieces(selected_pieces.clone());
+
+    let (r_start, r_end) = (*rd_range.start(), *rd_range.end());
+    let across_rds = r_end - r_start;
+    if across_rds > 0 {
+        // 超过一行
+        // debug!("选区超过一个数据段");
+        if let Some(rd) = data_buffer.borrow().get(r_start) {
+            // 选择第一个数据段起点之后的所有分片内容。
+            select_piece_from_or_to(rd, f_p_i, lt_p.c_i, selected_pieces.clone(), true);
+            for p in rd.line_pieces.iter().skip(f_p_i + 1) {
+                let piece = &*p.borrow();
+                piece.select_all();
+                selected_pieces.borrow_mut().push(Rc::downgrade(p));
             }
-        }) {
+        }
 
+        // 如果中间有更多跨行数据段，则全选这些数据段。
+        let mut piece_rcs = Vec::new();
+        for i in r_start + 1..r_end {
+            if let Some(rd) = data_buffer.borrow().get(i) {
+                for p in rd.line_pieces.iter() {
+                    let piece = &*p.borrow();
+                    piece.select_all();
+                    piece_rcs.push(Rc::downgrade(p));
+                }
+            }
+        }
+        selected_pieces.borrow_mut().append(&mut piece_rcs);
+
+        if let Some(rd) = data_buffer.borrow().get(r_end) {
+            // 选择最后一个数据段终点之前的所有内容。
+            for p in rd.line_pieces.iter().take(t_p_i) {
+                let piece = &*p.borrow();
+                piece.select_all();
+                selected_pieces.borrow_mut().push(Rc::downgrade(p));
+            }
+            select_piece_from_or_to(rd, t_p_i, br_p.c_i + 1, selected_pieces.clone(), false);
         }
     } else {
-        // 向上选择。
+        // 只有一行
+        // debug!("选区只有一个数据段");
+        if let Some(rd) = data_buffer.borrow().get(r_start) {
+            let across_pieces = t_p_i - f_p_i;
+            if across_pieces > 0 {
+                // 超过一个分片
+                // debug!("选区超过一个分片");
+                select_piece_from_or_to(rd, f_p_i, lt_p.c_i, selected_pieces.clone(), true);
 
+                // 超过两个分片
+                // debug!("选区超过两个分片");
+                let mut piece_rcs = Vec::new();
+                for i in f_p_i + 1..t_p_i {
+                    if let Some(piece_rc) = rd.line_pieces.get(i) {
+                        let piece = &*piece_rc.borrow();
+                        piece.select_all();
+                        piece_rcs.push(Rc::downgrade(piece_rc));
+                    }
+                }
+                selected_pieces.borrow_mut().append(&mut piece_rcs);
+
+                select_piece_from_or_to(rd, t_p_i, br_p.c_i + 1, selected_pieces.clone(), false);
+            } else {
+                // 在同一个分片内
+                if let Some(piece_rc) = rd.line_pieces.get(f_p_i) {
+                    // debug!("selected range from: {} to: {}", lt_p.c_i, br_p.c_i + 1);
+                    let (mut fci, mut tci) = (lt_p.c_i, br_p.c_i + 1);
+                    if fci >= tci {
+                        fci = br_p.c_i;
+                        tci = lt_p.c_i + 1;
+                    }
+                    piece_rc.borrow().select_range(fci, tci);
+                    selected_pieces.borrow_mut().push(Rc::downgrade(piece_rc));
+                }
+            }
+        }
     }
 
-    false
+    /*
+    拷贝至剪贴板
+     */
+    let mut selection = String::new();
+    copy_pieces(selected_pieces.borrow().iter(), &mut selection);
+    app::copy(selection.as_str());
+}
+
+pub fn locate_target_rd(point: &mut ClickPoint, drag_rect: &Rectangle, panel_width: i32, data_buffer: Rc<RefCell<Vec<RichData>>>, index_vec: &Vec<usize>) -> Option<usize> {
+    let point_rect = point.as_rect();
+    if let Ok(idx) = index_vec.binary_search_by({
+        let buffer_rc = data_buffer.clone();
+        let point_rect_rc = point_rect.clone();
+        let point_rc = point.clone();
+        move |row| {
+            /*
+            先将不规则的数据段外形扩展为顶宽的矩形，再检测划选区是否与之重叠；
+            如果有重叠，则进一步检测其中每个分片是否与划选区有重叠，如果任意分片有重叠，说明划选区包含了该数据段的某些分片，
+            还须再进一步确定选区起点位置所在的分片，最终返回等于，否则返回大于或小于；
+            如果没有重叠，则判断其相对位置，并返回大于或小于。
+             */
+            let mut rd_extend_rect = Rectangle::zero();
+            let rd = &(&*buffer_rc.borrow())[*row];
+            // debug!("检测行 {row} : {}", rd.text);
+            let (rd_top_y, rd_bottom_y, _, _) = rd.v_bounds.get();
+            rd_extend_rect.replace(0, rd_top_y, panel_width, rd_bottom_y - rd_top_y);
+            // debug!("rd_top_y: {}, rd_bottom_y: {}, drag_rect: {:?}", rd_top_y, rd_bottom_y, drag_rect);
+
+            // 粗略过滤到的数据段，还须进一步检测其中的分片是否包含划选区起点。
+            if is_overlap(&rd_extend_rect, &drag_rect) {
+                let mut ord = Ordering::Less;
+                for piece_rc in rd.line_pieces.iter() {
+                    let piece = &*piece_rc.borrow();
+                    let piece_rect = piece.rect(0);
+                    // debug!("piece_rect: {:?}, piece_top_y: {}, : {}", piece_rect, piece.top_y, piece.line);
+                    if is_overlap(&piece_rect, &point_rect_rc) {
+                        // 划选区起点位于分片内
+                        // debug!("划选区起点位于分片内：{}", piece.line);
+                        ord = Ordering::Equal;
+                        break;
+                    }
+                }
+                // 如果划选起点不在重叠数据段的任意分片内部，则还须判断当前数据段在起点的前面或后面，为查找算法提供判断依据。
+                if ord != Ordering::Equal {
+                    if let Some(first_piece_rc) = rd.line_pieces.first() {
+                        let piece = &*first_piece_rc.borrow();
+                        // debug!("piece: {:?}", piece);
+                        if point_rc.x < piece.x && point_rc.y < piece.top_y + piece.through_line.borrow().max_h {
+                            ord = Ordering::Greater;
+                        } else {
+                            ord = Ordering::Less;
+                        }
+                    }
+                }
+                // debug!("行 {row}: ord: {:?}", ord);
+                ord
+            } else {
+                if rd_extend_rect.is_below(&drag_rect) {
+                    Ordering::Greater
+                } else {
+                    Ordering::Less
+                }
+            }
+        }
+    }) {
+        let rd = &(&*data_buffer.borrow())[index_vec[idx]];
+        if rd.data_type != DataType::Image {
+            // debug!("找到目标点所在数据段： {}", rd.text);
+            for (p_i, piece_rc) in rd.line_pieces.iter().enumerate() {
+                let piece = &*piece_rc.borrow();
+                let piece_rect = piece.rect(0);
+                // debug!("point_rect: {:?}, piece_rect: {:?}, line: {}", point_rect, piece_rect, piece.line);
+                if is_overlap(&piece_rect, &point_rect) {
+                    // 划选区起点位于分片内
+                    // debug!("划选区起点位于分片内: {}", piece.line);
+                    point.p_i = p_i;
+                    search_index_of_piece(piece, point);
+                    break;
+                }
+            }
+
+            return Some(idx);
+        } else {
+            // 选择了图片，不予处理。
+            // debug!("选择了图片")
+        }
+
+    } else {
+        // debug!("没找到目标数据段！")
+    }
+    None
+}
+
+pub fn search_index_of_piece(piece: &LinePiece, point: &mut ClickPoint) {
+    let len = piece.line.chars().count();
+    if let Ok(c_i) = (0..len).collect::<Vec<usize>>().binary_search_by({
+        set_font(piece.font, piece.font_size);
+        let text = piece.line.clone();
+        let x = point.x;
+        let start_x = piece.x;
+        move |pos| {
+            let (mut pw1, _) = measure(text.chars().take(*pos + 1).collect::<String>().as_str(), false);
+            let (mut pw2, _) = measure(text.chars().take(*pos).collect::<String>().as_str(), false);
+            pw1 += start_x;
+            pw2 += start_x;
+            if x > pw2 && x <= pw1 {
+                Ordering::Equal
+            } else if x <= pw2 {
+                Ordering::Greater
+            } else {
+                Ordering::Less
+            }
+        }
+    }) {
+        point.c_i = c_i;
+        // debug!("目标字符：{}", piece.line.chars().nth(c_i).unwrap());
+    } else {
+        debug!("没找到目标字符！")
+    }
 }
 
 #[cfg(test)]

@@ -534,24 +534,6 @@ pub trait LinedData {
 
     fn estimate(&mut self, blow_line: Rc<RefCell<LinePiece>>, max_width: i32) -> Rc<RefCell<LinePiece>>;
 
-    /// 擦除内容，但保留占位。
-    fn erase(&mut self);
-
-    /// 清除部分或全部内容，并释放已清除部分的占位。
-    ///
-    /// # Arguments
-    ///
-    /// * `rtl`: 清除方向，true表示从右向左清除，false表示从左向右清除。
-    /// * `length`: 清除长度。对于文本内容是字符个数，对于图形内容是像素宽度。
-    ///
-    /// returns: LineCoord 返回释放出的空间的起始位置信息。
-    ///
-    /// # Examples
-    ///
-    /// ```
-    ///
-    /// ```
-    fn truncate(&mut self, rtl: bool, length: Option<i32>) -> LinePiece;
 }
 #[derive(Clone, Debug, PartialEq)]
 pub enum DataType {
@@ -953,6 +935,14 @@ impl RichData {
             self.wrap_text_for_estimate(text, new_piece, max_width, measure_width, font_height)
         }
     }
+
+    pub fn truncate(&mut self, from: Option<usize>) {
+        if let Some(from) = from {
+            self.text.truncate(from);
+        } else {
+            self.text.clear();
+        }
+    }
 }
 
 
@@ -1275,14 +1265,6 @@ impl LinedData for RichData {
         }
         self.set_v_bounds(top_y, bottom_y, bound_start_x, bound_end_x);
         ret
-    }
-
-    fn erase(&mut self) {
-        todo!()
-    }
-
-    fn truncate(&mut self, rtl: bool, length: Option<i32>) -> LinePiece {
-        todo!()
     }
 }
 

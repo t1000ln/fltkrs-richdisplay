@@ -37,7 +37,9 @@ pub struct RichText {
     reviewer: Rc<RefCell<Option<RichReviewer>>>,
     panel_screen: Rc<RefCell<Offscreen>>,
     clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
+    /// 主面板上可见行片段的集合容器，在每次离线绘制时被清空和填充。
     visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
+    
 }
 widget_extends!(RichText, Flex, inner);
 
@@ -403,8 +405,6 @@ impl RichText {
         let window_width = self.panel.width();
         let drawable_max_width = window_width - PADDING.left - PADDING.right;
 
-        // TODO: 待处理图片缓存问题，避免重复占用内存。待添加回顾区检索和定位API。
-
         /*
         试算单元绘制信息
          */
@@ -425,19 +425,36 @@ impl RichText {
             self.data_buffer.borrow_mut().pop_front();
         }
 
-        // Self::draw_offline(
-        //     self.panel_screen.clone(),
-        //     &self.panel,
-        //     self.visible_lines.clone(),
-        //     self.clickable_data.clone(),
-        //     self.background_color.get(),
-        //     self.data_buffer.clone(),
-        // );
         Self::draw_offline_2(&self);
 
         // self.panel.redraw();
         self.panel.set_damage(true);
     }
+
+    pub fn delete_last_data(&mut self) {
+        // if let Some(idx) = from {
+        //     if let Some(last) = self.data_buffer.borrow_mut().iter_mut().last() {
+        //         last.truncate(Some(idx));
+        //     }
+        // } else {
+        //     self.data_buffer.borrow_mut().pop_back();
+        // }
+        self.data_buffer.borrow_mut().pop_back();
+        Self::draw_offline_2(&self);
+        self.panel.set_damage(true);
+    }
+
+    // pub fn remove_last_line(&mut self) {
+    //     if let Some(rd) = self.data_buffer.borrow_mut().iter_mut().last() {
+    //         if let Some(lp_rc) = rd.line_pieces.pop() {
+    //             let lp = &*lp_rc.borrow();
+    //             let tl = &*lp.through_line.borrow();
+    //
+    //         }
+    //     }
+    //     Self::draw_offline_2(&self);
+    //     self.panel.set_damage(true);
+    // }
 
     fn new_offline(
         w: i32, h: i32, offscreen: Rc<RefCell<Offscreen>>,
@@ -811,18 +828,12 @@ impl RichText {
     /// app.run().unwrap();
     /// ```
     pub fn auto_close_reviewer(&self) -> bool {
-        return if self.reviewer.borrow().is_some() {
-            let handle_result = app::handle_main(LocalEvent::DROP_REVIEWER_FROM_EXTERNAL);
-            match handle_result {
-                Ok(handled) => {handled}
-                Err(e) => {
-                    error!("从外部发送关闭回顾区组件事件时出错: {:?}", e);
-                    false
-                }
+        if self.reviewer.borrow().is_some() {
+            if let Err(e) = app::handle_main(LocalEvent::DROP_REVIEWER_FROM_EXTERNAL) {
+                error!("从外部发送关闭回顾区组件事件时出错: {:?}", e);
             }
-        } else {
-            false
         }
+        false
     }
 
     /// 自动打开回顾区的接口。当没有显示回顾区时自动打开回顾区，否则不关闭也不产生额外干扰。

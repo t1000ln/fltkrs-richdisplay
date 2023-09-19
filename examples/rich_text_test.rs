@@ -38,17 +38,28 @@ async fn main() {
     rich_text.set_buffer_max_lines(50);
 
     btn1.set_callback({
-        |_| {
+        move |_| {
             debug!("btn clicked");
         }
     });
 
     let _ = Button::new(950, 200, 50, 50, "right");
 
-    let mut btn4 = Button::new(200, 550, 100, 50, "bottom");
-    btn4.set_callback(|_| {
-        debug!("btn2 clicked");
+    let mut btn4 = Button::new(200, 550, 150, 50, "删除最后一个数据段");
+    btn4.set_callback({
+        let mut rt = rich_text.clone();
+        move |_| {
+            rt.delete_last_data();
+        }
     });
+
+    // let mut btn5 = Button::new(400, 550, 100, 50, "删除最后一行");
+    // btn5.set_callback({
+    //     let mut rt = rich_text.clone();
+    //     move |_| {
+    //         rt.delete_last_data();
+    //     }
+    // });
 
     group.end();
 

@@ -74,7 +74,6 @@ async fn main() {
             let mut handled = false;
             match evt {
                 Event::KeyDown => {
-                    debug!("key down");
                     if app::event_key_down(Key::PageDown) {
                         handled = rich_text_rc.auto_close_reviewer();
                     } else if app::event_key_down(Key::PageUp) {

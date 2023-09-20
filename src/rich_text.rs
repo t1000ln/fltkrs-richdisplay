@@ -496,6 +496,7 @@ impl RichText {
     /// }
     /// ```
     pub fn search_str(&mut self, search_str: Option<String>, forward: bool) -> bool {
+        // todo: 待增加目标闪烁功能。另外修复斜体字分片无法被选中的问题。
         let mut find_out = false;
         if let Ok(open_suc) = self.auto_open_reviewer() {
             if let Some(ref mut rr) = *self.reviewer.borrow_mut() {

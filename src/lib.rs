@@ -6,7 +6,7 @@ use std::ops::{RangeInclusive};
 use std::rc::{Rc, Weak};
 use std::slice::Iter;
 use fltk::{app, draw};
-use fltk::draw::{descent, draw_image, draw_line, draw_rectf, draw_text2, measure, set_draw_color, set_font};
+use fltk::draw::{descent, draw_image, draw_line, draw_rect_with_color, draw_rectf, draw_text2, measure, set_draw_color, set_font};
 use fltk::enums::{Align, Color, ColorDepth, Cursor, Font};
 use fltk::image::RgbImage;
 use fltk::prelude::ImageExt;
@@ -790,6 +790,9 @@ pub struct RichData {
     image: Option<Vec<u8>>,
     image_width: i32,
     image_height: i32,
+
+    pub(crate) search_result_positions: Option<Vec<(usize, usize)>>,
+    pub(crate) search_highlight_pos: Option<usize>,
 }
 
 impl From<UserData> for RichData {
@@ -814,6 +817,8 @@ impl From<UserData> for RichData {
                     image: None,
                     image_width: 0,
                     image_height: 0,
+                    search_result_positions: None,
+                    search_highlight_pos: None,
                 }
             },
             DataType::Image => {
@@ -835,6 +840,8 @@ impl From<UserData> for RichData {
                     image: data.image,
                     image_width: data.image_width,
                     image_height: data.image_height,
+                    search_result_positions: None,
+                    search_highlight_pos: None,
                 }
             }
         }
@@ -987,6 +994,7 @@ impl LinedData for RichData {
         match self.data_type {
             DataType::Text => {
                 let bg_offset = 1;
+                let mut processed_search_len = 0usize;
 
                 set_font(self.font, self.font_size);
                 for piece in self.line_pieces.iter() {
@@ -1024,6 +1032,51 @@ impl LinedData for RichData {
 
                         #[cfg(not(target_os = "linux"))]
                         draw_rectf(piece.x + skip_width, y - piece.spacing, fill_width, piece.font_height);
+                    }
+
+                    // 绘制查找焦点框
+                    if let Some(ref pos_vec) = self.search_result_positions {
+                        let pl = piece.line.chars().count();
+                        let range = processed_search_len..(processed_search_len + pl);
+                        pos_vec.iter().enumerate().for_each(|(pos_i, (pos_from, pos_to))| {
+                            if range.contains(pos_from) {
+                                set_draw_color(Color::by_index(4));
+                                let start_index_of_piece = pos_from - processed_search_len;
+                                let (skip_width, _) = measure(piece.line.chars().take(start_index_of_piece).collect::<String>().as_str(), false);
+                                let (fill_width, _) = measure(piece.line.chars().skip(start_index_of_piece).take(pos_to - pos_from).collect::<String>().as_str(), false);
+
+                                #[cfg(target_os = "linux")]
+                                {
+                                    draw_rectf(piece.x + skip_width, y - piece.spacing + 2, fill_width, piece.font_height);
+                                    if let Some(h_i) = self.search_highlight_pos {
+                                        if h_i == pos_i {
+                                            draw_rect_with_color(piece.x + skip_width, y - piece.spacing + 2, fill_width, piece.font_height, Color::by_index(92));
+                                        }
+                                    }
+                                }
+
+                                #[cfg(not(target_os = "linux"))]
+                                {
+                                    draw_rectf(piece.x + skip_width, y - piece.spacing, fill_width, piece.font_height);
+                                    if let Some(h_i) = self.search_highlight_pos {
+                                        if h_i == pos_i {
+                                            draw_rect_with_color(piece.x + skip_width, y - piece.spacing, fill_width, piece.font_height, Color::by_index(92));
+                                        }
+                                    }
+                                }
+
+                            } else if range.contains(pos_to) {
+                                set_draw_color(Color::by_index(4));
+                                let (fill_width, _) = measure(piece.line.chars().take(pos_to - processed_search_len).collect::<String>().as_str(), false);
+                                draw_rectf(piece.x, y - piece.spacing, fill_width, piece.font_height);
+                                if let Some(h_i) = self.search_highlight_pos {
+                                    if h_i == pos_i {
+                                        draw_rect_with_color(piece.x, y - piece.spacing, fill_width, piece.font_height, Color::by_index(92));
+                                    }
+                                }
+                            }
+                        });
+                        processed_search_len += pl;
                     }
 
                     set_draw_color(self.fg_color);
@@ -2215,5 +2268,16 @@ mod tests {
 
         let rect = Rectangle::new(20, 30, -10, -25);
         assert_eq!(rect.tup(), (10, 5, 10, 25));
+    }
+
+    #[test]
+    pub fn str_index_test() {
+        let str = String::from("我爱中国");
+        assert_eq!(str.find("中国"), Some(6));
+
+        str.rmatch_indices("中国").for_each(|(i, _)| {
+            let ni = str[0..i].chars().count();
+            assert_eq!(ni, 2);
+        })
     }
 }

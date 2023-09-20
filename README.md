@@ -137,5 +137,3 @@ async fn main() {
 
 回顾区预览，包含文本选择
 ![demo3](./res/demo3.png)
-
-待开发： 添加回顾区检索和定位API。

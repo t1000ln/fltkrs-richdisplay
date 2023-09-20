@@ -9,7 +9,7 @@ use std::time::{Duration};
 use fltk::draw::{draw_rect_fill, Offscreen};
 use fltk::enums::{Color, Cursor, Event};
 use fltk::frame::Frame;
-use fltk::prelude::{GroupExt, WidgetBase, WidgetExt};
+use fltk::prelude::{FltkError, GroupExt, WidgetBase, WidgetExt};
 use fltk::{app, draw, widget_extends};
 use fltk::app::MouseWheel;
 use fltk::group::{Flex};
@@ -456,6 +456,67 @@ impl RichText {
     //     self.panel.set_damage(true);
     // }
 
+    /// 查询目标字符串，并自动显示第一个或最后一个目标所在行。
+    /// 若以相同参数重复调用该方法，则每次调用都会自动定位到下一个查找到的目标位置。
+    ///
+    /// # Arguments
+    ///
+    /// * `search_str`: 目标字符串。如果给定一个空字符，则清空查询缓存。
+    /// * `forward`: true正向查找，false反向查找。
+    ///
+    /// returns: bool 若查找到目标返回true，否则返回false。
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fltk::{app, window};
+    /// use fltk::button::Button;
+    /// use fltk::group::Group;
+    /// use fltk::prelude::{GroupExt, WidgetBase, WidgetExt, WindowExt};
+    /// use fltkrs_richdisplay::rich_text::RichText;
+    ///
+    /// let app = app::App::default();
+    /// let mut win = window::Window::default().with_size(1000, 1000).with_label("Search").center_screen();
+    /// let group = Group::default_fill();
+    /// let mut btn1 = Button::new(200, 0, 100, 30, "查找字符串1");
+    /// let mut rich_text = RichText::new(100, 120, 800, 400, None);
+    /// btn1.set_callback({
+    ///     let mut rt = rich_text.clone();
+    ///     move |_| {
+    ///         rt.search_str(Some("程序".to_string()), false);
+    ///     }
+    /// });
+    /// group.end();
+    /// win.end();
+    /// win.show();
+    ///
+    /// while app.wait() {
+    ///     app::sleep(0.001);
+    ///     app::awake();
+    /// }
+    /// ```
+    pub fn search_str(&mut self, search_str: Option<String>, forward: bool) -> bool {
+        let mut find_out = false;
+        if let Ok(open_suc) = self.auto_open_reviewer() {
+            if let Some(ref mut rr) = *self.reviewer.borrow_mut() {
+                if let Some(search_str) = search_str {
+                    if !search_str.is_empty() {
+                        find_out = rr.search_str(search_str, forward);
+                        if !open_suc {
+                            // 如果回顾区早已打开，则强制刷新
+                            rr.scroller.set_damage(true);
+                        }
+                    } else {
+                        rr.clear_search_results();
+                    }
+                } else {
+                    rr.clear_search_results();
+                }
+            }
+        }
+        find_out
+    }
+
     fn new_offline(
         w: i32, h: i32, offscreen: Rc<RefCell<Offscreen>>,
         panel: &Frame,
@@ -814,7 +875,9 @@ impl RichText {
     ///                 if app::event_key_down(Key::PageDown) {
     ///                     handled = rich_text_rc.auto_close_reviewer();
     ///                 } else if app::event_key_down(Key::PageUp) {
-    ///                     handled = rich_text_rc.auto_open_reviewer();
+    ///                     if let Ok(ret) = rich_text_rc.auto_open_reviewer() {
+    ///                         handled = ret;
+    ///                     }
     ///                 }
     ///
     ///             }
@@ -862,7 +925,9 @@ impl RichText {
     ///                 if app::event_key_down(Key::PageDown) {
     ///                     handled = rich_text_rc.auto_close_reviewer();
     ///                 } else if app::event_key_down(Key::PageUp) {
-    ///                     handled = rich_text_rc.auto_open_reviewer();
+    ///                     if let Ok(ret) = rich_text_rc.auto_open_reviewer() {
+    ///                        handled = ret;
+    ///                     }
     ///                 }
     ///
     ///             }
@@ -875,18 +940,18 @@ impl RichText {
     /// win.show();
     /// app.run().unwrap();
     /// ```
-    pub fn auto_open_reviewer(&self) -> bool {
+    pub fn auto_open_reviewer(&self) -> Result<bool, FltkError> {
         return if !self.data_buffer.borrow().is_empty() && self.reviewer.borrow().is_none() {
             let handle_result = app::handle_main(LocalEvent::OPEN_REVIEWER_FROM_EXTERNAL);
             match handle_result {
-                Ok(handled) => {handled}
+                Ok(handled) => {Ok(handled)}
                 Err(e) => {
                     error!("从外部发送打开回顾区组件事件时出错: {:?}", e);
-                    false
+                    Err(e)
                 }
             }
         } else {
-            false
+            Ok(false)
         }
     }
 }

@@ -225,6 +225,12 @@ impl RichReviewer {
                         if let Some(row) = locate_target_rd(&mut push_from_point, &push_rect, scroller.w(), buffer_rc.clone(), &index_vec) {
                             select_from_row = row;
                         }
+
+                        #[cfg(target_os = "linux")]
+                        if let Some(mut parent) = scroller.parent() {
+                            parent.set_damage(true);
+                        }
+
                         return true;
                     }
                     Event::Drag => {
@@ -258,6 +264,10 @@ impl RichReviewer {
                         ) {
                             selected = !selected_pieces.borrow().is_empty();
                             // debug!("拖选结果：{selected}")
+                            #[cfg(target_os = "linux")]
+                            if let Some(mut parent) = scroller.parent() {
+                                parent.set_damage(true);
+                            }
                         }
 
                         return true;

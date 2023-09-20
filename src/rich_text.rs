@@ -514,6 +514,10 @@ impl RichText {
                 }
             }
         }
+
+        #[cfg(target_os = "linux")]
+        self.set_damage(true);
+
         find_out
     }
 

@@ -1,7 +1,7 @@
 //! 内容源自rich_text的快照，可滚动的浏览的组件。
 
 use std::cell::{Cell, RefCell};
-use std::cmp::{max, min};
+use std::cmp::{max, min, Ordering};
 use std::collections::{HashMap};
 use std::rc::{Rc, Weak};
 use std::time::{Duration};
@@ -20,14 +20,16 @@ use crate::rich_text::{PANEL_PADDING};
 pub struct RichReviewer {
     pub(crate) scroller: Scroll,
     pub(crate) panel: Frame,
-    data_buffer: Rc<RefCell<Vec<RichData>>>,
+    pub(crate) data_buffer: Rc<RefCell<Vec<RichData>>>,
     background_color: Rc<Cell<Color>>,
     visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
     clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
     reviewer_screen: Rc<RefCell<Offscreen>>,
     notifier: Rc<RefCell<Option<tokio::sync::mpsc::Sender<UserData>>>>,
-    pub resize_panel_after_resize: Rc<Cell<(i32, i32, i32, i32)>>,
-    pub scroll_panel_to_y_after_resize: Rc<Cell<i32>>,
+    search_string: Option<String>,
+    /// 查找结果，保存查询到的目标数据段在data_buffer中的索引编号。
+    search_results: Vec<usize>,
+    current_highlight_focus: Option<(usize, usize)>,
 }
 widget_extends!(RichReviewer, Scroll, scroller);
 
@@ -54,6 +56,10 @@ impl RichReviewer {
         let reviewer_screen = Rc::new(RefCell::new(Offscreen::new(w, h).unwrap()));
         let scroll_panel_to_y_after_resize = Rc::new(Cell::new(0));
         let resize_panel_after_resize = Rc::new(Cell::new((0, 0, 0, 0)));
+
+        let search_results = Vec::<usize>::new();
+        let search_str = None::<String>;
+        let current_highlight_focus = None::<(usize, usize)>;
 
         panel.draw({
             let data_buffer_rc = data_buffer.clone();
@@ -197,6 +203,7 @@ impl RichReviewer {
                     Event::Push => {
                         let (push_from_x, push_from_y) = app::event_coords();
                         if selected {
+                            // debug!("清除选区");
                             clear_selected_pieces(selected_pieces.clone());
                             scroller.set_damage(true);
                             selected = false;
@@ -217,6 +224,11 @@ impl RichReviewer {
                         let push_rect = push_from_point.as_rect();
                         if let Some(row) = locate_target_rd(&mut push_from_point, &push_rect, scroller.w(), buffer_rc.clone(), &index_vec) {
                             select_from_row = row;
+                        }
+
+                        #[cfg(target_os = "linux")]
+                        if let Some(mut parent) = scroller.parent() {
+                            parent.set_damage(true);
                         }
 
                         return true;
@@ -242,7 +254,7 @@ impl RichReviewer {
                         }
                         if offset_y < 0 {offset_y = 0;}
 
-                        if let Some(ret) = Self::redraw_after_drag(
+                        if let Some(_) = Self::redraw_after_drag(
                             push_from_point,
                             select_from_row,
                             ClickPoint::new(current_x - p_offset_x, current_y + offset_y - p_offset_y + PADDING.top),
@@ -250,7 +262,12 @@ impl RichReviewer {
                             selected_pieces.clone(),
                             scroller,
                         ) {
-                            selected = ret;
+                            selected = !selected_pieces.borrow().is_empty();
+                            // debug!("拖选结果：{selected}")
+                            #[cfg(target_os = "linux")]
+                            if let Some(mut parent) = scroller.parent() {
+                                parent.set_damage(true);
+                            }
                         }
 
                         return true;
@@ -261,7 +278,7 @@ impl RichReviewer {
             }
         });
 
-        Self { scroller, panel, data_buffer, background_color, visible_lines, clickable_data, reviewer_screen, scroll_panel_to_y_after_resize, resize_panel_after_resize, notifier }
+        Self { scroller, panel, data_buffer, background_color, visible_lines, clickable_data, reviewer_screen, notifier, search_string: search_str, search_results, current_highlight_focus }
     }
 
     #[throttle(1, Duration::from_millis(50))]
@@ -477,7 +494,7 @@ impl RichReviewer {
         self.notifier.replace(Some(notifier));
     }
 
-    pub(crate) fn draw_offline2(&self) {
+    fn draw_offline2(&self) {
         Self::draw_offline(
             self.reviewer_screen.clone(),
             &self.scroller,
@@ -553,6 +570,295 @@ impl RichReviewer {
             //     self.background_color.get(),
             // );
             self.draw_offline2();
+        }
+    }
+
+    /// 查找目标字符串，并高亮显示第一个或最后一个查找到的目标。
+    ///
+    /// # Arguments
+    ///
+    /// * `search_str`: 目标字符串。
+    /// * `forward`: true正向，false反向查找。
+    ///
+    /// returns: bool 是否找到目标。
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
+    pub(crate) fn search_str(&mut self, search_str: String, forward: bool) -> bool {
+        let find_out = if let Some(ref old) = self.search_string {
+            if old.eq(&search_str) {
+                // 查询字符串未发生变化，则尝试定位到下一个目标
+                !self.search_results.is_empty()
+            } else {
+                self._search_target(search_str)
+            }
+        } else {
+            self._search_target(search_str)
+        };
+
+        if find_out {
+            // debug!("找到目标字符串，定位并显示");
+            if forward {
+                self.highlight_next();
+            } else {
+                self.highlight_previous();
+            }
+            self.show_search_results();
+        }
+        find_out
+    }
+
+    /// 倒序(从下向上，从右向左)查找高亮下一个目标。
+    fn highlight_previous(&mut self) {
+        // debug!("查询目标：\"{:?}\"，已知的目标数据段：{:?}", self.search_string, self.search_results);
+        if let Some((old_rd_idx, old_result_idx)) = self.current_highlight_focus {
+            // debug!("上一次定位的数据段索引：{}，目标编号：{}", old_rd_idx, old_result_idx);
+            let (mut scroll_to_next, mut next_rd_pos) = (false, 0);
+            if let Some(rd) = self.data_buffer.borrow_mut().get_mut(old_rd_idx) {
+                if let Some(ref result_pos_vec) = rd.search_result_positions {
+                    let next_result_idx = old_result_idx + 1;
+                    if result_pos_vec.get(next_result_idx).is_some() {
+                        // 在当前数据段中定位到下一个目标位置
+                        // debug!("在当前数据段中定位到下一个目标位置");
+                        self.current_highlight_focus.replace((old_rd_idx, next_result_idx));
+                        rd.search_highlight_pos.replace(next_result_idx);
+                    } else {
+                        // 在当前数据段中已经没有更多目标，则跳到下一个数据段；如果没有更多数据段则跳到第一个数据段。
+                        // debug!("在当前数据段中已经没有更多目标，则跳到下一个数据段；如果没有更多数据段则跳到第一个数据段。");
+                        let next_idx  = if let Ok(old_idx) = self.search_results.binary_search_by(|&a| {
+                            if a == old_rd_idx {
+                                Ordering::Equal
+                            } else if a > old_rd_idx {
+                                Ordering::Less
+                            } else {
+                                Ordering::Greater
+                            }
+                        }) {
+                            old_idx + 1
+                        } else {
+                            0
+                        };
+
+                        scroll_to_next = true;
+                        if let Some(next_rd_idx) = self.search_results.get(next_idx) {
+                            // debug!("下一个数据段索引：{}，目标序号：{}", next_rd_idx, next_idx);
+                            next_rd_pos = *next_rd_idx;
+                        } else {
+                            if let Some(next_rd_idx) = self.search_results.first() {
+                                next_rd_pos = *next_rd_idx;
+                            }
+                            // debug!("回归到循环开始位置，下一个数据段索引：{}， 目标序号：0", next_rd_pos);
+                        }
+
+                        rd.search_highlight_pos = None;
+                    }
+                }
+            }
+
+            if scroll_to_next {
+                self.current_highlight_focus.replace((next_rd_pos, 0));
+                if let Some(rd) = self.data_buffer.borrow_mut().get_mut(next_rd_pos) {
+                    rd.search_highlight_pos = Some(0);
+                }
+            }
+        } else {
+            if let Some(rd_idx) = self.search_results.first() {
+                if let Some(rd) = self.data_buffer.borrow_mut().get_mut(*rd_idx) {
+                    if rd.search_result_positions.is_some() {
+                        // debug!("首次定位到第一个目标");
+                        self.current_highlight_focus = Some((*rd_idx, 0));
+                        rd.search_highlight_pos = Some(0);
+                    }
+                }
+            }
+        }
+    }
+
+    /// 顺序(从上向下，从左到右)查找高亮下一个目标。
+    fn highlight_next(&mut self) {
+        if let Some((old_rd_idx, old_result_idx)) = self.current_highlight_focus {
+            // debug!("上一次定位的数据段索引：{}，目标编号：{}", old_rd_idx, old_result_idx);
+            let (mut scroll_to_next, mut next_rd_pos) = (false, 0);
+            if let Some(rd) = self.data_buffer.borrow_mut().get_mut(old_rd_idx) {
+                if old_result_idx >= 1 {
+                    // 在当前数据段中定位到下一个目标位置
+                    self.current_highlight_focus.replace((old_rd_idx, old_result_idx - 1));
+                    rd.search_highlight_pos.replace(old_result_idx - 1);
+                } else {
+                    // 在当前数据段中已经没有更多目标，则跳到下一个数据段；如果没有更多数据段则跳到第一个数据段。
+                    let next_idx  = if let Ok(old_idx) = self.search_results.binary_search_by(|&a| {
+                        if a == old_rd_idx {
+                            Ordering::Equal
+                        } else if a > old_rd_idx {
+                            Ordering::Less
+                        } else {
+                            Ordering::Greater
+                        }
+                    }) {
+                        if old_idx >= 1 {
+                            old_idx - 1
+                        } else {
+                            self.search_results.len() - 1
+                        }
+                    } else {
+                        self.search_results.len() - 1
+                    };
+                    scroll_to_next = true;
+                    if let Some(next_rd_idx) = self.search_results.get(next_idx) {
+                        // debug!("下一个数据段索引：{}，目标序号：{}", next_rd_idx, next_idx);
+                        next_rd_pos = *next_rd_idx;
+                    } else if let Some(next_rd_idx) = self.search_results.last() {
+                        next_rd_pos = *next_rd_idx;
+                        // debug!("回归到循环开始位置，下一个数据段索引：{}， 目标序号：0", next_rd_pos);
+                    }
+
+                    rd.search_highlight_pos = None;
+                }
+            }
+
+            if scroll_to_next {
+                if let Some(rd) = self.data_buffer.borrow_mut().get_mut(next_rd_pos) {
+                    rd.search_highlight_pos = Some(0);
+                    if let Some(ref pos_vec) = rd.search_result_positions {
+                        self.current_highlight_focus.replace((next_rd_pos, pos_vec.len() - 1));
+                    }
+                }
+            }
+
+        } else {
+            if let Some(rd_idx) = self.search_results.last() {
+                if let Some(rd) = self.data_buffer.borrow_mut().get_mut(*rd_idx) {
+                    if let Some(ref srp) = rd.search_result_positions {
+                        let len = srp.len();
+                        // debug!("首次定位到第一个目标");
+                        self.current_highlight_focus = Some((*rd_idx, len - 1));
+                        rd.search_highlight_pos = Some(len - 1);
+                    }
+                }
+            }
+        }
+    }
+
+    /// 查找目标字符串，并记录目标位置。
+    ///
+    /// # Arguments
+    ///
+    /// * `search_str`: 目标字符串。
+    ///
+    /// returns: bool
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
+    fn _search_target(&mut self, search_str: String) -> bool {
+        let mut find_out = false;
+        self._clear_search_results();
+        let s = self.search_string.insert(search_str).as_str();
+
+        let len = s.chars().count();
+        for (idx, rd) in self.data_buffer.borrow_mut().iter_mut().enumerate() {
+            if rd.text.contains(s) {
+                find_out = true;
+                self.search_results.push(idx);
+                let mut s_idx_vec: Vec<(usize, usize)> = vec![];
+                rd.text.rmatch_indices(s).for_each(|(s_idx, _)| {
+                    let chars = rd.text[0..s_idx].chars().count();
+                    s_idx_vec.push((chars, chars + len))
+                });
+                if !s_idx_vec.is_empty() {
+                    rd.search_result_positions = Some(s_idx_vec);
+                }
+            }
+        }
+        if find_out {
+            self.search_results.reverse();
+        }
+        find_out
+    }
+
+    /// 清除上一次查询的缓存记录。
+    fn _clear_search_results(&mut self) {
+        self.search_results.iter().for_each(|idx| {
+            if let Some(rd) = self.data_buffer.borrow_mut().get_mut(*idx) {
+                rd.search_result_positions = None;
+                rd.search_highlight_pos = None;
+            }
+        });
+        self.search_results.clear();
+        self.current_highlight_focus = None;
+    }
+
+    /// 清除查询缓存，并刷新界面。
+    pub(crate) fn clear_search_results(&mut self) {
+        self._clear_search_results();
+        self.search_string = None;
+        self.scroller.set_damage(true);
+    }
+
+    /// 定位到下一个查询目标并显示在可见区域。
+    fn show_search_results(&mut self) {
+        if let Some((rd_idx, result_idx)) = self.current_highlight_focus {
+            let mut piece_idx = 0;
+            if let Some(rd) = self.data_buffer.borrow().get(rd_idx) {
+                if let Some(ref s) = self.search_string {
+                    if let Some((pos, _)) = rd.text.rmatch_indices(s).nth(result_idx) {
+                        let mut processed_len = 0usize;
+                        for (i, piece_rc) in rd.line_pieces.iter().enumerate() {
+                            let piece = &*piece_rc.borrow();
+                            let pl = piece.line.len();
+                            if pos >= processed_len && pos < processed_len + pl {
+                                piece_idx = i;
+                                break;
+                            }
+                            processed_len += pl;
+                        }
+                    }
+                }
+            }
+            // debug!("当前定位的数据段索引：{}，目标顺序：{}，位于分片{}内", rd_idx, result_idx, piece_idx);
+            self.show_piece(rd_idx, piece_idx);
+        }
+    }
+
+    /// 滚动显示区域到指定的数据段下的数据分片。
+    /// 滚动时向显示区域底部靠近。
+    ///
+    /// # Arguments
+    ///
+    /// * `rd_idx`:
+    /// * `piece_idx`:
+    ///
+    /// returns: ()
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
+    fn show_piece(&mut self, rd_idx: usize, piece_idx: usize) {
+        if let Some(rd) = self.data_buffer.borrow().get(rd_idx) {
+            if piece_idx < rd.line_pieces.len() {
+                if let Some(piece_rc) = rd.line_pieces.get(piece_idx) {
+                    let piece = &*piece_rc.borrow();
+                    // debug!("piece.top_y: {}, panel_height: {}, scroller.yposition: {}, piece.line: {}", piece.top_y, self.panel.h(), self.scroller.yposition(), piece.line);
+                    let scroller_y = self.scroller.yposition();
+                    if piece.y < scroller_y || piece.y + piece.h >= scroller_y + self.scroller.h() {
+                        let mut scroll_to_y = piece.y - self.scroller.h() + piece.h * 2 + PADDING.top + 3;
+                        if scroll_to_y < 0 {
+                            scroll_to_y = 0;
+                        } else if scroll_to_y > self.panel.h() - self.scroller.h() {
+                            scroll_to_y = self.panel.h() - self.scroller.h();
+                        }
+                        // debug!("无法看到，滚动到: {}", scroll_to_y);
+                        self.scroller.scroll_to(0, scroll_to_y);
+                    }
+                }
+            }
         }
     }
 }

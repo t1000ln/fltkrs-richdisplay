@@ -29,7 +29,11 @@ async fn main() {
 
     let group = Group::default_fill();
 
-    let mut btn1 = Button::new(200, 0, 100, 30, "top");
+    let mut btn1 = Button::new(200, 0, 100, 30, "查找字符串1");
+    let mut btn11 = Button::new(500, 0, 100, 30, "清除查找目标");
+    let mut btn12 = Button::new(350, 0, 100, 30, "查找字符串2");
+
+
     let _ = Button::new(0, 200, 50, 30, "left");
 
     let mut rich_text = RichText::new(100, 120, 800, 400, None);
@@ -38,8 +42,21 @@ async fn main() {
     rich_text.set_buffer_max_lines(50);
 
     btn1.set_callback({
+        let mut rt = rich_text.clone();
         move |_| {
-            debug!("btn clicked");
+            rt.search_str(Some("程序".to_string()), false);
+        }
+    });
+    btn12.set_callback({
+        let mut rt = rich_text.clone();
+        move |_| {
+            rt.search_str(Some("高效".to_string()), true);
+        }
+    });
+    btn11.set_callback({
+        let mut rt = rich_text.clone();
+        move |_| {
+            rt.search_str(None, false);
         }
     });
 
@@ -77,7 +94,7 @@ async fn main() {
                     if app::event_key_down(Key::PageDown) {
                         handled = rich_text_rc.auto_close_reviewer();
                     } else if app::event_key_down(Key::PageUp) {
-                        handled = rich_text_rc.auto_open_reviewer();
+                        handled = rich_text_rc.auto_open_reviewer().unwrap();
                     }
 
                 }

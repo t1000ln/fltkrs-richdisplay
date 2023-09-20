@@ -29,9 +29,9 @@ async fn main() {
 
     let group = Group::default_fill();
 
-    let mut btn1 = Button::new(200, 0, 100, 30, "查找字符串1");
+    let mut btn1 = Button::new(200, 0, 100, 30, "反向查找字符串");
     let mut btn11 = Button::new(500, 0, 100, 30, "清除查找目标");
-    let mut btn12 = Button::new(350, 0, 100, 30, "查找字符串2");
+    let mut btn12 = Button::new(350, 0, 100, 30, "正向查找字符串");
 
 
     let _ = Button::new(0, 200, 50, 30, "left");

@@ -1,10 +1,27 @@
 # fltkrs-richdisplay
 这是一个专为`fltk-rs`开发的富文本展示组件项目，只能展示不能编辑，目标是作为`fltk-TextDisplay`组件的一个补充。 该组件的设计目标是提供更多的文本样式展示，甚至支持图形展示，主要的展示形式以行为主，从上向下、从左到右的流式排列。 `fltk-TextDisplay`仅支持`60`种颜色与字体的组合，而本组件设计的目的之一就是突破这个非常低的限制，可以随意组合字体、字号、颜色、下划线、粗体/斜体等，支持文本与图形混合排布。
 
-该组件支持历史内容回顾。
+该组件支持历史内容回顾、字符串检索，主展区数据增加、删除。
 
 使用方法示例：
 ```rust
+use std::time::Duration;
+use fltk::{app, window};
+use fltk::button::Button;
+use fltk::enums::{Color, Event, Font, Key};
+use fltk::group::Group;
+use fltk::image::SharedImage;
+use fltk::prelude::{GroupExt, ImageExt, WidgetBase, WidgetExt, WindowExt};
+use log::debug;
+use fltkrs_richdisplay::rich_text::{RichText};
+use fltkrs_richdisplay::{DataType, RichDataOptions, UserData};
+
+pub enum GlobalMessage {
+    ContentData(UserData),
+    UpdateData(RichDataOptions),
+    DisableData(i64),
+}
+
 #[tokio::main]
 async fn main() {
     simple_logger::init_with_level(log::Level::Debug).unwrap();
@@ -135,7 +152,7 @@ async fn main() {
 主内容预览
 ![demo2](./res/demo2.png)
 
-回顾区预览，包含文本选择
-![demo3](./res/demo3.png)
+回顾区预览，包含文本选择、字符串查找
+![demo4](./res/demo4.png)
 
 待开发：文本闪烁功能。

@@ -432,29 +432,11 @@ impl RichText {
     }
 
     pub fn delete_last_data(&mut self) {
-        // if let Some(idx) = from {
-        //     if let Some(last) = self.data_buffer.borrow_mut().iter_mut().last() {
-        //         last.truncate(Some(idx));
-        //     }
-        // } else {
-        //     self.data_buffer.borrow_mut().pop_back();
-        // }
         self.data_buffer.borrow_mut().pop_back();
         Self::draw_offline_2(&self);
         self.panel.set_damage(true);
     }
 
-    // pub fn remove_last_line(&mut self) {
-    //     if let Some(rd) = self.data_buffer.borrow_mut().iter_mut().last() {
-    //         if let Some(lp_rc) = rd.line_pieces.pop() {
-    //             let lp = &*lp_rc.borrow();
-    //             let tl = &*lp.through_line.borrow();
-    //
-    //         }
-    //     }
-    //     Self::draw_offline_2(&self);
-    //     self.panel.set_damage(true);
-    // }
 
     /// 查询目标字符串，并自动显示第一个或最后一个目标所在行。
     /// 若以相同参数重复调用该方法，则每次调用都会自动定位到下一个查找到的目标位置。
@@ -496,7 +478,7 @@ impl RichText {
     /// }
     /// ```
     pub fn search_str(&mut self, search_str: Option<String>, forward: bool) -> bool {
-        // todo: 待增加目标闪烁功能。另外修复斜体字分片无法被选中的问题。
+        // todo: 待增加目标闪烁功能。
         let mut find_out = false;
         if let Ok(open_suc) = self.auto_open_reviewer() {
             if let Some(ref mut rr) = *self.reviewer.borrow_mut() {

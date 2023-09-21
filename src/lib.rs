@@ -959,7 +959,7 @@ impl LinedData for RichData {
     }
 
     fn is_text_data(&self) -> bool {
-        true
+        self.image.is_none()
     }
 
     fn clickable(&self) -> bool {
@@ -1211,11 +1211,12 @@ impl LinedData for RichData {
                 if start_x + self.image_width > max_width {
                     // 本行超宽，直接定位到下一行
                     let x = PADDING.left + IMAGE_PADDING_H;
-                    let piece_top_y = top_y + IMAGE_PADDING_V;
+                    let y = top_y + last_piece.through_line.borrow().max_h + IMAGE_PADDING_V;
                     let next_x = x + self.image_width + IMAGE_PADDING_H;
-                    let next_y = top_y + last_piece.through_line.borrow().max_h + IMAGE_PADDING_V;
+                    let next_y = y - IMAGE_PADDING_V;
+                    let piece_top_y = y;
                     let through_line = ThroughLine::new(self.image_height * IMAGE_PADDING_V * 2, true);
-                    let new_piece = LinePiece::new("".to_string(), x, next_y, self.image_width, self.image_height, piece_top_y, last_piece.spacing, next_x, next_y, 1, font, font_size, through_line, self.v_bounds.clone());
+                    let new_piece = LinePiece::new("".to_string(), x, y, self.image_width, self.image_height, piece_top_y, last_piece.spacing, next_x, next_y, 1, font, font_size, through_line, self.v_bounds.clone());
                     self.line_pieces.push(new_piece.clone());
                     ret = new_piece;
                 } else {
@@ -1305,10 +1306,12 @@ impl LinedData for RichData {
             lpm.rd_bounds.set(vb);
         }
 
+        // let mut pic_y = 0;
         let mut top_y = top_y;
         if let Some(first_piece) = self.line_pieces.first() {
             let fp = &*first_piece.borrow();
             top_y = fp.top_y;
+            // pic_y = fp.y;
         }
         let mut bottom_y = top_y;
         if let Some(last_piece) = self.line_pieces.last() {
@@ -1316,6 +1319,7 @@ impl LinedData for RichData {
             bottom_y = lp.top_y + lp.through_line.borrow().max_h;
             bound_end_x = lp.x + lp.w;
         }
+        // debug!("estimated pic_y: {pic_y}, top_y: {}, bottom_y: {}, text: {}", top_y, bottom_y, self.text);
         self.set_v_bounds(top_y, bottom_y, bound_start_x, bound_end_x);
         ret
     }
@@ -2140,6 +2144,7 @@ pub fn select_text2(from_point: &ClickPoint, to_point: ClickPoint, data_buffer: 
 
 pub fn locate_target_rd(point: &mut ClickPoint, drag_rect: &Rectangle, panel_width: i32, data_buffer: Rc<RefCell<Vec<RichData>>>, index_vec: &Vec<usize>) -> Option<usize> {
     let point_rect = point.as_rect();
+    // debug!("index_vec: {:?}", index_vec);
     if let Ok(idx) = index_vec.binary_search_by({
         let buffer_rc = data_buffer.clone();
         let point_rect_rc = point_rect.clone();
@@ -2160,6 +2165,7 @@ pub fn locate_target_rd(point: &mut ClickPoint, drag_rect: &Rectangle, panel_wid
 
             // 粗略过滤到的数据段，还须进一步检测其中的分片是否包含划选区起点。
             if is_overlap(&rd_extend_rect, &drag_rect) {
+                // debug!("行 {row} 与划选区有重叠");
                 let mut ord = Ordering::Less;
                 for piece_rc in rd.line_pieces.iter() {
                     let piece = &*piece_rc.borrow();
@@ -2188,8 +2194,10 @@ pub fn locate_target_rd(point: &mut ClickPoint, drag_rect: &Rectangle, panel_wid
                 ord
             } else {
                 if rd_extend_rect.is_below(&drag_rect) {
+                    // debug!("行 {row}: 大于");
                     Ordering::Greater
                 } else {
+                    // debug!("行 {row}: 小于");
                     Ordering::Less
                 }
             }
@@ -2204,8 +2212,8 @@ pub fn locate_target_rd(point: &mut ClickPoint, drag_rect: &Rectangle, panel_wid
                 // debug!("point_rect: {:?}, piece_rect: {:?}, line: {}", point_rect, piece_rect, piece.line);
                 if is_overlap(&piece_rect, &point_rect) {
                     // 划选区起点位于分片内
-                    // debug!("划选区起点位于分片内: {}", piece.line);
                     point.p_i = p_i;
+                    // debug!("目标点位于分片:{} 内: {}", p_i, piece.line);
                     search_index_of_piece(piece, point);
                     break;
                 }
@@ -2245,9 +2253,9 @@ pub fn search_index_of_piece(piece: &LinePiece, point: &mut ClickPoint) {
         }
     }) {
         point.c_i = c_i;
-        // debug!("目标字符：{}", piece.line.chars().nth(c_i).unwrap());
+        // debug!("目标字符：{}，位置：{}", piece.line.chars().nth(c_i).unwrap(), c_i);
     } else {
-        debug!("没找到目标字符！")
+        // debug!("没找到目标字符！")
     }
 }
 

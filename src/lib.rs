@@ -1,7 +1,8 @@
 use std::cell::{Cell, RefCell};
 use std::cmp::{max, min, Ordering};
 use std::collections::{BTreeMap, HashMap};
-use std::fmt::{Debug};
+use std::error::Error;
+use std::fmt::{Debug, Display, Formatter};
 use std::ops::{RangeInclusive};
 use std::rc::{Rc, Weak};
 use std::slice::Iter;
@@ -29,6 +30,62 @@ pub const IMAGE_PADDING_V: i32 = 2;
 /// 同一行内多个文字分片之间的水平间距。
 pub const PIECE_SPACING: i32 = 2;
 
+pub const BLINK_INTERVAL: f64 = 0.5;
+
+pub const HIGHLIGHT_BACKGROUND_COLOR: Color = Color::from_rgb(0, 0, 255);
+pub const HIGHLIGHT_RECT_COLOR: Color = Color::from_rgb(255, 145, 0);
+pub const HIGHLIGHT_RECT_CONTRAST_COLOR: Color = Color::from_rgb(0, 110, 255);
+pub const HIGHLIGHT_WHITE: Color = Color::from_rgb(255, 255, 255);
+
+#[derive(Debug, Clone,Copy, PartialEq, Eq)]
+pub enum BlinkDegree {
+    Normal,
+    Contrast,
+}
+
+#[derive(Debug, Clone,Copy, PartialEq, Eq)]
+pub struct BlinkState {
+    on: bool,
+    next: BlinkDegree,
+}
+
+impl BlinkState {
+    pub fn new() -> BlinkState {
+        BlinkState {
+            on: false,
+            next: BlinkDegree::Normal,
+        }
+    }
+
+    pub fn is_on(&self) -> bool {
+        self.on
+    }
+
+    pub fn off(mut self) -> Self {
+        self.on = false;
+        self.next = BlinkDegree::Normal;
+        self
+    }
+
+    pub fn on(mut self) -> Self {
+        self.on = true;
+        // self.next = BlinkDegree::Darker;
+        self
+    }
+
+    pub fn toggle_when_on(mut self) -> (bool, Self) {
+        if self.on {
+            self.next = match self.next {
+                BlinkDegree::Normal => BlinkDegree::Contrast,
+                BlinkDegree::Contrast => BlinkDegree::Normal,
+            };
+            (true, self)
+        } else {
+            (false, self)
+        }
+    }
+}
+
 /// 自定义事件。
 pub struct LocalEvent;
 impl LocalEvent {
@@ -44,7 +101,6 @@ impl LocalEvent {
 
     /// 从rich-display容器外部发起打开回顾区的事件。
     pub const OPEN_REVIEWER_FROM_EXTERNAL: i32 = 103;
-
 }
 
 /// 矩形结构，元素0/1代表x/y坐标，表示左上角坐标；元素2/3代表w/h宽和高，w/h不为负值。
@@ -530,7 +586,7 @@ pub trait LinedData {
     /// ```
     ///
     /// ```
-    fn draw(&self, offset_y: i32);
+    fn draw(&self, offset_y: i32, blink_state: BlinkState);
 
     fn estimate(&mut self, blow_line: Rc<RefCell<LinePiece>>, max_width: i32) -> Rc<RefCell<LinePiece>>;
 
@@ -554,6 +610,7 @@ pub struct UserData {
     pub underline: bool,
     pub clickable: bool,
     pub expired: bool,
+    pub blink: bool,
     pub strike_through: bool,
     pub data_type: DataType,
     pub image: Option<Vec<u8>>,
@@ -573,6 +630,7 @@ impl From<&RichData> for UserData {
             underline: data.underline,
             clickable: data.clickable,
             expired: data.expired,
+            blink: data.blink,
             strike_through: data.strike_through,
             data_type: data.data_type.clone(),
             image: data.image.clone(),
@@ -594,6 +652,7 @@ impl UserData {
             underline: false,
             clickable: false,
             expired: false,
+            blink: false,
             strike_through: false,
             data_type: DataType::Text,
             image: None,
@@ -613,6 +672,7 @@ impl UserData {
             underline: false,
             clickable: false,
             expired: false,
+            blink: false,
             strike_through: false,
             data_type: DataType::Image,
             image: Some(image),
@@ -646,7 +706,33 @@ impl UserData {
         self.clickable = clickable;
         self
     }
+
+    pub fn set_blink(mut self, blink: bool) -> Self {
+        self.blink = blink;
+        self
+    }
 }
+
+#[derive(Debug)]
+pub enum BlinkRangeError {
+    Overlap(usize, usize, usize),
+    Reverse(usize, usize, usize),
+}
+
+impl Display for BlinkRangeError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BlinkRangeError::Overlap(i, from, to) => {
+                write!(f, "第 {} 个闪烁片段的起始位置 {} 不应小于等于前一个闪烁片段的结束位置 {} ！", i, from, to)
+            }
+            BlinkRangeError::Reverse(i, from, to) => {
+                write!(f, "第 {} 个闪烁片段的起始位置 {} 不应小于等于结束位置 {} ！", i, from, to)
+            }
+        }
+    }
+}
+
+impl Error for BlinkRangeError {}
 
 /// 计算两个重叠垂线居中对齐后，短线相对于长线的上端和下端的偏移量。
 ///
@@ -730,6 +816,9 @@ pub fn update_data_properties(options: RichDataOptions, rd: &mut RichData) {
     if let Some(strike_through) = options.strike_through {
         rd.strike_through = strike_through;
     }
+    if let Some(blink) = options.blink {
+        rd.blink = blink;
+    }
 }
 
 /// 禁用数据内容。
@@ -779,6 +868,8 @@ pub struct RichData {
     underline: bool,
     clickable: bool,
     expired: bool,
+    /// 闪烁片段列表
+    blink: bool,
     pub strike_through: bool,
     pub line_height: i32,
     /// 当前内容在面板垂直高度中的起始和截至y坐标，以及起始和结尾x坐标。
@@ -809,6 +900,7 @@ impl From<UserData> for RichData {
                     underline: data.underline,
                     clickable: data.clickable,
                     expired: data.expired,
+                    blink: data.blink,
                     strike_through: data.strike_through,
                     line_height: 1,
                     v_bounds: Rc::new(Cell::new((0, 0, 0, 0))),
@@ -832,6 +924,7 @@ impl From<UserData> for RichData {
                     underline: data.underline,
                     clickable: data.clickable,
                     expired: data.expired,
+                    blink: data.blink,
                     strike_through: data.strike_through,
                     line_height: 1,
                     v_bounds: Rc::new(Cell::new((0, 0, 0, 0))),
@@ -959,7 +1052,7 @@ impl LinedData for RichData {
     }
 
     fn is_text_data(&self) -> bool {
-        true
+        self.image.is_none()
     }
 
     fn clickable(&self) -> bool {
@@ -990,26 +1083,27 @@ impl LinedData for RichData {
         !(b.1 < top_y || b.0 > bottom_y)
     }
 
-    fn draw(&self, offset_y: i32) {
+    fn draw(&self, offset_y: i32, blink_state: BlinkState) {
         match self.data_type {
             DataType::Text => {
                 let bg_offset = 1;
                 let mut processed_search_len = 0usize;
-
                 set_font(self.font, self.font_size);
                 for piece in self.line_pieces.iter() {
                     let piece = &*piece.borrow();
                     let y = piece.y - offset_y;
 
-                    if let Some(bg_color) = &self.bg_color {
-                        // 绘制背景色
-                        set_draw_color(*bg_color);
+                    if !self.blink || blink_state.next == BlinkDegree::Normal {
+                        if let Some(bg_color) = &self.bg_color {
+                            // 绘制文字背景色
+                            set_draw_color(*bg_color);
 
-                        #[cfg(target_os = "linux")]
-                        draw_rectf(piece.x, y - piece.spacing + 2, piece.w, piece.font_height);
+                            #[cfg(target_os = "linux")]
+                            draw_rectf(piece.x, y - piece.spacing + 2, piece.w, piece.font_height);
 
-                        #[cfg(not(target_os = "linux"))]
-                        draw_rectf(piece.x, y - piece.spacing, piece.w, piece.font_height);
+                            #[cfg(not(target_os = "linux"))]
+                            draw_rectf(piece.x, y - piece.spacing, piece.w, piece.font_height);
+                        }
                     }
 
                     if let Some((from, to)) = piece.selected_range.get() {
@@ -1036,21 +1130,26 @@ impl LinedData for RichData {
 
                     // 绘制查找焦点框
                     if let Some(ref pos_vec) = self.search_result_positions {
+                        let rect_color = if blink_state.next == BlinkDegree::Normal {
+                            HIGHLIGHT_RECT_COLOR
+                        } else {
+                            HIGHLIGHT_RECT_CONTRAST_COLOR
+                        };
                         let pl = piece.line.chars().count();
                         let range = processed_search_len..(processed_search_len + pl);
                         pos_vec.iter().enumerate().for_each(|(pos_i, (pos_from, pos_to))| {
                             if range.contains(pos_from) {
-                                set_draw_color(Color::by_index(4));
                                 let start_index_of_piece = pos_from - processed_search_len;
                                 let (skip_width, _) = measure(piece.line.chars().take(start_index_of_piece).collect::<String>().as_str(), false);
                                 let (fill_width, _) = measure(piece.line.chars().skip(start_index_of_piece).take(pos_to - pos_from).collect::<String>().as_str(), false);
 
+                                set_draw_color(HIGHLIGHT_BACKGROUND_COLOR);
                                 #[cfg(target_os = "linux")]
                                 {
                                     draw_rectf(piece.x + skip_width, y - piece.spacing + 2, fill_width, piece.font_height);
                                     if let Some(h_i) = self.search_highlight_pos {
                                         if h_i == pos_i {
-                                            draw_rect_with_color(piece.x + skip_width, y - piece.spacing + 2, fill_width, piece.font_height, Color::by_index(92));
+                                            draw_rect_with_color(piece.x + skip_width, y - piece.spacing + 2, fill_width, piece.font_height, rect_color);
                                         }
                                     }
                                 }
@@ -1060,18 +1159,19 @@ impl LinedData for RichData {
                                     draw_rectf(piece.x + skip_width, y - piece.spacing, fill_width, piece.font_height);
                                     if let Some(h_i) = self.search_highlight_pos {
                                         if h_i == pos_i {
-                                            draw_rect_with_color(piece.x + skip_width, y - piece.spacing, fill_width, piece.font_height, Color::by_index(92));
+                                            draw_rect_with_color(piece.x + skip_width, y - piece.spacing, fill_width, piece.font_height, rect_color);
                                         }
                                     }
                                 }
 
                             } else if range.contains(pos_to) {
-                                set_draw_color(Color::by_index(4));
                                 let (fill_width, _) = measure(piece.line.chars().take(pos_to - processed_search_len).collect::<String>().as_str(), false);
+
+                                set_draw_color(HIGHLIGHT_BACKGROUND_COLOR);
                                 draw_rectf(piece.x, y - piece.spacing, fill_width, piece.font_height);
                                 if let Some(h_i) = self.search_highlight_pos {
                                     if h_i == pos_i {
-                                        draw_rect_with_color(piece.x, y - piece.spacing, fill_width, piece.font_height, Color::by_index(92));
+                                        draw_rect_with_color(piece.x, y - piece.spacing, fill_width, piece.font_height, rect_color);
                                     }
                                 }
                             }
@@ -1079,7 +1179,12 @@ impl LinedData for RichData {
                         processed_search_len += pl;
                     }
 
-                    set_draw_color(self.fg_color);
+                    if self.blink && blink_state.next == BlinkDegree::Contrast {
+                        set_draw_color(get_lighter_or_darker_color(self.fg_color));
+                    } else {
+                        set_draw_color(self.fg_color);
+                    }
+
                     if self.underline {
                         // 绘制下划线
                         let line_y = y + piece.font_height - ((piece.font_height as f32 / 10f32).floor() as i32 + 1);
@@ -1097,11 +1202,13 @@ impl LinedData for RichData {
                 }
             },
             DataType::Image => {
-                if let Some(piece) = self.line_pieces.last() {
-                    let piece = &*piece.borrow();
-                    if let Some(img) = &self.image {
-                        if let Err(e) = draw_image(img.as_slice(), piece.x, piece.y - offset_y, piece.w, piece.h, ColorDepth::Rgb8) {
-                            error!("draw image error: {:?}", e);
+                if !self.blink || blink_state.next == BlinkDegree::Normal {
+                    if let Some(piece) = self.line_pieces.last() {
+                        let piece = &*piece.borrow();
+                        if let Some(img) = &self.image {
+                            if let Err(e) = draw_image(img.as_slice(), piece.x, piece.y - offset_y, piece.w, piece.h, ColorDepth::Rgb8) {
+                                error!("draw image error: {:?}", e);
+                            }
                         }
                     }
                 }
@@ -1211,11 +1318,12 @@ impl LinedData for RichData {
                 if start_x + self.image_width > max_width {
                     // 本行超宽，直接定位到下一行
                     let x = PADDING.left + IMAGE_PADDING_H;
-                    let piece_top_y = top_y + IMAGE_PADDING_V;
+                    let y = top_y + last_piece.through_line.borrow().max_h + IMAGE_PADDING_V;
                     let next_x = x + self.image_width + IMAGE_PADDING_H;
-                    let next_y = top_y + last_piece.through_line.borrow().max_h + IMAGE_PADDING_V;
+                    let next_y = y - IMAGE_PADDING_V;
+                    let piece_top_y = y;
                     let through_line = ThroughLine::new(self.image_height * IMAGE_PADDING_V * 2, true);
-                    let new_piece = LinePiece::new("".to_string(), x, next_y, self.image_width, self.image_height, piece_top_y, last_piece.spacing, next_x, next_y, 1, font, font_size, through_line, self.v_bounds.clone());
+                    let new_piece = LinePiece::new("".to_string(), x, y, self.image_width, self.image_height, piece_top_y, last_piece.spacing, next_x, next_y, 1, font, font_size, through_line, self.v_bounds.clone());
                     self.line_pieces.push(new_piece.clone());
                     ret = new_piece;
                 } else {
@@ -1305,10 +1413,12 @@ impl LinedData for RichData {
             lpm.rd_bounds.set(vb);
         }
 
+        // let mut pic_y = 0;
         let mut top_y = top_y;
         if let Some(first_piece) = self.line_pieces.first() {
             let fp = &*first_piece.borrow();
             top_y = fp.top_y;
+            // pic_y = fp.y;
         }
         let mut bottom_y = top_y;
         if let Some(last_piece) = self.line_pieces.last() {
@@ -1316,6 +1426,7 @@ impl LinedData for RichData {
             bottom_y = lp.top_y + lp.through_line.borrow().max_h;
             bound_end_x = lp.x + lp.w;
         }
+        // debug!("estimated pic_y: {pic_y}, top_y: {}, bottom_y: {}, text: {}", top_y, bottom_y, self.text);
         self.set_v_bounds(top_y, bottom_y, bound_start_x, bound_end_x);
         ret
     }
@@ -1332,6 +1443,7 @@ pub struct RichDataOptions {
     pub fg_color: Option<Color>,
     pub bg_color: Option<Color>,
     pub strike_through: Option<bool>,
+    pub blink: Option<bool>
 }
 
 impl RichDataOptions {
@@ -1345,6 +1457,7 @@ impl RichDataOptions {
             fg_color: None,
             bg_color: None,
             strike_through: None,
+            blink: None
         }
     }
 
@@ -1380,6 +1493,11 @@ impl RichDataOptions {
 
     pub fn strike_through(mut self, strike_through: bool) -> RichDataOptions {
         self.strike_through = Some(strike_through);
+        self
+    }
+
+    pub fn blink(mut self, blink: bool) -> RichDataOptions {
+        self.blink = Some(blink);
         self
     }
 }
@@ -2140,6 +2258,7 @@ pub fn select_text2(from_point: &ClickPoint, to_point: ClickPoint, data_buffer: 
 
 pub fn locate_target_rd(point: &mut ClickPoint, drag_rect: &Rectangle, panel_width: i32, data_buffer: Rc<RefCell<Vec<RichData>>>, index_vec: &Vec<usize>) -> Option<usize> {
     let point_rect = point.as_rect();
+    // debug!("index_vec: {:?}", index_vec);
     if let Ok(idx) = index_vec.binary_search_by({
         let buffer_rc = data_buffer.clone();
         let point_rect_rc = point_rect.clone();
@@ -2160,6 +2279,7 @@ pub fn locate_target_rd(point: &mut ClickPoint, drag_rect: &Rectangle, panel_wid
 
             // 粗略过滤到的数据段，还须进一步检测其中的分片是否包含划选区起点。
             if is_overlap(&rd_extend_rect, &drag_rect) {
+                // debug!("行 {row} 与划选区有重叠");
                 let mut ord = Ordering::Less;
                 for piece_rc in rd.line_pieces.iter() {
                     let piece = &*piece_rc.borrow();
@@ -2188,8 +2308,10 @@ pub fn locate_target_rd(point: &mut ClickPoint, drag_rect: &Rectangle, panel_wid
                 ord
             } else {
                 if rd_extend_rect.is_below(&drag_rect) {
+                    // debug!("行 {row}: 大于");
                     Ordering::Greater
                 } else {
+                    // debug!("行 {row}: 小于");
                     Ordering::Less
                 }
             }
@@ -2204,8 +2326,8 @@ pub fn locate_target_rd(point: &mut ClickPoint, drag_rect: &Rectangle, panel_wid
                 // debug!("point_rect: {:?}, piece_rect: {:?}, line: {}", point_rect, piece_rect, piece.line);
                 if is_overlap(&piece_rect, &point_rect) {
                     // 划选区起点位于分片内
-                    // debug!("划选区起点位于分片内: {}", piece.line);
                     point.p_i = p_i;
+                    // debug!("目标点位于分片:{} 内: {}", p_i, piece.line);
                     search_index_of_piece(piece, point);
                     break;
                 }
@@ -2245,15 +2367,73 @@ pub fn search_index_of_piece(piece: &LinePiece, point: &mut ClickPoint) {
         }
     }) {
         point.c_i = c_i;
-        // debug!("目标字符：{}", piece.line.chars().nth(c_i).unwrap());
+        // debug!("目标字符：{}，位置：{}", piece.line.chars().nth(c_i).unwrap(), c_i);
     } else {
-        debug!("没找到目标字符！")
+        // debug!("没找到目标字符！")
+    }
+}
+
+/// 获取指定颜色的对比色。若指定颜色为中等灰色(R/G/B值相等且在116-139之间)，则返回白色。
+///
+/// # Arguments
+///
+/// * `color`: 指定颜色。
+///
+/// returns: Color 返回其对比色。
+///
+/// # Examples
+///
+/// ```
+/// use fltk::enums::Color;
+/// use fltkrs_richdisplay::get_contrast_color;
+///
+/// assert_eq!(get_contrast_color(Color::from_rgb(255, 255, 255)), Color::from_rgb(0, 0, 0));
+/// assert_eq!(get_contrast_color(Color::from_rgb(0, 0, 0)), Color::from_rgb(255, 255, 255));
+/// assert_eq!(get_contrast_color(Color::from_rgb(255, 0, 0)), Color::from_rgb(0, 255, 255));
+/// assert_eq!(get_contrast_color(Color::from_rgb(120, 120, 120)), Color::from_rgb(255, 255, 255));
+/// ```
+pub fn get_contrast_color(color: Color) -> Color {
+    let (r, g, b) = color.to_rgb();
+    let (cr, cg, cb) = (255 - r, 255 - g, 255 - b);
+    if (cr == cg && cg == cb) && ((cr as i16) - (r as i16)).abs() < 25 {
+        HIGHLIGHT_WHITE
+    } else {
+        Color::from_rgb(cr, cg, cb)
+    }
+}
+
+/// 获取指定颜色的亮色或暗色，若指定颜色的R/G/B值其中最大的超过128，则获取暗色，否则获取亮色。
+///
+/// # Arguments
+///
+/// * `color`: 指定颜色。
+///
+/// returns: Color 返回对应的亮色或暗色。
+///
+/// # Examples
+///
+/// ```
+///
+/// ```
+pub fn get_lighter_or_darker_color(color: Color) -> Color {
+    let (r, g, b) = color.to_rgb();
+    let total = r as u16 + g as u16 + b as u16;
+    let max_c = max(r, max(g, b));
+    if total >= 383 || max_c as u16 + 127 > 255u16 {
+        let (cr, cg, cb) = (max(0i16, r as i16 - 127), max(0i16, g as i16 - 127), max(0i16, b as i16 - 127));
+        Color::from_rgb(cr as u8, cg as u8, cb as u8)
+        // color.darker()
+    } else {
+        let (cr, cg, cb) = (min(255i16, r as i16 + 127), min(255i16, g as i16 + 127), min(255i16, b as i16 + 127));
+        Color::from_rgb(cr as u8, cg as u8, cb as u8)
+        // color.lighter()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::Rectangle;
+    use fltk::enums::Color;
+    use crate::{get_contrast_color, get_lighter_or_darker_color, HIGHLIGHT_WHITE, Rectangle};
 
     #[test]
     pub fn make_rectangle_test() {
@@ -2279,5 +2459,26 @@ mod tests {
             let ni = str[0..i].chars().count();
             assert_eq!(ni, 2);
         })
+    }
+
+    #[test]
+    pub fn test_contrast_color_test() {
+        assert_eq!(get_contrast_color(Color::from_rgb(255, 255, 255)), Color::from_rgb(0, 0, 0));
+        assert_eq!(get_contrast_color(Color::from_rgb(0, 0, 0)), Color::from_rgb(255, 255, 255));
+        for i in 1..116 {
+            assert_ne!(get_contrast_color(Color::from_rgb(i, i, i)), HIGHLIGHT_WHITE);
+        }
+        for i in 116..=139 {
+            assert_eq!(get_contrast_color(Color::from_rgb(i, i, i)), HIGHLIGHT_WHITE);
+        }
+        for i in 140..=255 {
+            assert_ne!(get_contrast_color(Color::from_rgb(i, i, i)), HIGHLIGHT_WHITE);
+        }
+    }
+
+    #[test]
+    pub fn get_lighter_color_test() {
+        let lighter = get_lighter_or_darker_color(Color::DarkCyan);
+        println!("{:?} -> {:?}", Color::DarkCyan.to_rgb(), lighter.to_rgb())
     }
 }

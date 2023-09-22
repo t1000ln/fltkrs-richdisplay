@@ -13,7 +13,7 @@ use fltk::prelude::{GroupExt, WidgetBase, WidgetExt};
 use fltk::{app, draw, widget_extends};
 use log::{debug, error};
 use throttle_my_fn::throttle;
-use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData, ClickPoint, select_text2, locate_target_rd, clear_selected_pieces};
+use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData, ClickPoint, select_text2, locate_target_rd, clear_selected_pieces, BlinkState, BLINK_INTERVAL};
 use crate::rich_text::{PANEL_PADDING};
 
 #[derive(Clone, Debug)]
@@ -30,6 +30,7 @@ pub struct RichReviewer {
     /// 查找结果，保存查询到的目标数据段在data_buffer中的索引编号。
     search_results: Vec<usize>,
     current_highlight_focus: Option<(usize, usize)>,
+    blink_flag: Rc<Cell<BlinkState>>,
 }
 widget_extends!(RichReviewer, Scroll, scroller);
 
@@ -61,6 +62,33 @@ impl RichReviewer {
         let search_str = None::<String>;
         let current_highlight_focus = None::<(usize, usize)>;
 
+        let blink_flag = Rc::new(Cell::new(BlinkState::new()));
+        let blink_handler = {
+            let blink_flag_rc = blink_flag.clone();
+            let mut scroller_rc = scroller.clone();
+            move |handler| {
+                if !scroller_rc.was_deleted() {
+                    let (should_toggle, bs) = blink_flag_rc.get().toggle_when_on();
+                    if should_toggle {
+                        blink_flag_rc.set(bs);
+                        // debug!("from reviewer blink flag: {:?}", blink_flag_rc.get());
+
+                        #[cfg(target_os = "linux")]
+                        if let Some(mut parent) = scroller_rc.parent() {
+                            parent.set_damage(true);
+                        }
+
+                        #[cfg(not(target_os = "linux"))]
+                        scroller_rc.set_damage(true);
+                    }
+                    app::repeat_timeout3(BLINK_INTERVAL, handler);
+                } else {
+                    app::remove_timeout3(handler);
+                }
+            }
+        };
+        app::add_timeout3(BLINK_INTERVAL, blink_handler);
+
         panel.draw({
             let data_buffer_rc = data_buffer.clone();
             let scroll_rc = scroller.clone();
@@ -68,11 +96,12 @@ impl RichReviewer {
             let clickable_data_rc = clickable_data.clone();
             let bg_rc = background_color.clone();
             let screen_rc = reviewer_screen.clone();
+            let blink_flag_rc = blink_flag.clone();
             move |_| {
                 /*
                 先离线绘制内容面板，再根据面板大小复制所需区域内容。这样做是为了避免在线绘制时，会出现绘制内容超出面板边界的问题。
                  */
-                Self::draw_offline(screen_rc.clone(), &scroll_rc, visible_lines_rc.clone(), clickable_data_rc.clone(), data_buffer_rc.clone(), bg_rc.get());
+                Self::draw_offline(screen_rc.clone(), &scroll_rc, visible_lines_rc.clone(), clickable_data_rc.clone(), data_buffer_rc.clone(), bg_rc.get(), blink_flag_rc.clone());
 
                 screen_rc.borrow().copy(scroll_rc.x(), scroll_rc.y(), scroll_rc.width(), scroll_rc.height(), 0, 0);
             }
@@ -118,6 +147,9 @@ impl RichReviewer {
             let selected_pieces = Rc::new(RefCell::new(Vec::<Weak<RefCell<LinePiece>>>::new()));
             move |scroller, evt| {
                 match evt {
+                    Event::Close => {
+                        debug!("Closing");
+                    }
                     Event::Resize => {
                         // 缩放窗口后重新计算分片绘制信息。
                         let (current_width, current_height) = (scroller.width(), scroller.height());
@@ -263,7 +295,7 @@ impl RichReviewer {
                             scroller,
                         ) {
                             selected = !selected_pieces.borrow().is_empty();
-                            // debug!("拖选结果：{selected}")
+                            // debug!("拖选结果：{selected}");
                             #[cfg(target_os = "linux")]
                             if let Some(mut parent) = scroller.parent() {
                                 parent.set_damage(true);
@@ -278,7 +310,7 @@ impl RichReviewer {
             }
         });
 
-        Self { scroller, panel, data_buffer, background_color, visible_lines, clickable_data, reviewer_screen, notifier, search_string: search_str, search_results, current_highlight_focus }
+        Self { scroller, panel, data_buffer, background_color, visible_lines, clickable_data, reviewer_screen, notifier, search_string: search_str, search_results, current_highlight_focus, blink_flag }
     }
 
     #[throttle(1, Duration::from_millis(50))]
@@ -393,6 +425,7 @@ impl RichReviewer {
         clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
         data_buffer: Rc<RefCell<Vec<RichData>>>,
         background_color: Color,
+        blink_flag: Rc<Cell<BlinkState>>
         ) {
 
         screen.borrow().begin();
@@ -448,8 +481,14 @@ impl RichReviewer {
             }
         }
 
+        let mut need_blink = false;
         for (idx, rich_data) in data[from_index..to_index].iter().enumerate() {
-            rich_data.draw(offset_y);
+            rich_data.draw(offset_y, blink_flag.get());
+
+            if !need_blink && (rich_data.blink || rich_data.search_highlight_pos.is_some()) {
+                // debug!("需要闪烁");
+                need_blink = true;
+            }
 
             for piece in rich_data.line_pieces.iter() {
                 let piece = &*piece.borrow();
@@ -475,6 +514,19 @@ impl RichReviewer {
         draw_rect_fill(0, 0, window_width, PADDING.top, background_color);
 
         screen.borrow().end();
+
+        // 更新闪烁标记
+        if need_blink {
+            let bs = blink_flag.get();
+            if !bs.is_on() {
+                blink_flag.set(bs.on());
+            }
+        } else {
+            let bs = blink_flag.get();
+            if bs.is_on() {
+                blink_flag.set(bs.off());
+            }
+        }
     }
 
     /// 设置互动消息发送器。
@@ -502,6 +554,7 @@ impl RichReviewer {
             self.clickable_data.clone(),
             self.data_buffer.clone(),
             self.background_color.get(),
+            self.blink_flag.clone()
         );
     }
 
@@ -628,15 +681,7 @@ impl RichReviewer {
                     } else {
                         // 在当前数据段中已经没有更多目标，则跳到下一个数据段；如果没有更多数据段则跳到第一个数据段。
                         // debug!("在当前数据段中已经没有更多目标，则跳到下一个数据段；如果没有更多数据段则跳到第一个数据段。");
-                        let next_idx  = if let Ok(old_idx) = self.search_results.binary_search_by(|&a| {
-                            if a == old_rd_idx {
-                                Ordering::Equal
-                            } else if a > old_rd_idx {
-                                Ordering::Less
-                            } else {
-                                Ordering::Greater
-                            }
-                        }) {
+                        let next_idx  = if let Ok(old_idx) = self.binary_search_with_desc_order(old_rd_idx) {
                             old_idx + 1
                         } else {
                             0
@@ -689,15 +734,7 @@ impl RichReviewer {
                     rd.search_highlight_pos.replace(old_result_idx - 1);
                 } else {
                     // 在当前数据段中已经没有更多目标，则跳到下一个数据段；如果没有更多数据段则跳到第一个数据段。
-                    let next_idx  = if let Ok(old_idx) = self.search_results.binary_search_by(|&a| {
-                        if a == old_rd_idx {
-                            Ordering::Equal
-                        } else if a > old_rd_idx {
-                            Ordering::Less
-                        } else {
-                            Ordering::Greater
-                        }
-                    }) {
+                    let next_idx  = if let Ok(old_idx) = self.binary_search_with_desc_order(old_rd_idx) {
                         if old_idx >= 1 {
                             old_idx - 1
                         } else {
@@ -740,6 +777,31 @@ impl RichReviewer {
                 }
             }
         }
+    }
+
+    /// 在倒序排列的数组中，查找目标数据。
+    ///
+    /// # Arguments
+    ///
+    /// * `old_rd_idx`: 目标数据。
+    ///
+    /// returns: Result<usize, usize> 返回目标所在位置，若未找到则返回应该所在位置。
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
+    fn binary_search_with_desc_order(&self, target: usize) -> Result<usize, usize> {
+        self.search_results.binary_search_by(|&a| {
+            if a == target {
+                Ordering::Equal
+            } else if a > target {
+                Ordering::Less
+            } else {
+                Ordering::Greater
+            }
+        })
     }
 
     /// 查找目标字符串，并记录目标位置。

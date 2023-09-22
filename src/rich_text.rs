@@ -11,9 +11,9 @@ use fltk::enums::{Color, Cursor, Event};
 use fltk::frame::Frame;
 use fltk::prelude::{FltkError, GroupExt, WidgetBase, WidgetExt};
 use fltk::{app, draw, widget_extends};
-use fltk::app::MouseWheel;
+use fltk::app::{MouseWheel};
 use fltk::group::{Flex};
-use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData, select_text};
+use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData, select_text, BLINK_INTERVAL, BlinkState};
 
 use idgenerator_thin::{IdGeneratorOptions, YitIdHelper};
 use log::{error};
@@ -26,6 +26,7 @@ pub const MAIN_PANEL_FIX_HEIGHT: i32 = 200;
 pub const PANEL_PADDING: i32 = 8;
 
 /// rich-display主面板结构。
+///
 #[derive(Debug, Clone)]
 pub struct RichText {
     panel: Frame,
@@ -39,7 +40,7 @@ pub struct RichText {
     clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
     /// 主面板上可见行片段的集合容器，在每次离线绘制时被清空和填充。
     visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
-    
+    blink_flag: Rc<Cell<BlinkState>>,
 }
 widget_extends!(RichText, Flex, inner);
 
@@ -76,6 +77,41 @@ impl RichText {
         let selected = Rc::new(Cell::new(false));
         let should_resize_content = Rc::new(Cell::new(0));
 
+
+        let blink_flag = Rc::new(Cell::new(BlinkState::new()));
+        let blink_handler = {
+            let blink_flag_rc = blink_flag.clone();
+            let mut panel_rc = panel.clone();
+            let screen_rc = panel_screen.clone();
+            let visible_lines_rc = visible_lines.clone();
+            let clickable_data_rc = clickable_data.clone();
+            let bg_rc = background_color.clone();
+            let buffer_rc = data_buffer.clone();
+            move |handler| {
+                if !panel_rc.was_deleted() {
+                    let (should_toggle, bs) = blink_flag_rc.get().toggle_when_on();
+                    if should_toggle {
+                        blink_flag_rc.set(bs);
+                        // debug!("from main panel blink flag: {:?}", blink_flag_rc.get());
+                        Self::draw_offline(
+                            screen_rc.clone(),
+                            &panel_rc,
+                            visible_lines_rc.clone(),
+                            clickable_data_rc.clone(),
+                            bg_rc.get(),
+                            buffer_rc.clone(),
+                            blink_flag_rc.clone(),
+                        );
+                        panel_rc.set_damage(true);
+                    }
+                    app::repeat_timeout3(BLINK_INTERVAL, handler);
+                } else {
+                    app::remove_timeout3(handler);
+                }
+            }
+        };
+        app::add_timeout3(BLINK_INTERVAL, blink_handler);
+
         panel.draw({
             let screen_rc = panel_screen.clone();
             let resize_to = should_resize_content.clone();
@@ -84,8 +120,8 @@ impl RichText {
             let clickable_data_rc = clickable_data.clone();
             let bg_rc = background_color.clone();
             let buffer_rc = data_buffer.clone();
+            let blink_flag_rc = blink_flag.clone();
             move |ctx| {
-
                 let h = resize_to.replace(0);
                 if h != 0 {
                     Self::new_offline(
@@ -96,7 +132,8 @@ impl RichText {
                         visible_lines_rc.clone(),
                         clickable_data_rc.clone(),
                         bg_rc.get(),
-                        buffer_rc.clone()
+                        buffer_rc.clone(),
+                        blink_flag_rc.clone(),
                     );
                 }
 
@@ -230,6 +267,7 @@ impl RichText {
             let mut push_from_y = 0;
             let selected = selected.clone();
             let should_resize = should_resize_content.clone();
+            let blink_flag_rc = blink_flag.clone();
             move |ctx, evt| {
                 match evt {
                     Event::Resize => {
@@ -297,7 +335,8 @@ impl RichText {
                                 visible_lines_rc.clone(),
                                 clickable_data_rc.clone(),
                                 bg_rc.get(),
-                                buffer_rc.clone()
+                                buffer_rc.clone(),
+                                blink_flag_rc.clone(),
                             );
                             // ctx.redraw();
                             ctx.set_damage(true);
@@ -317,7 +356,8 @@ impl RichText {
                             bg_rc.get(),
                             buffer_rc.clone(),
                             (push_from_x, push_from_y),
-                            ctx.x()
+                            ctx.x(),
+                            blink_flag_rc.clone(),
                         ) {
                             selected.set(ret);
                         }
@@ -329,9 +369,8 @@ impl RichText {
             }
         });
 
-        Self { panel, data_buffer, background_color, buffer_max_lines, notifier, inner, reviewer, panel_screen, visible_lines, clickable_data }
+        Self { panel, data_buffer, background_color, buffer_max_lines, notifier, inner, reviewer, panel_screen, visible_lines, clickable_data, blink_flag }
     }
-
 
     #[throttle(1, Duration::from_millis(50))]
     fn redraw_after_drag(selection_rect: Rectangle, offscreen: Rc<RefCell<Offscreen>>,
@@ -340,7 +379,8 @@ impl RichText {
                          clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
                          bg_color: Color, data_buffer: Rc<RefCell<VecDeque<RichData>>>,
                          push_from: (i32, i32),
-                         panel_x: i32) -> bool {
+                         panel_x: i32,
+                        blink_flag: Rc<Cell<BlinkState>>) -> bool {
         let selected = select_text(&selection_rect, visible_lines.clone(), false, push_from, panel_x, panel.w() - PADDING.left - PADDING.right);
         panel.set_damage(true);
         if selected {
@@ -350,7 +390,8 @@ impl RichText {
                 visible_lines,
                 clickable_data,
                 bg_color,
-                data_buffer
+                data_buffer,
+                blink_flag,
             );
         }
 
@@ -381,7 +422,7 @@ impl RichText {
         }
 
         if should_remove {
-            if let Some(rv) = reviewer_rc.replace(None) {
+            if let Some(mut rv) = reviewer_rc.replace(None) {
                 app::delete_widget(rv.scroller);
             }
         }
@@ -432,29 +473,11 @@ impl RichText {
     }
 
     pub fn delete_last_data(&mut self) {
-        // if let Some(idx) = from {
-        //     if let Some(last) = self.data_buffer.borrow_mut().iter_mut().last() {
-        //         last.truncate(Some(idx));
-        //     }
-        // } else {
-        //     self.data_buffer.borrow_mut().pop_back();
-        // }
         self.data_buffer.borrow_mut().pop_back();
         Self::draw_offline_2(&self);
         self.panel.set_damage(true);
     }
 
-    // pub fn remove_last_line(&mut self) {
-    //     if let Some(rd) = self.data_buffer.borrow_mut().iter_mut().last() {
-    //         if let Some(lp_rc) = rd.line_pieces.pop() {
-    //             let lp = &*lp_rc.borrow();
-    //             let tl = &*lp.through_line.borrow();
-    //
-    //         }
-    //     }
-    //     Self::draw_offline_2(&self);
-    //     self.panel.set_damage(true);
-    // }
 
     /// 查询目标字符串，并自动显示第一个或最后一个目标所在行。
     /// 若以相同参数重复调用该方法，则每次调用都会自动定位到下一个查找到的目标位置。
@@ -496,7 +519,6 @@ impl RichText {
     /// }
     /// ```
     pub fn search_str(&mut self, search_str: Option<String>, forward: bool) -> bool {
-        // todo: 待增加目标闪烁功能。另外修复斜体字分片无法被选中的问题。
         let mut find_out = false;
         if let Ok(open_suc) = self.auto_open_reviewer() {
             if let Some(ref mut rr) = *self.reviewer.borrow_mut() {
@@ -527,11 +549,12 @@ impl RichText {
         panel: &Frame,
         visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
         clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
-        bg_color: Color, data_buffer: Rc<RefCell<VecDeque<RichData>>>
+        bg_color: Color, data_buffer: Rc<RefCell<VecDeque<RichData>>>,
+        blink_flag: Rc<Cell<BlinkState>>
         ) {
         if let Some(offs) = Offscreen::new(w, h) {
             offscreen.replace(offs);
-            Self::draw_offline(offscreen.clone(), &panel, visible_lines.clone(), clickable_data, bg_color, data_buffer.clone());
+            Self::draw_offline(offscreen.clone(), &panel, visible_lines.clone(), clickable_data, bg_color, data_buffer.clone(), blink_flag);
         }
     }
 
@@ -540,7 +563,8 @@ impl RichText {
         panel: &Frame,
         visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
         clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
-        bg_color: Color, data_buffer: Rc<RefCell<VecDeque<RichData>>>) {
+        bg_color: Color, data_buffer: Rc<RefCell<VecDeque<RichData>>>,
+        blink_flag: Rc<Cell<BlinkState>>) {
 
         offscreen.borrow().begin();
         let (panel_x, panel_y, window_width, window_height) = (panel.x(), panel.y(), panel.width(), panel.height());
@@ -553,6 +577,8 @@ impl RichText {
 
         // 填充背景
         draw_rect_fill(0, 0, window_width, window_height, bg_color);
+
+        let mut need_blink = false;
 
         // 绘制数据内容
         let data = data_buffer.borrow();
@@ -581,13 +607,28 @@ impl RichText {
                 }
             }
 
-            rich_data.draw(offset_y);
+            rich_data.draw(offset_y, blink_flag.get());
+
+            if !need_blink && rich_data.blink {
+                need_blink = true;
+            }
         }
 
         // 填充顶部边界空白
         draw_rect_fill(0, 0, window_width, PADDING.top, bg_color);
 
         offscreen.borrow().end();
+
+        // 更新闪烁标记
+        if need_blink {
+            let bs = blink_flag.get();
+            blink_flag.set(bs.on());
+        } else {
+            let bs = blink_flag.get();
+            if bs.is_on() {
+                blink_flag.set(bs.off());
+            }
+        }
     }
 
     /// 设置面板背景色。
@@ -657,6 +698,7 @@ impl RichText {
             self.clickable_data.clone(),
             self.background_color.get(),
             self.data_buffer.clone(),
+            self.blink_flag.clone()
         );
     }
 

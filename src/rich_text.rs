@@ -11,7 +11,7 @@ use fltk::enums::{Color, Cursor, Event};
 use fltk::frame::Frame;
 use fltk::prelude::{FltkError, GroupExt, WidgetBase, WidgetExt};
 use fltk::{app, draw, widget_extends};
-use fltk::app::{MouseWheel, TimeoutHandle};
+use fltk::app::{MouseWheel};
 use fltk::group::{Flex};
 use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData, select_text, BLINK_INTERVAL, BlinkState};
 
@@ -26,6 +26,7 @@ pub const MAIN_PANEL_FIX_HEIGHT: i32 = 200;
 pub const PANEL_PADDING: i32 = 8;
 
 /// rich-display主面板结构。
+///
 #[derive(Debug, Clone)]
 pub struct RichText {
     panel: Frame,
@@ -40,7 +41,6 @@ pub struct RichText {
     /// 主面板上可见行片段的集合容器，在每次离线绘制时被清空和填充。
     visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
     blink_flag: Rc<Cell<BlinkState>>,
-    blink_handle: Option<TimeoutHandle>,
 }
 widget_extends!(RichText, Flex, inner);
 
@@ -88,26 +88,29 @@ impl RichText {
             let bg_rc = background_color.clone();
             let buffer_rc = data_buffer.clone();
             move |handler| {
-                let (should_toggle, bs) = blink_flag_rc.get().toggle_when_on();
-                if should_toggle {
-                    blink_flag_rc.set(bs);
-                    // debug!("from main panel blink flag: {:?}", blink_flag_rc.get());
-                    Self::draw_offline(
-                        screen_rc.clone(),
-                        &panel_rc,
-                        visible_lines_rc.clone(),
-                        clickable_data_rc.clone(),
-                        bg_rc.get(),
-                        buffer_rc.clone(),
-                        blink_flag_rc.clone(),
-                    );
-                    panel_rc.set_damage(true);
+                if !panel_rc.was_deleted() {
+                    let (should_toggle, bs) = blink_flag_rc.get().toggle_when_on();
+                    if should_toggle {
+                        blink_flag_rc.set(bs);
+                        // debug!("from main panel blink flag: {:?}", blink_flag_rc.get());
+                        Self::draw_offline(
+                            screen_rc.clone(),
+                            &panel_rc,
+                            visible_lines_rc.clone(),
+                            clickable_data_rc.clone(),
+                            bg_rc.get(),
+                            buffer_rc.clone(),
+                            blink_flag_rc.clone(),
+                        );
+                        panel_rc.set_damage(true);
+                    }
+                    app::repeat_timeout3(BLINK_INTERVAL, handler);
+                } else {
+                    app::remove_timeout3(handler);
                 }
-                app::repeat_timeout3(BLINK_INTERVAL, handler);
             }
         };
-        let _handle = app::add_timeout3(BLINK_INTERVAL, blink_handler);
-        let blink_handle = Some(_handle);
+        app::add_timeout3(BLINK_INTERVAL, blink_handler);
 
         panel.draw({
             let screen_rc = panel_screen.clone();
@@ -366,14 +369,7 @@ impl RichText {
             }
         });
 
-        Self { panel, data_buffer, background_color, buffer_max_lines, notifier, inner, reviewer, panel_screen, visible_lines, clickable_data, blink_flag, blink_handle }
-    }
-
-    /// 移除闪烁控制器。当删除本组件实例前，必须先调用该方法删除内置的闪烁控制器。
-    pub fn remove_blink_handle(&mut self) {
-        if let Some(handle) = self.blink_handle {
-            app::remove_timeout3(handle);
-        }
+        Self { panel, data_buffer, background_color, buffer_max_lines, notifier, inner, reviewer, panel_screen, visible_lines, clickable_data, blink_flag }
     }
 
     #[throttle(1, Duration::from_millis(50))]
@@ -427,7 +423,6 @@ impl RichText {
 
         if should_remove {
             if let Some(mut rv) = reviewer_rc.replace(None) {
-                rv.remove_blink_handle();
                 app::delete_widget(rv.scroller);
             }
         }

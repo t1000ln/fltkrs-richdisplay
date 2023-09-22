@@ -11,7 +11,6 @@ use fltk::frame::Frame;
 use fltk::group::{Scroll, ScrollType};
 use fltk::prelude::{GroupExt, WidgetBase, WidgetExt};
 use fltk::{app, draw, widget_extends};
-use fltk::app::TimeoutHandle;
 use log::{debug, error};
 use throttle_my_fn::throttle;
 use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData, ClickPoint, select_text2, locate_target_rd, clear_selected_pieces, BlinkState, BLINK_INTERVAL};
@@ -32,7 +31,6 @@ pub struct RichReviewer {
     search_results: Vec<usize>,
     current_highlight_focus: Option<(usize, usize)>,
     blink_flag: Rc<Cell<BlinkState>>,
-    blink_handle: Option<TimeoutHandle>,
 }
 widget_extends!(RichReviewer, Scroll, scroller);
 
@@ -69,24 +67,27 @@ impl RichReviewer {
             let blink_flag_rc = blink_flag.clone();
             let mut scroller_rc = scroller.clone();
             move |handler| {
-                let (should_toggle, bs) = blink_flag_rc.get().toggle_when_on();
-                if should_toggle {
-                    blink_flag_rc.set(bs);
-                    // debug!("from reviewer blink flag: {:?}", blink_flag_rc.get());
+                if !scroller_rc.was_deleted() {
+                    let (should_toggle, bs) = blink_flag_rc.get().toggle_when_on();
+                    if should_toggle {
+                        blink_flag_rc.set(bs);
+                        // debug!("from reviewer blink flag: {:?}", blink_flag_rc.get());
 
-                    #[cfg(target_os = "linux")]
-                    if let Some(mut parent) = scroller_rc.parent() {
-                        parent.set_damage(true);
+                        #[cfg(target_os = "linux")]
+                        if let Some(mut parent) = scroller_rc.parent() {
+                            parent.set_damage(true);
+                        }
+
+                        #[cfg(not(target_os = "linux"))]
+                        scroller_rc.set_damage(true);
                     }
-
-                    #[cfg(not(target_os = "linux"))]
-                    scroller_rc.set_damage(true);
+                    app::repeat_timeout3(BLINK_INTERVAL, handler);
+                } else {
+                    app::remove_timeout3(handler);
                 }
-                app::repeat_timeout3(BLINK_INTERVAL, handler);
             }
         };
-        let handle = app::add_timeout3(BLINK_INTERVAL, blink_handler);
-        let blink_handle = Some(handle);
+        app::add_timeout3(BLINK_INTERVAL, blink_handler);
 
         panel.draw({
             let data_buffer_rc = data_buffer.clone();
@@ -309,13 +310,7 @@ impl RichReviewer {
             }
         });
 
-        Self { scroller, panel, data_buffer, background_color, visible_lines, clickable_data, reviewer_screen, notifier, search_string: search_str, search_results, current_highlight_focus, blink_flag, blink_handle }
-    }
-
-    pub(crate) fn remove_blink_handle(&mut self) {
-        if let Some(handle) = self.blink_handle {
-            app::remove_timeout3(handle);
-        }
+        Self { scroller, panel, data_buffer, background_color, visible_lines, clickable_data, reviewer_screen, notifier, search_string: search_str, search_results, current_highlight_focus, blink_flag }
     }
 
     #[throttle(1, Duration::from_millis(50))]

@@ -816,6 +816,9 @@ pub fn update_data_properties(options: RichDataOptions, rd: &mut RichData) {
     if let Some(strike_through) = options.strike_through {
         rd.strike_through = strike_through;
     }
+    if let Some(blink) = options.blink {
+        rd.blink = blink;
+    }
 }
 
 /// 禁用数据内容。
@@ -1146,7 +1149,7 @@ impl LinedData for RichData {
                                     draw_rectf(piece.x + skip_width, y - piece.spacing + 2, fill_width, piece.font_height);
                                     if let Some(h_i) = self.search_highlight_pos {
                                         if h_i == pos_i {
-                                            draw_rect_with_color(piece.x + skip_width, y - piece.spacing + 2, fill_width, piece.font_height, Color::by_index(92));
+                                            draw_rect_with_color(piece.x + skip_width, y - piece.spacing + 2, fill_width, piece.font_height, rect_color);
                                         }
                                     }
                                 }
@@ -1199,11 +1202,13 @@ impl LinedData for RichData {
                 }
             },
             DataType::Image => {
-                if let Some(piece) = self.line_pieces.last() {
-                    let piece = &*piece.borrow();
-                    if let Some(img) = &self.image {
-                        if let Err(e) = draw_image(img.as_slice(), piece.x, piece.y - offset_y, piece.w, piece.h, ColorDepth::Rgb8) {
-                            error!("draw image error: {:?}", e);
+                if !self.blink || blink_state.next == BlinkDegree::Normal {
+                    if let Some(piece) = self.line_pieces.last() {
+                        let piece = &*piece.borrow();
+                        if let Some(img) = &self.image {
+                            if let Err(e) = draw_image(img.as_slice(), piece.x, piece.y - offset_y, piece.w, piece.h, ColorDepth::Rgb8) {
+                                error!("draw image error: {:?}", e);
+                            }
                         }
                     }
                 }
@@ -1438,6 +1443,7 @@ pub struct RichDataOptions {
     pub fg_color: Option<Color>,
     pub bg_color: Option<Color>,
     pub strike_through: Option<bool>,
+    pub blink: Option<bool>
 }
 
 impl RichDataOptions {
@@ -1451,6 +1457,7 @@ impl RichDataOptions {
             fg_color: None,
             bg_color: None,
             strike_through: None,
+            blink: None
         }
     }
 
@@ -1486,6 +1493,11 @@ impl RichDataOptions {
 
     pub fn strike_through(mut self, strike_through: bool) -> RichDataOptions {
         self.strike_through = Some(strike_through);
+        self
+    }
+
+    pub fn blink(mut self, blink: bool) -> RichDataOptions {
+        self.blink = Some(blink);
         self
     }
 }
@@ -2410,9 +2422,11 @@ pub fn get_lighter_or_darker_color(color: Color) -> Color {
     if total >= 383 || max_c as u16 + 127 > 255u16 {
         let (cr, cg, cb) = (max(0i16, r as i16 - 127), max(0i16, g as i16 - 127), max(0i16, b as i16 - 127));
         Color::from_rgb(cr as u8, cg as u8, cb as u8)
+        // color.darker()
     } else {
         let (cr, cg, cb) = (min(255i16, r as i16 + 127), min(255i16, g as i16 + 127), min(255i16, b as i16 + 127));
         Color::from_rgb(cr as u8, cg as u8, cb as u8)
+        // color.lighter()
     }
 }
 

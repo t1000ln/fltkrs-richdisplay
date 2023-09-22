@@ -73,6 +73,13 @@ impl RichReviewer {
                 if should_toggle {
                     blink_flag_rc.set(bs);
                     // debug!("from reviewer blink flag: {:?}", blink_flag_rc.get());
+
+                    #[cfg(target_os = "linux")]
+                    if let Some(mut parent) = scroller_rc.parent() {
+                        parent.set_damage(true);
+                    }
+
+                    #[cfg(not(target_os = "linux"))]
                     scroller_rc.set_damage(true);
                 }
                 app::repeat_timeout3(BLINK_INTERVAL, handler);

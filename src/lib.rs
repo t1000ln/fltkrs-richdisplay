@@ -2417,16 +2417,36 @@ pub fn get_contrast_color(color: Color) -> Color {
 /// ```
 pub fn get_lighter_or_darker_color(color: Color) -> Color {
     let (r, g, b) = color.to_rgb();
+    // let supported = draw::can_do_alpha_blending();
+    // if supported {
+    //      // 使用alpha blending算法降低色彩饱和度，效果不好。
+    //     Color::from_rgba_tuple((r, g, b, 60u8))
+    // } else {
+    //     let total = r as u16 + g as u16 + b as u16;
+    //     let max_c = max(r, max(g, b));
+    //     if total >= 383 || max_c as u16 + 127 > 255u16 {
+    //         let (cr, cg, cb) = (max(0i16, r as i16 - 127), max(0i16, g as i16 - 127), max(0i16, b as i16 - 127));
+    //         Color::from_rgb(cr as u8, cg as u8, cb as u8)
+    //          // 使用内置api降低亮度，效果不理想
+    //         // color.darker()
+    //     } else {
+    //         let (cr, cg, cb) = (min(255i16, r as i16 + 127), min(255i16, g as i16 + 127), min(255i16, b as i16 + 127));
+    //         Color::from_rgb(cr as u8, cg as u8, cb as u8)
+    //          // 使用内置api提高亮度，效果不理想
+    //         // color.lighter()
+    //     }
+    // }
+
     let total = r as u16 + g as u16 + b as u16;
     let max_c = max(r, max(g, b));
     if total >= 383 || max_c as u16 + 127 > 255u16 {
+        // 当三原色合计值超过最大合计值的一半时，或者某项原色值超过128，降低各原色数值。效果是变暗。
         let (cr, cg, cb) = (max(0i16, r as i16 - 127), max(0i16, g as i16 - 127), max(0i16, b as i16 - 127));
         Color::from_rgb(cr as u8, cg as u8, cb as u8)
-        // color.darker()
     } else {
+        // 当三原色合计值小于最大合计值的一半时，提高各原色数值。效果是变亮。
         let (cr, cg, cb) = (min(255i16, r as i16 + 127), min(255i16, g as i16 + 127), min(255i16, b as i16 + 127));
         Color::from_rgb(cr as u8, cg as u8, cb as u8)
-        // color.lighter()
     }
 }
 

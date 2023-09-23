@@ -13,7 +13,7 @@ use idgenerator_thin::YitIdHelper;
 use log::{error};
 
 pub mod rich_text;
-pub mod rich_reviewer;
+mod rich_reviewer;
 
 /// 默认内容边界到窗口之间的空白距离。
 pub const PADDING: Padding = Padding { left: 5, top: 5, right: 5, bottom: 5 };

@@ -8,7 +8,7 @@ description = "基于fltk-rs的富文本组件，作为fltk-TextDisplay组件的
 readme = "README.md"
 authors = ["t1000ln <t1000_ln@aliyun.com>"]
 license = "MIT"
-categories = ["GUI"]
+categories = ["gui"]
 repository = "https://github.com/t1000ln/fltkrs-richdisplay"
 
 exclude = ["res/*", "examples/*"]

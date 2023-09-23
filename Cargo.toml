@@ -17,7 +17,6 @@ exclude = ["res/*", "examples/*"]
 
 [dependencies]
 fltk = { version = "^1.4.12", features = ["use-ninja"] }
-fltk-sys = { version = "^1.4.12"}
 tokio = { version = "1.32", features = ["full"] }
 idgenerator-thin = "0.1.2"
 log = "^0.4"

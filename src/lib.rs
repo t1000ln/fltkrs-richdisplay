@@ -116,7 +116,7 @@ impl LocalEvent {
 
 /// 矩形结构，元素0/1代表x/y坐标，表示左上角坐标；元素2/3代表w/h宽和高，w/h不为负值。
 #[derive(Debug, Clone, Eq, Hash, PartialEq)]
-pub struct Rectangle(i32, i32, i32, i32);
+pub(crate) struct Rectangle(i32, i32, i32, i32);
 
 impl PartialOrd<Self> for Rectangle {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
@@ -169,19 +169,7 @@ impl Rectangle {
     /// # Examples
     ///
     /// ```
-    /// use fltkrs_richdisplay::Rectangle;
     ///
-    /// let rect = Rectangle::new(20, 30, 25, 25);
-    /// assert_eq!(rect.tup(), (20, 30, 25, 25));
-    ///
-    /// let rect = Rectangle::new(20, 30, -10, 25);
-    /// assert_eq!(rect.tup(), (10, 30, 10, 25));
-    ///
-    /// let rect = Rectangle::new(20, 30, 10, -25);
-    /// assert_eq!(rect.tup(), (20, 5, 10, 25));
-    ///
-    /// let rect = Rectangle::new(20, 30, -10, -25);
-    /// assert_eq!(rect.tup(), (10, 5, 10, 25));
     /// ```
     pub fn new(x: i32, y: i32, w: i32, h: i32) -> Self {
         if w < 0 && h < 0 {
@@ -1600,14 +1588,9 @@ impl RichDataOptions {
 /// # Examples
 ///
 /// ```
-/// use fltkrs_richdisplay::{is_overlap, Rectangle};
-/// let c_coord = Rectangle(40, 28, 40 + 21, 50);
-/// let selection_area = Rectangle(40, 28, 80, 45);
-/// if is_overlap(&c_coord, &selection_area) {
-///     println!("选区包含了目标区域");
-/// }
+///
 /// ```
-pub fn is_overlap(target_area: &Rectangle, selection_area: &Rectangle) -> bool {
+pub(crate) fn is_overlap(target_area: &Rectangle, selection_area: &Rectangle) -> bool {
     target_area.0 < (selection_area.0 + selection_area.2) && (target_area.0 + target_area.2) > selection_area.0 && target_area.1 < (selection_area.1 + selection_area.3) && (target_area.1 + target_area.3) > selection_area.1
 }
 

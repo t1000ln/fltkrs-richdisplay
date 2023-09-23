@@ -34,28 +34,74 @@ async fn main() {
 
     let group = Group::default_fill();
 
-    let mut btn1 = Button::new(200, 0, 100, 50, "top");
-    let _ = Button::new(0, 200, 50, 50, "left");
+    let mut btn1 = Button::new(200, 0, 100, 30, "反向查找字符串");
+    let mut btn11 = Button::new(500, 0, 100, 30, "清除查找目标");
+    let mut btn12 = Button::new(350, 0, 100, 30, "正向查找字符串");
 
-    let mut rich_text = RichText::new(100, 100, 800, 400, None);
+
+    let _ = Button::new(0, 200, 50, 30, "left");
+
+    let mut rich_text = RichText::new(100, 120, 800, 400, None);
     let (sender, mut receiver) = tokio::sync::mpsc::channel::<UserData>(100);
     rich_text.set_notifier(sender);
     rich_text.set_buffer_max_lines(50);
 
     btn1.set_callback({
-        |_| {
-            debug!("btn clicked");
+        let mut rt = rich_text.clone();
+        move |_| {
+            rt.search_str(Some("程序".to_string()), false);
+        }
+    });
+    btn12.set_callback({
+        let mut rt = rich_text.clone();
+        move |_| {
+            rt.search_str(Some("高效".to_string()), true);
+        }
+    });
+    btn11.set_callback({
+        let mut rt = rich_text.clone();
+        move |_| {
+            rt.search_str(None, false);
         }
     });
 
     let _ = Button::new(950, 200, 50, 50, "right");
 
-    let mut btn4 = Button::new(200, 550, 100, 50, "bottom");
-    btn4.set_callback(|_| {
-        debug!("btn2 clicked");
+    let mut btn4 = Button::new(200, 550, 150, 50, "删除最后一个数据段");
+    btn4.set_callback({
+        let mut rt = rich_text.clone();
+        move |_| {
+            rt.delete_last_data();
+        }
     });
 
+    // let mut btn5 = Button::new(400, 550, 100, 50, "测试");
+
     group.end();
+
+    /*
+    启用PageUp/PageDown快捷键打开和关闭回顾区的功能支持。
+    使用鼠标滚轮进行打开/关闭回顾区的功能已经内置在模块包中，而PageUp/PageDown的快捷键无法被内置组件检测到，因此需要外层容器主动调用API实现。
+    包里提供的两个API接口为此提供支持：`RichText::auto_open_reviewer(&self)`和`RichText::auto_close_reviewer(&self)`。
+     */
+    win.handle({
+        let rich_text_rc = rich_text.clone();
+        move |_, evt| {
+            let mut handled = false;
+            match evt {
+                Event::KeyDown => {
+                    if app::event_key_down(Key::PageDown) {
+                        handled = rich_text_rc.auto_close_reviewer();
+                    } else if app::event_key_down(Key::PageUp) {
+                        handled = rich_text_rc.auto_open_reviewer().unwrap();
+                    }
+
+                }
+                _ => {}
+            }
+            handled
+        }
+    });
 
     win.end();
     win.show();
@@ -65,7 +111,15 @@ async fn main() {
     let global_sender_rc = global_sender.clone();
     tokio::spawn(async move {
         while let Some(data) = receiver.recv().await {
-            if data.text.starts_with("14") {
+            if data.text.starts_with("10") {
+                let toggle = !data.blink;
+                let update_options = RichDataOptions::new(data.id).blink(toggle);
+                global_sender_rc.send(GlobalMessage::UpdateData(update_options));
+            } else if data.text.starts_with("13") {
+                let toggle = !data.blink;
+                let update_options = RichDataOptions::new(data.id).blink(toggle);
+                global_sender_rc.send(GlobalMessage::UpdateData(update_options));
+            } else if data.text.starts_with("14") {
                 let toggle = !data.underline;
                 let update_options = RichDataOptions::new(data.id).underline(toggle);
                 global_sender_rc.send(GlobalMessage::UpdateData(update_options));
@@ -79,7 +133,10 @@ async fn main() {
                 let update_options = RichDataOptions::new(data.id).clickable(false).expired(true).bg_color(Color::DarkGreen);
                 global_sender_rc.send(GlobalMessage::UpdateData(update_options));
             } else if data.data_type == DataType::Image {
-                global_sender_rc.send(GlobalMessage::DisableData(data.id));
+                let toggle = !data.disabled;
+                // let update_options = RichDataOptions::new(data.id).blink(toggle);
+                let update_options = RichDataOptions::new(data.id).disabled(toggle);
+                global_sender_rc.send(GlobalMessage::UpdateData(update_options));
             }
         }
     });
@@ -92,24 +149,24 @@ async fn main() {
 
 
     tokio::spawn(async move {
-        for i in 0..2 {
+        for i in 0..1 {
             let turn = i * 13;
             let mut data: Vec<UserData> = Vec::from([
-                UserData::new_text(format!("{}安全并且高效地处理并发编程是Rust的另一个主要目标。并发编程和并行编程这两种概念随着计算机设备的多核a优化而变得越来越重要。并发编程允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 1)).set_underline(true).set_font(Font::Helvetica, 38).set_bg_color(Some(Color::DarkYellow)).set_clickable(true),
+                UserData::new_text(format!("{}安全并且高效地处理并发编程是Rust的另一个主要目标。💖并发编程和并行编程这两种概念随着计算机设备的多核a优化而变得越来越重要。并发编程允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 1)).set_underline(true).set_font(Font::Helvetica, 38).set_bg_color(Some(Color::DarkYellow)).set_clickable(true),
                 UserData::new_text(format!("{}在大部分现在操作系统中，执行程序的代码会运行在进程中，操作系统会同时管理多个进程。类似地，程序内部也可以拥有多个同时运行的独立部分，用来运行这些独立部分的就叫做线程。", turn + 2)).set_font(Font::HelveticaItalic, 18).set_bg_color(Some(Color::Green)),
                 UserData::new_image(img1_data.clone(), img1_width, img1_height),
-                UserData::new_text(format!("{}由于多线程可以同时运行，所以将计算操作拆分至多个线程可以提高性能。a但是这也增加了程序的复杂度，因为不同线程的执行顺序是无法确定的。\r\n", turn + 3)).set_fg_color(Color::Red).set_bg_color(Some(Color::Green)).set_underline(true),
+                UserData::new_text(format!("{}由于多线程可以同时运行，🐉所以将计算操作拆分至多个线程可以提高性能。a但是这也增加了程序的复杂度，因为不同线程的执行顺序是无法确定的。\r\n", turn + 3)).set_fg_color(Color::Red).set_bg_color(Some(Color::Green)).set_underline(true),
                 UserData::new_text(format!("{}由于多线程可以同时运行，所以将计算操作拆分至多个线程可以提高性能。但是这也增加了程序的复杂度，因为不同线程的执行顺序是无法确定的。\r\n", turn + 4)).set_fg_color(Color::Red).set_bg_color(Some(Color::Green)),
-                UserData::new_text(format!("{}安全并且高效地处理并发编程是Rust的另一个主要目标。并发编程和并行编程这两种概念随着计算机设备的多核优化而变得越来越重要。并发编程允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。\r\n", turn + 5)).set_font(Font::Helvetica, 9).set_underline(true),
-                UserData::new_text(format!("{}在大部分现在操作系统中，执行程序的代码会运行在进程中，操作系统会同时管理多个进程b。类似地，程序内部也可以拥有多个同时运行的独立部分，用来运行这些独立部分的就叫做线程。\r\n", turn + 6)).set_font(Font::Helvetica, 32),
+                UserData::new_text(format!("{}安全并且高效地处理并发编程是Rust的另一个主要目标。并发编程和并行编程这两种概念随着计算机设备的多核优化而变得越来越重要。并发编程允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。\r\n", turn + 5)).set_font(Font::Helvetica, 9).set_underline(true).set_blink(true),
+                UserData::new_text(format!("{}在大部分现在操作系统中，执行程序的代码会运行在进程中，操作系统会同时管理多个进程b。类似地，𝄞程序内部也可以拥有多个同时运行的独立部分，用来运行这些独立部分的就叫做线程。\r\n", turn + 6)).set_font(Font::Helvetica, 32),
                 UserData::new_text(format!("{}由于多线程可以同时运行，所以将计算操作拆分至多个线程可以提高性能。a但是这也增加了程序的复杂度，因为不同线程的执行顺序是无法确定的。\r\n", turn + 7)).set_fg_color(Color::Red).set_bg_color(Some(Color::Green)),
                 UserData::new_text(format!("{}由于多线程可以同时运行，所以将计算操作拆分至多个线程可以提高性能。a但是这也增加了程序的复杂度，因为不同线程的执行顺序是无法确定的。\r\n", turn + 8)).set_fg_color(Color::Red).set_bg_color(Some(Color::Green)),
                 UserData::new_image(img1_data.clone(), img1_width, img1_height).set_clickable(true),
-                UserData::new_text(format!("{}安全并且高效地处理并发编程是Rust的另一个主要目标。并发编程和并行编程这两种概念随着计算机设备的多核优化而变得越来越重要。并发编程允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 9)).set_fg_color(Color::Yellow).set_bg_color(Some(Color::DarkBlue)).set_clickable(true),
+                UserData::new_text(format!("{}安全并且高效地处理并发编程是Rust的另一个主要目标。并发编程和并行编程这两种概念随着计算机设备的多核优化而变得越来越重要。并发编程允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 9)).set_fg_color(Color::Yellow).set_bg_color(Some(Color::DarkBlue)),
                 UserData::new_text(format!("{}在大部分现在操作系统中，执行程序的代码会运行在进程中，操作系统会同时管理多个进程。类似地，程序内部也可以拥有多个同时运行的独立部分，用来运行这些独立部分的就叫做线程。\r\n", turn + 10)).set_font(Font::HelveticaBold, 32).set_bg_color(Some(Color::Magenta)).set_clickable(true),
                 UserData::new_text(format!("{}由于多线程可以同时运行，所以将计算操作拆分至多个线程可以提高性能。a但是这也增加了程序的复杂度，因为不同线程的执行顺序是无法确定的。\r\n", turn + 11)).set_fg_color(Color::Red).set_bg_color(Some(Color::Green)),
                 UserData::new_text(format!("{}由于多线程可以同时运行，所以将计算操作拆分至多个线程可以提高性能。", turn + 12)).set_fg_color(Color::Red).set_bg_color(Some(Color::Green)).set_clickable(true),
-                UserData::new_text(format!("{}由于多线程可以同时运行，所以将计算操作拆分至多个线程可以提高性能。", turn + 13)).set_fg_color(Color::Red).set_bg_color(Some(Color::Green)).set_font(Font::Courier, 18),
+                UserData::new_text(format!("{}由于多线程可以同时运行，💖所以将计算操作拆分至多个线程可以提高性能。", turn + 13)).set_fg_color(Color::Cyan).set_font(Font::Courier, 18).set_clickable(true).set_blink(true),
                 UserData::new_image(img2_data.clone(), img2_width, img2_height).set_clickable(true),
             ]);
             data.reverse();
@@ -121,7 +178,6 @@ async fn main() {
 
         debug!("Sender closed");
     });
-
 
 
     while app.wait() {
@@ -136,7 +192,6 @@ async fn main() {
                 GlobalMessage::DisableData(id) => {
                     rich_text.disable_data(id);
                 }
-                _ => {}
             }
         }
 

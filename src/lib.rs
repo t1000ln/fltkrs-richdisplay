@@ -1,8 +1,7 @@
 use std::cell::{Cell, RefCell};
 use std::cmp::{max, min, Ordering};
 use std::collections::{BTreeMap, HashMap};
-use std::error::Error;
-use std::fmt::{Debug, Display, Formatter};
+use std::fmt::{Debug};
 use std::ops::{RangeInclusive};
 use std::rc::{Rc, Weak};
 use std::slice::Iter;
@@ -13,7 +12,7 @@ use fltk::prelude::{FltkError, FltkErrorKind};
 use fltk_sys::draw::Fl_draw_image_mono;
 
 use idgenerator_thin::YitIdHelper;
-use log::{debug, error};
+use log::{error};
 
 pub mod rich_text;
 pub mod rich_reviewer;
@@ -30,22 +29,36 @@ pub const IMAGE_PADDING_V: i32 = 2;
 /// 同一行内多个文字分片之间的水平间距。
 pub const PIECE_SPACING: i32 = 2;
 
+/// 闪烁强度切换间隔事件，目前使用固定频率。
 pub const BLINK_INTERVAL: f64 = 0.5;
 
+/// 高亮文本背景色。目前用于查询目标的背景色。
 pub const HIGHLIGHT_BACKGROUND_COLOR: Color = Color::from_rgb(0, 0, 255);
-pub const HIGHLIGHT_RECT_COLOR: Color = Color::from_rgb(255, 145, 0);
-pub const HIGHLIGHT_RECT_CONTRAST_COLOR: Color = Color::from_rgb(0, 110, 255);
-pub const HIGHLIGHT_WHITE: Color = Color::from_rgb(255, 255, 255);
 
+/// 高亮文本焦点边框颜色。目前用于查询目标，当前正在聚焦的目标。
+pub const HIGHLIGHT_RECT_COLOR: Color = Color::from_rgb(255, 145, 0);
+
+/// 高亮文本焦点边框对比色，目前用于查询目标，当前正在聚焦的目标在闪烁时切换的对比颜色。
+pub const HIGHLIGHT_RECT_CONTRAST_COLOR: Color = Color::from_rgb(0, 110, 255);
+
+/// 最亮的白色。
+pub const WHITE: Color = Color::from_rgb(255, 255, 255);
+
+/// 闪烁强度状态。
 #[derive(Debug, Clone,Copy, PartialEq, Eq)]
 pub enum BlinkDegree {
+    /// 正常，原色显示。
     Normal,
+    /// 对比色或不显示。
     Contrast,
 }
 
+/// 可视区域闪烁开关标记和状态。
 #[derive(Debug, Clone,Copy, PartialEq, Eq)]
 pub struct BlinkState {
+    /// 可视区域是否存在闪烁内容。
     on: bool,
+    /// 应闪烁内容在下一次刷新显示时的强度。
     next: BlinkDegree,
 }
 
@@ -348,6 +361,7 @@ impl ThroughLine {
     }
 }
 
+/// 可视内容在面板容器中的边界空白。
 #[derive(Debug, Clone, Default)]
 pub struct Padding {
     pub(crate) left: i32,
@@ -356,7 +370,7 @@ pub struct Padding {
     pub(crate) bottom: i32,
 }
 
-/// 单行文本的渲染参数，由试算过程得到。
+/// 单行文本的渲染参数，通过试算得到。
 /// 一个大段文本在试算过程中，可能被拆分为多个适配当前窗口宽度的单行文本片段，用于简化绘制过程的运算。
 #[derive(Debug, Clone)]
 pub struct LinePiece {
@@ -597,7 +611,7 @@ pub enum DataType {
     Image,
 }
 
-/// 用户提供的数据单元。
+/// 用户提供的数据段结构。。
 #[derive(Clone, Debug)]
 pub struct UserData {
     /// 数据ID，在初始化新实例时可随意赋值。当源自RichData时，为RichData的ID值。
@@ -722,26 +736,26 @@ impl UserData {
     }
 }
 
-#[derive(Debug)]
-pub enum BlinkRangeError {
-    Overlap(usize, usize, usize),
-    Reverse(usize, usize, usize),
-}
-
-impl Display for BlinkRangeError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            BlinkRangeError::Overlap(i, from, to) => {
-                write!(f, "第 {} 个闪烁片段的起始位置 {} 不应小于等于前一个闪烁片段的结束位置 {} ！", i, from, to)
-            }
-            BlinkRangeError::Reverse(i, from, to) => {
-                write!(f, "第 {} 个闪烁片段的起始位置 {} 不应小于等于结束位置 {} ！", i, from, to)
-            }
-        }
-    }
-}
-
-impl Error for BlinkRangeError {}
+// #[derive(Debug)]
+// pub enum BlinkRangeError {
+//     Overlap(usize, usize, usize),
+//     Reverse(usize, usize, usize),
+// }
+//
+// impl Display for BlinkRangeError {
+//     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+//         match self {
+//             BlinkRangeError::Overlap(i, from, to) => {
+//                 write!(f, "第 {} 个闪烁片段的起始位置 {} 不应小于等于前一个闪烁片段的结束位置 {} ！", i, from, to)
+//             }
+//             BlinkRangeError::Reverse(i, from, to) => {
+//                 write!(f, "第 {} 个闪烁片段的起始位置 {} 不应小于等于结束位置 {} ！", i, from, to)
+//             }
+//         }
+//     }
+// }
+//
+// impl Error for BlinkRangeError {}
 
 /// 计算两个重叠垂线居中对齐后，短线相对于长线的上端和下端的偏移量。
 ///
@@ -757,7 +771,7 @@ impl Error for BlinkRangeError {}
 /// ```
 ///
 /// ```
-pub fn calc_v_center_offset(line_height: i32, font_height: i32) -> (i32, i32) {
+pub(crate) fn calc_v_center_offset(line_height: i32, font_height: i32) -> (i32, i32) {
     let up = (line_height - font_height) / 2;
     let down = (line_height + font_height) / 2;
     (up, down)
@@ -776,7 +790,7 @@ pub fn calc_v_center_offset(line_height: i32, font_height: i32) -> (i32, i32) {
 /// ```
 ///
 /// ```
-pub fn mouse_enter(visible_lines: Rc<RefCell<HashMap<Rectangle, usize>>>) -> bool {
+pub(crate) fn mouse_enter(visible_lines: Rc<RefCell<HashMap<Rectangle, usize>>>) -> bool {
     for area in visible_lines.borrow().keys() {
         let (x, y, w, h) = area.tup();
         if app::event_inside(x, y, w, h) {
@@ -800,7 +814,7 @@ pub fn mouse_enter(visible_lines: Rc<RefCell<HashMap<Rectangle, usize>>>) -> boo
 /// ```
 ///
 /// ```
-pub fn update_data_properties(options: RichDataOptions, rd: &mut RichData) {
+pub(crate) fn update_data_properties(options: RichDataOptions, rd: &mut RichData) {
     if let Some(clickable) = options.clickable {
         rd.clickable = clickable;
         if !clickable {
@@ -847,7 +861,7 @@ pub fn update_data_properties(options: RichDataOptions, rd: &mut RichData) {
 /// ```
 ///
 /// ```
-pub fn disable_data(rd: &mut RichData) {
+pub(crate) fn disable_data(rd: &mut RichData) {
     rd.set_clickable(false);
     draw::set_cursor(Cursor::Default);
 
@@ -868,9 +882,9 @@ pub fn disable_data(rd: &mut RichData) {
     }
 }
 
-/// 绘制信息单元。
+/// 组件内部使用的数据段结构。
 #[derive(Debug, Clone)]
-pub struct RichData {
+pub(crate) struct RichData {
     /// 数据ID。
     pub id: i64,
     pub text: String,
@@ -1052,13 +1066,13 @@ impl RichData {
         }
     }
 
-    pub fn truncate(&mut self, from: Option<usize>) {
-        if let Some(from) = from {
-            self.text.truncate(from);
-        } else {
-            self.text.clear();
-        }
-    }
+    // pub fn truncate(&mut self, from: Option<usize>) {
+    //     if let Some(from) = from {
+    //         self.text.truncate(from);
+    //     } else {
+    //         self.text.clear();
+    //     }
+    // }
 }
 
 
@@ -1641,7 +1655,7 @@ fn _check_pos(pos: usize, border: i32, x: i32, text: &str) -> Ordering {
 /// ```
 ///
 /// ```
-pub fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>, column_mode: bool, push_from: (i32, i32), panel_x: i32, line_max_width: i32) -> bool {
+pub(crate) fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>, column_mode: bool, push_from: (i32, i32), panel_x: i32, line_max_width: i32) -> bool {
     /*
     遍历可见行，检查每一行的矩形范围是否与选区有重叠，若有重叠则继续检测出现重叠的行中哪些文字片段与选区有重叠。
      */
@@ -2150,15 +2164,15 @@ fn extend_from_end(piece: &LinePiece) {
     }
 }
 
-pub fn locate_piece_at_point(visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>, win_point: ClickPoint, offset_y: i32) -> Option<LinePiece> {
-    for (_, piece) in visible_lines.borrow().iter() {
-        if is_overlap(&piece.rect(offset_y), &win_point.as_rect()) {
-            debug!("piece y: {}, offset_y: {}", piece.y, offset_y);
-            return Some(piece.clone());
-        }
-    }
-    None
-}
+// pub(crate) fn locate_piece_at_point(visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>, win_point: ClickPoint, offset_y: i32) -> Option<LinePiece> {
+//     for (_, piece) in visible_lines.borrow().iter() {
+//         if is_overlap(&piece.rect(offset_y), &win_point.as_rect()) {
+//             debug!("piece y: {}, offset_y: {}", piece.y, offset_y);
+//             return Some(piece.clone());
+//         }
+//     }
+//     None
+// }
 
 pub(crate) fn clear_selected_pieces(selected_pieces: Rc<RefCell<Vec<Weak<RefCell<LinePiece>>>>>) {
     for piece in selected_pieces.borrow().iter() {
@@ -2181,7 +2195,7 @@ fn select_piece_from_or_to(rd: &RichData, piece_index: usize, pos: usize, select
     }
 }
 
-pub fn select_text2(from_point: &ClickPoint, to_point: ClickPoint, data_buffer: Rc<RefCell<Vec<RichData>>>, rd_range: RangeInclusive<usize>, selected_pieces: Rc<RefCell<Vec<Weak<RefCell<LinePiece>>>>>) {
+pub(crate) fn select_text2(from_point: &ClickPoint, to_point: ClickPoint, data_buffer: Rc<RefCell<Vec<RichData>>>, rd_range: RangeInclusive<usize>, selected_pieces: Rc<RefCell<Vec<Weak<RefCell<LinePiece>>>>>) {
     /*
     选择片段的原则：应选择起点右下方的第一行片段，结束点左上方的第一行片段，以及两点之间的中间行片段。
      */
@@ -2285,7 +2299,7 @@ pub fn select_text2(from_point: &ClickPoint, to_point: ClickPoint, data_buffer: 
     app::copy(selection.as_str());
 }
 
-pub fn locate_target_rd(point: &mut ClickPoint, drag_rect: &Rectangle, panel_width: i32, data_buffer: Rc<RefCell<Vec<RichData>>>, index_vec: &Vec<usize>) -> Option<usize> {
+pub(crate) fn locate_target_rd(point: &mut ClickPoint, drag_rect: &Rectangle, panel_width: i32, data_buffer: Rc<RefCell<Vec<RichData>>>, index_vec: &Vec<usize>) -> Option<usize> {
     let point_rect = point.as_rect();
     // debug!("index_vec: {:?}", index_vec);
     if let Ok(idx) = index_vec.binary_search_by({
@@ -2374,7 +2388,7 @@ pub fn locate_target_rd(point: &mut ClickPoint, drag_rect: &Rectangle, panel_wid
     None
 }
 
-pub fn search_index_of_piece(piece: &LinePiece, point: &mut ClickPoint) {
+pub(crate) fn search_index_of_piece(piece: &LinePiece, point: &mut ClickPoint) {
     let len = piece.line.chars().count();
     if let Ok(c_i) = (0..len).collect::<Vec<usize>>().binary_search_by({
         set_font(piece.font, piece.font_size);
@@ -2425,7 +2439,7 @@ pub fn get_contrast_color(color: Color) -> Color {
     let (r, g, b) = color.to_rgb();
     let (cr, cg, cb) = (255 - r, 255 - g, 255 - b);
     if (cr == cg && cg == cb) && ((cr as i16) - (r as i16)).abs() < 25 {
-        HIGHLIGHT_WHITE
+        WHITE
     } else {
         Color::from_rgb(cr, cg, cb)
     }
@@ -2479,7 +2493,7 @@ pub fn get_lighter_or_darker_color(color: Color) -> Color {
     }
 }
 
-pub fn draw_image_mono(
+pub(crate) fn draw_image_mono(
     data: &[u8],
     x: i32,
     y: i32,
@@ -2501,7 +2515,7 @@ pub fn draw_image_mono(
 #[cfg(test)]
 mod tests {
     use fltk::enums::Color;
-    use crate::{get_contrast_color, get_lighter_or_darker_color, HIGHLIGHT_WHITE, Rectangle};
+    use crate::{get_contrast_color, get_lighter_or_darker_color, WHITE, Rectangle};
 
     #[test]
     pub fn make_rectangle_test() {
@@ -2534,13 +2548,13 @@ mod tests {
         assert_eq!(get_contrast_color(Color::from_rgb(255, 255, 255)), Color::from_rgb(0, 0, 0));
         assert_eq!(get_contrast_color(Color::from_rgb(0, 0, 0)), Color::from_rgb(255, 255, 255));
         for i in 1..116 {
-            assert_ne!(get_contrast_color(Color::from_rgb(i, i, i)), HIGHLIGHT_WHITE);
+            assert_ne!(get_contrast_color(Color::from_rgb(i, i, i)), WHITE);
         }
         for i in 116..=139 {
-            assert_eq!(get_contrast_color(Color::from_rgb(i, i, i)), HIGHLIGHT_WHITE);
+            assert_eq!(get_contrast_color(Color::from_rgb(i, i, i)), WHITE);
         }
         for i in 140..=255 {
-            assert_ne!(get_contrast_color(Color::from_rgb(i, i, i)), HIGHLIGHT_WHITE);
+            assert_ne!(get_contrast_color(Color::from_rgb(i, i, i)), WHITE);
         }
     }
 

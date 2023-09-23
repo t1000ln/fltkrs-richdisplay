@@ -65,7 +65,13 @@ impl RichReviewer {
         let blink_flag = Rc::new(Cell::new(BlinkState::new()));
         let blink_handler = {
             let blink_flag_rc = blink_flag.clone();
+
+            #[cfg(target_os = "linux")]
+            let scroller_rc = scroller.clone();
+
+            #[cfg(not(target_os = "linux"))]
             let mut scroller_rc = scroller.clone();
+
             move |handler| {
                 if !scroller_rc.was_deleted() {
                     let (should_toggle, bs) = blink_flag_rc.get().toggle_when_on();

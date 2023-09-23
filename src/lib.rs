@@ -8,8 +8,6 @@ use std::slice::Iter;
 use fltk::{app, draw};
 use fltk::draw::{descent, draw_image, draw_line, draw_rect_with_color, draw_rectf, draw_text2, measure, set_draw_color, set_font};
 use fltk::enums::{Align, Color, ColorDepth, Cursor, Font};
-use fltk::prelude::{FltkError, FltkErrorKind};
-use fltk_sys::draw::Fl_draw_image_mono;
 
 use idgenerator_thin::YitIdHelper;
 use log::{error};
@@ -844,6 +842,15 @@ pub(crate) fn update_data_properties(options: RichDataOptions, rd: &mut RichData
     }
     if let Some(disabled) = options.disabled {
         rd.disabled = disabled;
+
+        if rd.data_type == DataType::Image {
+            if rd.disabled && rd.image_inactive.is_none() {
+                if let Some(ref image) = rd.image {
+                    let new_image = gray_image(image);
+                    rd.image_inactive = Some(new_image);
+                }
+            }
+        }
     }
 }
 
@@ -867,19 +874,44 @@ pub(crate) fn disable_data(rd: &mut RichData) {
 
     match rd.data_type {
         DataType::Image => {
-            // if let Some(image) = rd.image.as_mut() {
-            //     if let Ok(mut ni) = RgbImage::new(image.as_slice(), rd.image_width, rd.image_height, ColorDepth::Rgb8) {
-            //         ni.inactive();
-            //         image.clear();
-            //         image.append(&mut ni.to_rgb_data());
-            //     }
-            // }
-            // 改为新的封装方法：draw_image_mono，这里不做额外处理。
+            if rd.image_inactive.is_none() {
+                if let Some(ref image) = rd.image {
+                    let new_image = gray_image(image);
+                    rd.image_inactive = Some(new_image);
+                }
+            }
         }
         DataType::Text => {
             rd.strike_through = true;
         }
     }
+}
+
+/// 将RGB8格式的图片内容转换为L8格式的灰度内容。
+///
+/// # Arguments
+///
+/// * `rgb_image`: RGB8格式的图片数据。
+///
+/// returns: Vec<u8, Global> 灰度计算后的图片数据，格式为L8。
+///
+/// # Examples
+///
+/// ```
+///
+/// ```
+pub fn gray_image(rgb_image: &Vec<u8>) -> Vec<u8> {
+    let gray_image_len = rgb_image.len() / 3;
+    let mut gray_image: Vec<u8> = Vec::with_capacity(gray_image_len);
+    let mut i = 0;
+    while i < gray_image_len {
+        let j = i * 3;
+        let (r, g, b) = (rgb_image[j], rgb_image[j + 1], rgb_image[j + 2]);
+        let gray = (306 * r as u32 + 601 * g as u32 + 116 * b as u32) >> 10;
+        gray_image.push(gray as u8);
+        i += 1;
+    }
+    gray_image
 }
 
 /// 组件内部使用的数据段结构。
@@ -906,9 +938,12 @@ pub(crate) struct RichData {
     /// 对当前数据进行试算后，分割成适配单行宽度的分片保存起来。由于无需跨线程传输，因此也不考虑线程安全问题。
     pub(crate) line_pieces: Vec<Rc<RefCell<LinePiece>>>,
     data_type: DataType,
+    /// 格式为`ColorDepth::RGB8`的图片数据。
     image: Option<Vec<u8>>,
     image_width: i32,
     image_height: i32,
+    /// 格式为`ColorDepth::L8`的灰度数据。
+    image_inactive: Option<Vec<u8>>,
 
     pub(crate) search_result_positions: Option<Vec<(usize, usize)>>,
     pub(crate) search_highlight_pos: Option<usize>,
@@ -938,11 +973,17 @@ impl From<UserData> for RichData {
                     image: None,
                     image_width: 0,
                     image_height: 0,
+                    image_inactive: None,
                     search_result_positions: None,
                     search_highlight_pos: None,
                 }
             },
             DataType::Image => {
+                let mut image_inactive: Option<Vec<u8>> = None;
+                if let Some(ref image) = data.image {
+                    let inactive_image = gray_image(image);
+                    image_inactive.replace(inactive_image);
+                }
                 RichData {
                     id: YitIdHelper::next_id(),
                     text: data.text,
@@ -963,6 +1004,7 @@ impl From<UserData> for RichData {
                     image: data.image,
                     image_width: data.image_width,
                     image_height: data.image_height,
+                    image_inactive,
                     search_result_positions: None,
                     search_highlight_pos: None,
                 }
@@ -1232,22 +1274,27 @@ impl LinedData for RichData {
                 }
             },
             DataType::Image => {
-                if !self.blink || blink_state.next == BlinkDegree::Normal {
-                    if let Some(piece) = self.line_pieces.last() {
-                        let piece = &*piece.borrow();
-                        if let Some(img) = &self.image {
-                            if !self.disabled {
+                if let Some(piece) = self.line_pieces.last() {
+                    let piece = &*piece.borrow();
+                    if !self.disabled {
+                        if !self.blink || blink_state.next == BlinkDegree::Normal {
+                            if let Some(img) = &self.image {
                                 if let Err(e) = draw_image(img.as_slice(), piece.x, piece.y - offset_y, piece.w, piece.h, ColorDepth::Rgb8) {
                                     error!("draw image error: {:?}", e);
                                 }
-                            } else {
-                                if let Err(e) = draw_image_mono(img.as_slice(), piece.x, piece.y - offset_y, piece.w, piece.h, ColorDepth::Rgb8) {
+                            }
+                        }
+                    } else {
+                        if !self.blink || blink_state.next == BlinkDegree::Normal {
+                            if let Some(img) = &self.image_inactive {
+                                if let Err(e) = draw_image(img.as_slice(), piece.x, piece.y - offset_y, piece.w, piece.h, ColorDepth::L8) {
                                     error!("draw image error: {:?}", e);
                                 }
                             }
                         }
                     }
                 }
+
             },
         }
     }
@@ -2491,25 +2538,6 @@ pub fn get_lighter_or_darker_color(color: Color) -> Color {
         let (cr, cg, cb) = (min(255i16, r as i16 + 127), min(255i16, g as i16 + 127), min(255i16, b as i16 + 127));
         Color::from_rgb(cr as u8, cg as u8, cb as u8)
     }
-}
-
-pub(crate) fn draw_image_mono(
-    data: &[u8],
-    x: i32,
-    y: i32,
-    w: i32,
-    h: i32,
-    depth: ColorDepth,
-) -> Result<(), FltkError> {
-    let sz = (w * h * depth as i32) as usize;
-    if sz > data.len() {
-        return Err(FltkError::Internal(FltkErrorKind::ImageFormatError));
-    }
-
-    unsafe {
-        Fl_draw_image_mono(data.as_ptr(), x, y, w, h, depth as i32, 0);
-    }
-    Ok(())
 }
 
 #[cfg(test)]

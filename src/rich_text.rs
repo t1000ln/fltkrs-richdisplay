@@ -422,7 +422,7 @@ impl RichText {
         }
 
         if should_remove {
-            if let Some(mut rv) = reviewer_rc.replace(None) {
+            if let Some(rv) = reviewer_rc.replace(None) {
                 app::delete_widget(rv.scroller);
             }
         }

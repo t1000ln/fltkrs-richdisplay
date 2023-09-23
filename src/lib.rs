@@ -9,8 +9,8 @@ use std::slice::Iter;
 use fltk::{app, draw};
 use fltk::draw::{descent, draw_image, draw_line, draw_rect_with_color, draw_rectf, draw_text2, measure, set_draw_color, set_font};
 use fltk::enums::{Align, Color, ColorDepth, Cursor, Font};
-use fltk::image::RgbImage;
-use fltk::prelude::ImageExt;
+use fltk::prelude::{FltkError, FltkErrorKind};
+use fltk_sys::draw::Fl_draw_image_mono;
 
 use idgenerator_thin::YitIdHelper;
 use log::{debug, error};
@@ -611,6 +611,7 @@ pub struct UserData {
     pub clickable: bool,
     pub expired: bool,
     pub blink: bool,
+    pub disabled: bool,
     pub strike_through: bool,
     pub data_type: DataType,
     pub image: Option<Vec<u8>>,
@@ -631,6 +632,7 @@ impl From<&RichData> for UserData {
             clickable: data.clickable,
             expired: data.expired,
             blink: data.blink,
+            disabled: data.disabled,
             strike_through: data.strike_through,
             data_type: data.data_type.clone(),
             image: data.image.clone(),
@@ -653,6 +655,7 @@ impl UserData {
             clickable: false,
             expired: false,
             blink: false,
+            disabled: false,
             strike_through: false,
             data_type: DataType::Text,
             image: None,
@@ -673,6 +676,7 @@ impl UserData {
             clickable: false,
             expired: false,
             blink: false,
+            disabled: false,
             strike_through: false,
             data_type: DataType::Image,
             image: Some(image),
@@ -709,6 +713,11 @@ impl UserData {
 
     pub fn set_blink(mut self, blink: bool) -> Self {
         self.blink = blink;
+        self
+    }
+
+    pub fn set_disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
         self
     }
 }
@@ -819,6 +828,9 @@ pub fn update_data_properties(options: RichDataOptions, rd: &mut RichData) {
     if let Some(blink) = options.blink {
         rd.blink = blink;
     }
+    if let Some(disabled) = options.disabled {
+        rd.disabled = disabled;
+    }
 }
 
 /// 禁用数据内容。
@@ -841,13 +853,14 @@ pub fn disable_data(rd: &mut RichData) {
 
     match rd.data_type {
         DataType::Image => {
-            if let Some(image) = rd.image.as_mut() {
-                if let Ok(mut ni) = RgbImage::new(image.as_slice(), rd.image_width, rd.image_height, ColorDepth::Rgb8) {
-                    ni.inactive();
-                    image.clear();
-                    image.append(&mut ni.to_rgb_data());
-                }
-            }
+            // if let Some(image) = rd.image.as_mut() {
+            //     if let Ok(mut ni) = RgbImage::new(image.as_slice(), rd.image_width, rd.image_height, ColorDepth::Rgb8) {
+            //         ni.inactive();
+            //         image.clear();
+            //         image.append(&mut ni.to_rgb_data());
+            //     }
+            // }
+            // 改为新的封装方法：draw_image_mono，这里不做额外处理。
         }
         DataType::Text => {
             rd.strike_through = true;
@@ -870,6 +883,7 @@ pub struct RichData {
     expired: bool,
     /// 闪烁片段列表
     blink: bool,
+    disabled: bool,
     pub strike_through: bool,
     pub line_height: i32,
     /// 当前内容在面板垂直高度中的起始和截至y坐标，以及起始和结尾x坐标。
@@ -901,6 +915,7 @@ impl From<UserData> for RichData {
                     clickable: data.clickable,
                     expired: data.expired,
                     blink: data.blink,
+                    disabled: false,
                     strike_through: data.strike_through,
                     line_height: 1,
                     v_bounds: Rc::new(Cell::new((0, 0, 0, 0))),
@@ -925,6 +940,7 @@ impl From<UserData> for RichData {
                     clickable: data.clickable,
                     expired: data.expired,
                     blink: data.blink,
+                    disabled: false,
                     strike_through: data.strike_through,
                     line_height: 1,
                     v_bounds: Rc::new(Cell::new((0, 0, 0, 0))),
@@ -1206,8 +1222,14 @@ impl LinedData for RichData {
                     if let Some(piece) = self.line_pieces.last() {
                         let piece = &*piece.borrow();
                         if let Some(img) = &self.image {
-                            if let Err(e) = draw_image(img.as_slice(), piece.x, piece.y - offset_y, piece.w, piece.h, ColorDepth::Rgb8) {
-                                error!("draw image error: {:?}", e);
+                            if !self.disabled {
+                                if let Err(e) = draw_image(img.as_slice(), piece.x, piece.y - offset_y, piece.w, piece.h, ColorDepth::Rgb8) {
+                                    error!("draw image error: {:?}", e);
+                                }
+                            } else {
+                                if let Err(e) = draw_image_mono(img.as_slice(), piece.x, piece.y - offset_y, piece.w, piece.h, ColorDepth::Rgb8) {
+                                    error!("draw image error: {:?}", e);
+                                }
                             }
                         }
                     }
@@ -1443,7 +1465,8 @@ pub struct RichDataOptions {
     pub fg_color: Option<Color>,
     pub bg_color: Option<Color>,
     pub strike_through: Option<bool>,
-    pub blink: Option<bool>
+    pub blink: Option<bool>,
+    pub disabled: Option<bool>
 }
 
 impl RichDataOptions {
@@ -1457,7 +1480,8 @@ impl RichDataOptions {
             fg_color: None,
             bg_color: None,
             strike_through: None,
-            blink: None
+            blink: None,
+            disabled: None
         }
     }
 
@@ -1498,6 +1522,11 @@ impl RichDataOptions {
 
     pub fn blink(mut self, blink: bool) -> RichDataOptions {
         self.blink = Some(blink);
+        self
+    }
+
+    pub fn disabled(mut self, disabled: bool) -> RichDataOptions {
+        self.disabled = Some(disabled);
         self
     }
 }
@@ -2417,17 +2446,56 @@ pub fn get_contrast_color(color: Color) -> Color {
 /// ```
 pub fn get_lighter_or_darker_color(color: Color) -> Color {
     let (r, g, b) = color.to_rgb();
+    // let supported = draw::can_do_alpha_blending();
+    // if supported {
+    //      // 使用alpha blending算法降低色彩饱和度，效果不好。
+    //     Color::from_rgba_tuple((r, g, b, 60u8))
+    // } else {
+    //     let total = r as u16 + g as u16 + b as u16;
+    //     let max_c = max(r, max(g, b));
+    //     if total >= 383 || max_c as u16 + 127 > 255u16 {
+    //         let (cr, cg, cb) = (max(0i16, r as i16 - 127), max(0i16, g as i16 - 127), max(0i16, b as i16 - 127));
+    //         Color::from_rgb(cr as u8, cg as u8, cb as u8)
+    //          // 使用内置api降低亮度，效果不理想
+    //         // color.darker()
+    //     } else {
+    //         let (cr, cg, cb) = (min(255i16, r as i16 + 127), min(255i16, g as i16 + 127), min(255i16, b as i16 + 127));
+    //         Color::from_rgb(cr as u8, cg as u8, cb as u8)
+    //          // 使用内置api提高亮度，效果不理想
+    //         // color.lighter()
+    //     }
+    // }
+
     let total = r as u16 + g as u16 + b as u16;
     let max_c = max(r, max(g, b));
     if total >= 383 || max_c as u16 + 127 > 255u16 {
+        // 当三原色合计值超过最大合计值的一半时，或者某项原色值超过128，降低各原色数值。效果是变暗。
         let (cr, cg, cb) = (max(0i16, r as i16 - 127), max(0i16, g as i16 - 127), max(0i16, b as i16 - 127));
         Color::from_rgb(cr as u8, cg as u8, cb as u8)
-        // color.darker()
     } else {
+        // 当三原色合计值小于最大合计值的一半时，提高各原色数值。效果是变亮。
         let (cr, cg, cb) = (min(255i16, r as i16 + 127), min(255i16, g as i16 + 127), min(255i16, b as i16 + 127));
         Color::from_rgb(cr as u8, cg as u8, cb as u8)
-        // color.lighter()
     }
+}
+
+pub fn draw_image_mono(
+    data: &[u8],
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    depth: ColorDepth,
+) -> Result<(), FltkError> {
+    let sz = (w * h * depth as i32) as usize;
+    if sz > data.len() {
+        return Err(FltkError::Internal(FltkErrorKind::ImageFormatError));
+    }
+
+    unsafe {
+        Fl_draw_image_mono(data.as_ptr(), x, y, w, h, depth as i32, 0);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -2480,5 +2548,12 @@ mod tests {
     pub fn get_lighter_color_test() {
         let lighter = get_lighter_or_darker_color(Color::DarkCyan);
         println!("{:?} -> {:?}", Color::DarkCyan.to_rgb(), lighter.to_rgb())
+    }
+
+    #[test]
+    pub fn emoji_test() {
+        let emoji = "😀";
+        println!("{:?}", emoji.chars().nth(0).unwrap());
+        assert_eq!(emoji.len(), 1);
     }
 }

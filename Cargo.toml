@@ -11,6 +11,8 @@ license = "MIT"
 categories = ["GUI"]
 repository = "https://github.com/t1000ln/fltkrs-richdisplay"
 
+exclude = ["res/*", "examples/*"]
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]

@@ -53,7 +53,7 @@ pub enum BlinkDegree {
 
 /// 可视区域闪烁开关标记和状态。
 #[derive(Debug, Clone,Copy, PartialEq, Eq)]
-pub struct BlinkState {
+pub(crate) struct BlinkState {
     /// 可视区域是否存在闪烁内容。
     on: bool,
     /// 应闪烁内容在下一次刷新显示时的强度。
@@ -215,10 +215,10 @@ impl Rectangle {
         (self.0, self.1, self.2, self.3)
     }
 
-    /// 获得当前矩形左上角和右下角的坐标。
-    pub fn corner(&self) -> (ClickPoint, ClickPoint) {
-        (ClickPoint::new(self.0, self.1), ClickPoint::new(self.0 + self.2, self.1 + self.3))
-    }
+    // /// 获得当前矩形左上角和右下角的坐标。
+    // pub(crate) fn corner(&self) -> (ClickPoint, ClickPoint) {
+    //     (ClickPoint::new(self.0, self.1), ClickPoint::new(self.0 + self.2, self.1 + self.3))
+    // }
 
     /// 获得当前矩形左上角和右下角的空矩形。
     pub fn corner_rect(&self) -> (Self, Self) {
@@ -226,8 +226,9 @@ impl Rectangle {
     }
 }
 
+/// 鼠标点击位置的坐标信息和数据片段索引信息。
 #[derive(Debug, Clone, Copy)]
-pub struct ClickPoint {
+pub(crate) struct ClickPoint {
     pub x: i32,
     pub y: i32,
     /// 点所在分片在数据段中的索引号。
@@ -258,25 +259,18 @@ impl ClickPoint {
     /// # Examples
     ///
     /// ```
-    /// use fltkrs_richdisplay::ClickPoint;
-    /// let from_point = ClickPoint::new(120, 50);
-    /// let to_point = ClickPoint::new(60, 150);
-    /// let rect = from_point.to_rect(&to_point);
-    /// let t = rect.tup();
-    /// assert_eq!(t.0, 60);
-    /// assert_eq!(t.1, 50);
     /// ```
     pub fn to_rect(&self, to_point: &Self) -> Rectangle {
         Rectangle::new(self.x, self.y, to_point.x - self.x, to_point.y - self.y)
     }
-    pub fn towards_down(&self, to_point: &Self) -> bool {
-        self.y < to_point.y
-    }
+    // pub fn towards_down(&self, to_point: &Self) -> bool {
+    //     self.y < to_point.y
+    // }
 }
 
 /// 同一行内多个分片之间共享的信息。通过Rc<RefCell<ThroughLine>>进行链接。
 #[derive(Debug, Clone)]
-pub struct ThroughLine {
+pub(crate) struct ThroughLine {
     pub max_h: i32,
     pub ys: RefCell<Vec<Weak<RefCell<LinePiece>>>>,
     pub exist_image: bool,
@@ -318,12 +312,12 @@ impl ThroughLine {
         self
     }
 
-    pub fn set_exist_image(&mut self, exist_image: bool) -> &mut Self {
-        if exist_image == true {
-            self.exist_image = true;
-        }
-        self
-    }
+    // pub fn set_exist_image(&mut self, exist_image: bool) -> &mut Self {
+    //     if exist_image == true {
+    //         self.exist_image = true;
+    //     }
+    //     self
+    // }
 
     pub fn add_piece(&mut self, lp: Rc<RefCell<LinePiece>>) -> &mut Self {
         self.ys.borrow_mut().push(Rc::downgrade(&lp));
@@ -362,16 +356,16 @@ impl ThroughLine {
 /// 可视内容在面板容器中的边界空白。
 #[derive(Debug, Clone, Default)]
 pub struct Padding {
-    pub(crate) left: i32,
-    pub(crate) top: i32,
-    pub(crate) right: i32,
-    pub(crate) bottom: i32,
+    pub left: i32,
+    pub top: i32,
+    pub right: i32,
+    pub bottom: i32,
 }
 
 /// 单行文本的渲染参数，通过试算得到。
 /// 一个大段文本在试算过程中，可能被拆分为多个适配当前窗口宽度的单行文本片段，用于简化绘制过程的运算。
 #[derive(Debug, Clone)]
-pub struct LinePiece {
+pub(crate) struct LinePiece {
     pub line: String,
     /// 起点x坐标
     pub x: i32,
@@ -476,13 +470,13 @@ impl LinePiece {
         self.selected_range.set(Some((0, self.line.chars().count())));
     }
 
-    pub fn selection_text(&self) -> Option<String> {
-        if let Some((from, to)) = self.selected_range.get() {
-            Some(self.line.chars().skip(from).take(to - from).collect::<String>())
-        } else {
-            None
-        }
-    }
+    // pub fn selection_text(&self) -> Option<String> {
+    //     if let Some((from, to)) = self.selected_range.get() {
+    //         Some(self.line.chars().skip(from).take(to - from).collect::<String>())
+    //     } else {
+    //         None
+    //     }
+    // }
 
     pub fn copy_selection(&self, selection: &mut String) {
         if let Some((from, to)) = self.selected_range.get() {
@@ -497,7 +491,7 @@ impl LinePiece {
     }
 }
 
-pub trait LinedData {
+pub(crate) trait LinedData {
     /// 设置绘制区域顶部和底部边界y坐标，以及起始x坐标。
     ///
     /// # Arguments
@@ -603,6 +597,8 @@ pub trait LinedData {
     fn estimate(&mut self, blow_line: Rc<RefCell<LinePiece>>, max_width: i32) -> Rc<RefCell<LinePiece>>;
 
 }
+
+/// 数据段类型，当前支持文本和图片两种。
 #[derive(Clone, Debug, PartialEq)]
 pub enum DataType {
     Text,

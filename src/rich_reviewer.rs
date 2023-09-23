@@ -17,7 +17,7 @@ use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_ent
 use crate::rich_text::{PANEL_PADDING};
 
 #[derive(Clone, Debug)]
-pub struct RichReviewer {
+pub(crate) struct RichReviewer {
     pub(crate) scroller: Scroll,
     pub(crate) panel: Frame,
     pub(crate) data_buffer: Rc<RefCell<Vec<RichData>>>,
@@ -36,7 +36,7 @@ widget_extends!(RichReviewer, Scroll, scroller);
 
 impl RichReviewer {
     pub const SCROLL_BAR_WIDTH: i32 = 10;
-    pub const PANEL_MAX_HEIGHT: i32 = 10;
+    // pub const PANEL_MAX_HEIGHT: i32 = 10;
 
     pub fn new<T>(x: i32, y: i32, w: i32, h: i32, title: T) -> Self
         where T: Into<Option<&'static str>> + Clone {
@@ -367,27 +367,27 @@ impl RichReviewer {
         self.panel.resize(self.panel.x(), self.panel.y(), scroller_width, panel_height);
     }
 
-    /// 根据当前回顾`scroller`窗口大小创建对应的离线绘图板，并设置滚动条到最底部。
-    ///
-    /// # Arguments
-    ///
-    /// * `w`:
-    /// * `h`:
-    ///
-    /// returns: ()
-    ///
-    /// # Examples
-    ///
-    /// ```
-    ///
-    /// ```
-    pub fn renew_offscreen(&mut self, w: i32, h: i32) {
-        if let Some(offs) = Offscreen::new(w, h) {
-            self.reviewer_screen.replace(offs);
-            // 滚动到最底部
-            self.scroller.scroll_to(0, self.panel.height() - self.scroller.height());
-        }
-    }
+    // /// 根据当前回顾`scroller`窗口大小创建对应的离线绘图板，并设置滚动条到最底部。
+    // ///
+    // /// # Arguments
+    // ///
+    // /// * `w`:
+    // /// * `h`:
+    // ///
+    // /// returns: ()
+    // ///
+    // /// # Examples
+    // ///
+    // /// ```
+    // ///
+    // /// ```
+    // pub fn renew_offscreen(&mut self, w: i32, h: i32) {
+    //     if let Some(offs) = Offscreen::new(w, h) {
+    //         self.reviewer_screen.replace(offs);
+    //         // 滚动到最底部
+    //         self.scroller.scroll_to(0, self.panel.height() - self.scroller.height());
+    //     }
+    // }
 
     pub fn scroll_to_bottom(&mut self) {
         self.scroller.scroll_to(0, self.panel.height() - self.scroller.height());

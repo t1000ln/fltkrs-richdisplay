@@ -1,4 +1,4 @@
-//! 内容源自rich_text的快照，可滚动的浏览的组件。
+//! 内容源自rich_text的快照，可滚动浏览的组件。
 
 use std::cell::{Cell, RefCell};
 use std::cmp::{max, min, Ordering};
@@ -350,7 +350,7 @@ impl RichReviewer {
         self.background_color.replace(color);
     }
 
-    pub fn set_data(&mut self, data: Vec<RichData>) {
+    pub(crate) fn set_data(&mut self, data: Vec<RichData>) {
         // 更新回看数据
         self.data_buffer.replace(data);
 
@@ -401,7 +401,7 @@ impl RichReviewer {
     /// ```
     ///
     /// ```
-    pub fn calc_panel_height(buffer_rc: Rc<RefCell<Vec<RichData>>>, scroller_height: i32) -> i32 {
+    pub(crate) fn calc_panel_height(buffer_rc: Rc<RefCell<Vec<RichData>>>, scroller_height: i32) -> i32 {
         let buffer = &*buffer_rc.borrow();
         let (mut top, mut bottom) = (0, 0);
         if let Some(first) = buffer.first() {

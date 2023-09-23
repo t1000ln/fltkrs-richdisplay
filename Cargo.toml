@@ -1,6 +1,6 @@
 [package]
 name = "fltkrs-richdisplay"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 rust-version = "1.70.0"
 keywords = ["richdisplay", "fltk"]
@@ -8,9 +8,9 @@ description = "基于fltk-rs的富文本组件，作为fltk-TextDisplay组件的
 readme = "README.md"
 authors = ["t1000ln <t1000_ln@aliyun.com>"]
 license = "MIT"
-categories = ["GUI"]
+categories = ["gui"]
 repository = "https://github.com/t1000ln/fltkrs-richdisplay"
-
+documentation = "https://docs.rs/fltkrs-richdisplay"
 exclude = ["res/*", "examples/*"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

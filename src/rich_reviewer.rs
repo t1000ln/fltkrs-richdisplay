@@ -13,7 +13,7 @@ use fltk::prelude::{GroupExt, WidgetBase, WidgetExt};
 use fltk::{app, draw, widget_extends};
 use log::{debug, error};
 use throttle_my_fn::throttle;
-use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData, ClickPoint, select_text2, locate_target_rd, clear_selected_pieces, BlinkState, BLINK_INTERVAL};
+use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData, ClickPoint, select_text2, locate_target_rd, clear_selected_pieces, BlinkState, BLINK_INTERVAL, Callback};
 use crate::rich_text::{PANEL_PADDING};
 
 #[derive(Clone, Debug)]
@@ -25,7 +25,8 @@ pub(crate) struct RichReviewer {
     visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
     clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
     reviewer_screen: Rc<RefCell<Offscreen>>,
-    notifier: Rc<RefCell<Option<tokio::sync::mpsc::Sender<UserData>>>>,
+    // notifier: Rc<RefCell<Option<tokio::sync::mpsc::Sender<UserData>>>>,
+    notifier: Rc<RefCell<Option<Callback>>>,
     search_string: Option<String>,
     /// 查找结果，保存查询到的目标数据段在data_buffer中的索引编号。
     search_results: Vec<usize>,
@@ -53,7 +54,8 @@ impl RichReviewer {
         let background_color = Rc::new(Cell::new(Color::Black));
         let visible_lines = Rc::new(RefCell::new(HashMap::<Rectangle, LinePiece>::new()));
         let clickable_data = Rc::new(RefCell::new(HashMap::<Rectangle, usize>::new()));
-        let notifier: Rc<RefCell<Option<tokio::sync::mpsc::Sender<UserData>>>> = Rc::new(RefCell::new(None));
+        // let notifier: Rc<RefCell<Option<tokio::sync::mpsc::Sender<UserData>>>> = Rc::new(RefCell::new(None));
+        let notifier: Rc<RefCell<Option<Callback>>> = Rc::new(RefCell::new(None));
         let reviewer_screen = Rc::new(RefCell::new(Offscreen::new(w, h).unwrap()));
         let scroll_panel_to_y_after_resize = Rc::new(Cell::new(0));
         let resize_panel_after_resize = Rc::new(Cell::new((0, 0, 0, 0)));
@@ -224,14 +226,9 @@ impl RichReviewer {
                             let (x, y, w, h) = area.tup();
                             if app::event_inside(x, y, w, h) {
                                 if let Some(rd) = buffer_rc.borrow().get(*idx) {
-                                    let sd = rd.into();
-                                    if let Some(notifier) = notifier_rc.borrow().as_ref() {
-                                        let notifier = notifier.clone();
-                                        tokio::spawn(async move {
-                                            if let Err(e) = notifier.send(sd).await {
-                                                error!("发送用户操作失败: {:?}", e);
-                                            }
-                                        });
+                                    let sd: UserData = rd.into();
+                                    if let Some(cb) = &mut *notifier_rc.borrow_mut() {
+                                        cb.notify(sd);
                                     }
                                 }
                                 break;
@@ -548,7 +545,7 @@ impl RichReviewer {
     /// ```
     ///
     /// ```
-    pub fn set_notifier(&mut self, notifier: tokio::sync::mpsc::Sender<UserData>) {
+    pub fn set_notifier(&mut self, notifier: Callback) {
         self.notifier.replace(Some(notifier));
     }
 

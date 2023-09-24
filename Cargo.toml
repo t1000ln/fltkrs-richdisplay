@@ -1,6 +1,6 @@
 [package]
 name = "fltkrs-richdisplay"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 rust-version = "1.70.0"
 keywords = ["richdisplay", "fltk"]
@@ -17,7 +17,6 @@ exclude = ["res/*", "examples/*"]
 
 [dependencies]
 fltk = { version = "^1.4.12", features = ["use-ninja"] }
-tokio = { version = "1.32", features = ["full"] }
 idgenerator-thin = "0.1.2"
 log = "^0.4"
 throttle_my_fn = "0.2.6"
@@ -25,3 +24,4 @@ parking_lot = "0.12.1"
 
 [dev-dependencies]
 simple_logger = "4.2"
+tokio = { version = "1.32", features = ["full"] }

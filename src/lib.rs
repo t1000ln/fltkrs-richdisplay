@@ -1,7 +1,7 @@
 use std::cell::{Cell, RefCell};
 use std::cmp::{max, min, Ordering};
 use std::collections::{BTreeMap, HashMap};
-use std::fmt::{Debug};
+use std::fmt::{Debug, Formatter};
 use std::ops::{RangeInclusive};
 use std::rc::{Rc, Weak};
 use std::slice::Iter;
@@ -41,6 +41,80 @@ pub const HIGHLIGHT_RECT_CONTRAST_COLOR: Color = Color::from_rgb(0, 110, 255);
 
 /// 最亮的白色。
 pub const WHITE: Color = Color::from_rgb(255, 255, 255);
+
+/// 回调函数载体。
+/// 当用户使用鼠标点击主视图或回顾区视图上的可互动数据段时，会执行该回调函数，并将点击目标处的数据作为参数传入回调函数。
+/// 用户可自由定义回调函数的具体行为。
+#[derive(Clone)]
+pub struct Callback {
+    /// 回调函数。
+    notifier: Rc<RefCell<Box<dyn FnMut(UserData)>>>,
+}
+
+impl Callback {
+
+
+    /// 构建新的回调结构体实例。
+    ///
+    /// # Arguments
+    ///
+    /// * `notifier`: 回调函数包装。
+    ///
+    /// returns: Callback
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::cell::RefCell;
+    /// use std::rc::Rc;
+    /// use log::error;
+    /// use fltkrs_richdisplay::rich_text::RichText;
+    /// use fltkrs_richdisplay::{Callback, UserData};
+    ///
+    /// let mut rich_text = RichText::new(100, 120, 800, 400, None);
+    /// let (sender, mut receiver) = tokio::sync::mpsc::channel::<UserData>(100);
+    /// let cb_fn = {
+    ///     let sender_rc = sender.clone();
+    ///     move |user_data| {
+    ///         let sender = sender_rc.clone();
+    ///         tokio::spawn(async move {
+    ///             if let Err(e) = sender.send(user_data).await {
+    ///                 error!("发送用户操作失败: {:?}", e);
+    ///             }
+    ///         });
+    ///     }
+    /// };
+    /// let cb = Callback::new(Rc::new(RefCell::new(Box::new(cb_fn))));
+    /// rich_text.set_notifier(cb);
+    /// ```
+    pub fn new(notifier: Rc<RefCell<Box<dyn FnMut(UserData)>>>) -> Callback {
+        Callback { notifier }
+    }
+
+    /// 执行回调。
+    ///
+    /// # Arguments
+    ///
+    /// * `data`: 用户数据。
+    ///
+    /// returns: ()
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
+    fn notify(&mut self, data: UserData) {
+        let notify = &mut* self.notifier.borrow_mut();
+        notify(data);
+    }
+}
+
+impl Debug for Callback {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Callback count: {}", Rc::<RefCell<Box<(dyn FnMut(UserData) + 'static)>>>::strong_count(&self.notifier))
+    }
+}
 
 /// 闪烁强度状态。
 #[derive(Debug, Clone,Copy, PartialEq, Eq)]

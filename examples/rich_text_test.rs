@@ -1,5 +1,7 @@
-//! 请描述文件用途。
+//! richdisplay包的测试应用。
 
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::time::Duration;
 use fltk::{app, window};
 use fltk::button::Button;
@@ -7,15 +9,16 @@ use fltk::enums::{Color, Event, Font, Key};
 use fltk::group::Group;
 use fltk::image::SharedImage;
 use fltk::prelude::{GroupExt, ImageExt, WidgetBase, WidgetExt, WindowExt};
-use log::debug;
+use log::{debug, error};
 use fltkrs_richdisplay::rich_text::{RichText};
-use fltkrs_richdisplay::{DataType, RichDataOptions, UserData};
+use fltkrs_richdisplay::{Callback, DataType, RichDataOptions, UserData};
 
 pub enum GlobalMessage {
     ContentData(UserData),
     UpdateData(RichDataOptions),
     DisableData(i64),
 }
+
 
 #[tokio::main]
 async fn main() {
@@ -38,7 +41,20 @@ async fn main() {
 
     let mut rich_text = RichText::new(100, 120, 800, 400, None);
     let (sender, mut receiver) = tokio::sync::mpsc::channel::<UserData>(100);
-    rich_text.set_notifier(sender);
+    let cb_fn = {
+        let sender_rc = sender.clone();
+        move |user_data| {
+            let sender = sender_rc.clone();
+            tokio::spawn(async move {
+                if let Err(e) = sender.send(user_data).await {
+                    error!("发送用户操作失败: {:?}", e);
+                }
+            });
+        }
+    };
+    let cb = Callback::new(Rc::new(RefCell::new(Box::new(cb_fn))));
+    rich_text.set_notifier(cb);
+
     rich_text.set_buffer_max_lines(50);
 
     btn1.set_callback({

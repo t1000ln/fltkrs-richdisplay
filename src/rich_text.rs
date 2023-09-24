@@ -13,7 +13,7 @@ use fltk::prelude::{FltkError, GroupExt, WidgetBase, WidgetExt};
 use fltk::{app, draw, widget_extends};
 use fltk::app::{MouseWheel};
 use fltk::group::{Flex};
-use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData, select_text, BLINK_INTERVAL, BlinkState};
+use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData, select_text, BLINK_INTERVAL, BlinkState, Callback};
 
 use idgenerator_thin::{IdGeneratorOptions, YitIdHelper};
 use log::{error};
@@ -33,7 +33,8 @@ pub struct RichText {
     data_buffer: Rc<RefCell<VecDeque<RichData>>>,
     background_color: Rc<Cell<Color>>,
     buffer_max_lines: usize,
-    notifier: Rc<RefCell<Option<tokio::sync::mpsc::Sender<UserData>>>>,
+    // notifier: Rc<RefCell<Option<tokio::sync::mpsc::Sender<UserData>>>>,
+    notifier: Rc<RefCell<Option<Callback>>>,
     inner: Flex,
     reviewer: Rc<RefCell<Option<RichReviewer>>>,
     panel_screen: Rc<RefCell<Offscreen>>,
@@ -73,7 +74,8 @@ impl RichText {
 
         let visible_lines = Rc::new(RefCell::new(HashMap::<Rectangle, LinePiece>::new()));
         let clickable_data = Rc::new(RefCell::new(HashMap::<Rectangle, usize>::new()));
-        let notifier: Rc<RefCell<Option<tokio::sync::mpsc::Sender<UserData>>>> = Rc::new(RefCell::new(None));
+        // let notifier: Rc<RefCell<Option<tokio::sync::mpsc::Sender<UserData>>>> = Rc::new(RefCell::new(None));
+        let notifier: Rc<RefCell<Option<Callback>>> = Rc::new(RefCell::new(None));
         let selected = Rc::new(Cell::new(false));
         let should_resize_content = Rc::new(Cell::new(0));
 
@@ -211,8 +213,9 @@ impl RichText {
                                 // 显示回顾区
                                 let mut reviewer = RichReviewer::new(0, 0, flex.width(), flex.height() - MAIN_PANEL_FIX_HEIGHT, None);
                                 reviewer.set_background_color(bg_rc.get());
-                                if let Some(notifier_rc) = notifier_rc.borrow().as_ref() {
-                                    reviewer.set_notifier(notifier_rc.clone());
+                                if let Some(notifier_rc_ref) = notifier_rc.borrow_mut().as_mut() {
+                                    let cb = notifier_rc_ref.clone();
+                                    reviewer.set_notifier(cb);
                                 }
 
                                 let mut snapshot = Vec::from(buffer_rc.borrow().clone());
@@ -307,14 +310,9 @@ impl RichText {
                             let (x, y, w, h) = area.tup();
                             if app::event_inside(x, y, w, h) {
                                 if let Some(rd) = buffer_rc.borrow().get(*idx) {
-                                    let sd = rd.into();
-                                    if let Some(notifier) = notifier_rc.borrow().as_ref() {
-                                        let notifier = notifier.clone();
-                                        tokio::spawn(async move {
-                                            if let Err(e) = notifier.send(sd).await {
-                                                error!("send error: {:?}", e);
-                                            }
-                                        });
+                                    let sd: UserData = rd.into();
+                                    if let Some(cb) = notifier_rc.borrow_mut().as_mut() {
+                                        cb.notify(sd);
                                     }
                                 }
                                 break;
@@ -472,6 +470,7 @@ impl RichText {
         self.panel.set_damage(true);
     }
 
+    /// 删除最后一个数据段。
     pub fn delete_last_data(&mut self) {
         self.data_buffer.borrow_mut().pop_back();
         Self::draw_offline_2(&self);
@@ -686,7 +685,7 @@ impl RichText {
     /// ```
     ///
     /// ```
-    pub fn set_notifier(&mut self, notifier: tokio::sync::mpsc::Sender<UserData>) {
+    pub fn set_notifier(&mut self, notifier: Callback) {
         self.notifier.replace(Some(notifier));
     }
 

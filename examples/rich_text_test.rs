@@ -19,7 +19,6 @@ pub enum GlobalMessage {
     DisableData(i64),
 }
 
-
 #[tokio::main]
 async fn main() {
     simple_logger::init_with_level(log::Level::Debug).unwrap();
@@ -41,6 +40,7 @@ async fn main() {
 
     let mut rich_text = RichText::new(100, 120, 800, 400, None);
     let (sender, mut receiver) = tokio::sync::mpsc::channel::<UserData>(100);
+    // 自定义回调函数，当用户鼠标点击可互动的数据段时，组件会调用回调函数。
     let cb_fn = {
         let sender_rc = sender.clone();
         move |user_data| {

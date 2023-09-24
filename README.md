@@ -5,6 +5,8 @@
 
 使用方法示例：
 ```rust
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::time::Duration;
 use fltk::{app, window};
 use fltk::button::Button;
@@ -12,9 +14,9 @@ use fltk::enums::{Color, Event, Font, Key};
 use fltk::group::Group;
 use fltk::image::SharedImage;
 use fltk::prelude::{GroupExt, ImageExt, WidgetBase, WidgetExt, WindowExt};
-use log::debug;
+use log::{debug, error};
 use fltkrs_richdisplay::rich_text::{RichText};
-use fltkrs_richdisplay::{DataType, RichDataOptions, UserData};
+use fltkrs_richdisplay::{Callback, DataType, RichDataOptions, UserData};
 
 pub enum GlobalMessage {
     ContentData(UserData),
@@ -43,7 +45,21 @@ async fn main() {
 
     let mut rich_text = RichText::new(100, 120, 800, 400, None);
     let (sender, mut receiver) = tokio::sync::mpsc::channel::<UserData>(100);
-    rich_text.set_notifier(sender);
+    // 自定义回调函数，当用户鼠标点击可互动的数据段时，组件会调用回调函数。
+    let cb_fn = {
+        let sender_rc = sender.clone();
+        move |user_data| {
+            let sender = sender_rc.clone();
+            tokio::spawn(async move {
+                if let Err(e) = sender.send(user_data).await {
+                    error!("发送用户操作失败: {:?}", e);
+                }
+            });
+        }
+    };
+    let cb = Callback::new(Rc::new(RefCell::new(Box::new(cb_fn))));
+    rich_text.set_notifier(cb);
+
     rich_text.set_buffer_max_lines(50);
 
     btn1.set_callback({
@@ -152,7 +168,7 @@ async fn main() {
         for i in 0..1 {
             let turn = i * 13;
             let mut data: Vec<UserData> = Vec::from([
-                UserData::new_text(format!("{}安全并且高效地处理并发编程是Rust的另一个主要目标。💖并发编程和并行编程这两种概念随着计算机设备的多核a优化而变得越来越重要。并发编程允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 1)).set_underline(true).set_font(Font::Helvetica, 38).set_bg_color(Some(Color::DarkYellow)).set_clickable(true),
+                UserData::new_text(format!("{}安全并且高效地处理并发编程是Rust的另一个主要目标。💖并发编程和并行编程这两种概念随着计算机设备的多核a优化而变得越来越重要。并发编程🐉允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 1)).set_underline(true).set_font(Font::Helvetica, 38).set_bg_color(Some(Color::DarkYellow)).set_clickable(true),
                 UserData::new_text(format!("{}在大部分现在操作系统中，执行程序的代码会运行在进程中，操作系统会同时管理多个进程。类似地，程序内部也可以拥有多个同时运行的独立部分，用来运行这些独立部分的就叫做线程。", turn + 2)).set_font(Font::HelveticaItalic, 18).set_bg_color(Some(Color::Green)),
                 UserData::new_image(img1_data.clone(), img1_width, img1_height),
                 UserData::new_text(format!("{}由于多线程可以同时运行，🐉所以将计算操作拆分至多个线程可以提高性能。a但是这也增加了程序的复杂度，因为不同线程的执行顺序是无法确定的。\r\n", turn + 3)).set_fg_color(Color::Red).set_bg_color(Some(Color::Green)).set_underline(true),
@@ -167,7 +183,7 @@ async fn main() {
                 UserData::new_text(format!("{}由于多线程可以同时运行，所以将计算操作拆分至多个线程可以提高性能。a但是这也增加了程序的复杂度，因为不同线程的执行顺序是无法确定的。\r\n", turn + 11)).set_fg_color(Color::Red).set_bg_color(Some(Color::Green)),
                 UserData::new_text(format!("{}由于多线程可以同时运行，所以将计算操作拆分至多个线程可以提高性能。", turn + 12)).set_fg_color(Color::Red).set_bg_color(Some(Color::Green)).set_clickable(true),
                 UserData::new_text(format!("{}由于多线程可以同时运行，💖所以将计算操作拆分至多个线程可以提高性能。", turn + 13)).set_fg_color(Color::Cyan).set_font(Font::Courier, 18).set_clickable(true).set_blink(true),
-                UserData::new_image(img2_data.clone(), img2_width, img2_height).set_clickable(true),
+                UserData::new_image(img2_data.clone(), img2_width, img2_height).set_clickable(true).set_blink(true),
             ]);
             data.reverse();
             while let Some(data_unit) = data.pop() {

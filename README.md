@@ -1,5 +1,6 @@
 # fltkrs-richdisplay
-![Static Badge](https://img.shields.io/badge/version-0.1.6-blue)
+![Static Badge](https://img.shields.io/badge/version-0.1.6-blue) ![Static Badge](https://img.shields.io/badge/build-passing-green)
+
 
 
 这是一个专为`fltk-rs`开发的富文本展示组件项目，只能展示不能编辑，目标是作为`fltk-TextDisplay`组件的一个补充。 该组件的设计目标是提供更多的文本样式展示，甚至支持图形展示，主要的展示形式以行为主，从上向下、从左到右的流式排列。 `fltk-TextDisplay`仅支持`60`种颜色与字体的组合，而本组件设计的目的之一就是突破这个非常低的限制，可以随意组合字体、字号、颜色、下划线、粗体/斜体等，支持文本与图形混合排布。

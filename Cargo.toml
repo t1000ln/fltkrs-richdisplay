@@ -1,6 +1,6 @@
 [package]
 name = "fltkrs-richdisplay"
-version = "0.1.6"
+version = "0.1.7"
 edition = "2021"
 rust-version = "1.70.0"
 keywords = ["richdisplay", "fltk"]
@@ -16,7 +16,7 @@ exclude = ["res/*", "examples/*"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-fltk = { version = "^1.4.12", features = ["use-ninja"] }
+fltk = { version = "^1.4.13", features = ["use-ninja"] }
 idgenerator-thin = "0.1.2"
 log = "^0.4"
 throttle_my_fn = "0.2.6"

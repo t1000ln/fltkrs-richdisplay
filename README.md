@@ -1,15 +1,35 @@
 # fltkrs-richdisplay
-![Static Badge](https://img.shields.io/badge/version-0.1.6-blue) ![Static Badge](https://img.shields.io/badge/build-passing-green) ![Static Badge](https://img.shields.io/badge/deepin_linux-perfect-green) ![Static Badge](https://img.shields.io/badge/win10_11-success-orange)
-
-
-
+![Static Badge](https://img.shields.io/badge/version-0.1.6-blue) 
+![Static Badge](https://img.shields.io/badge/build-passing-green) 
+![Static Badge](https://img.shields.io/badge/deepin_linux-perfect-green) 
+![Static Badge](https://img.shields.io/badge/win10_11-runnable-orange)
+![Static Badge](https://img.shields.io/badge/Readonly-gray)
+![Static Badge](https://img.shields.io/badge/Text_and_Image_Blending-blue)
+![Static Badge](https://img.shields.io/badge/GPU_acceleration-blue)
+![Static Badge](https://img.shields.io/badge/low_consumption-blue)
 
 
 这是一个专为`fltk-rs`开发的富文本展示组件项目，只能展示不能编辑，目标是作为`fltk-TextDisplay`组件的一个补充。 该组件的设计目标是提供更多的文本样式展示，甚至支持图形展示，主要的展示形式以行为主，从上向下、从左到右的流式排列。 `fltk-TextDisplay`仅支持`60`种颜色与字体的组合，而本组件设计的目的之一就是突破这个非常低的限制，可以随意组合字体、字号、颜色、下划线、粗体/斜体等，支持文本与图形混合排布。
 
-该组件支持历史内容回顾、字符串检索，主展区数据增加、删除。
+组件支持的主要功能：
+- 支持不同字体系列，粗体、斜体、颜色、背景色、下划线(禁用时自带删除线)，样式全面、自由组合。
+- 同一行内，不同字体系列，不同字号，不同宽高的图片，随意组合，自动垂直居中。文本内容超宽时自动换行。
+- 支持数据（文字/图片）互动，可鼠标点击、选择。选中后自动复制到剪贴板。可自定义互动的回调函数。
+- 主视图内容是单向流水式显示，回顾区视图为历史数据提供静态查看能力。
+- 支持内容闪烁，图片灰度变换。
 
-使用方法示例：
+## 性能参考
+快速添加数据时，界面刷新速度依赖于CPU和GPU运算速度及视图尺寸。
+
+| CPU型号   | GPU型号       | 数据量 | 最大缓存  | 新增数据间隔 | 起始内存  | 最大内存 | 平均CPU% | 平均GPU% | 视图尺寸     | 处理延迟     |
+|---------|-------------|-------|--------------|------|-------|------|--------|--------|----------|----------|
+| i7 12th | Nvidia 3070 | 1600条 | 1000条 | 30ms  | 3.4Mb | 61Mb | 2.8% | 10%    | 800x400  | &lt;30ms |
+| i7 12th | Nvidia 3070 | 1600条 | 1000条 | 30ms  | 3.4Mb | 67Mb | 9%    | 27%    | 1600x800 | &lt;30ms |
+
+
+
+
+## 使用方法示例：
 ```rust
 use std::cell::RefCell;
 use std::rc::Rc;

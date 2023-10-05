@@ -685,8 +685,9 @@ impl RichText {
     /// ```
     ///
     /// ```
-    pub fn set_notifier(&mut self, notifier: Callback) {
-        self.notifier.replace(Some(notifier));
+    pub fn set_notifier<F>(&mut self, cb: F) where F: FnMut(UserData) + 'static {
+        let callback = Callback::new(Rc::new(RefCell::new(Box::new(cb))));
+        self.notifier.replace(Some(callback));
     }
 
     pub(crate) fn draw_offline_2(&self) {

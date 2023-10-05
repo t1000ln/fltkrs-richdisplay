@@ -19,7 +19,7 @@
 - 支持内容闪烁，图片灰度变换。
 
 ## 性能参考
-快速添加数据时，界面刷新速度依赖于CPU和GPU运算速度及视图尺寸。
+在`win10`环境下快速添加数据时，界面刷新速度依赖于CPU和GPU运算速度及视图尺寸。
 
 | CPU型号   | GPU型号       | 数据量 | 最大缓存  | 新增数据间隔 | 起始内存  | 最大内存 | 平均CPU% | 平均GPU% | 视图尺寸     | 处理延迟     |
 |---------|-------------|-------|--------------|------|-------|------|--------|--------|----------|----------|
@@ -31,8 +31,6 @@
 
 ## 使用方法示例：
 ```rust
-use std::cell::RefCell;
-use std::rc::Rc;
 use std::time::Duration;
 use fltk::{app, window};
 use fltk::button::Button;
@@ -42,7 +40,7 @@ use fltk::image::SharedImage;
 use fltk::prelude::{GroupExt, ImageExt, WidgetBase, WidgetExt, WindowExt};
 use log::{debug, error};
 use fltkrs_richdisplay::rich_text::{RichText};
-use fltkrs_richdisplay::{Callback, DataType, RichDataOptions, UserData};
+use fltkrs_richdisplay::{DataType, RichDataOptions, UserData};
 
 pub enum GlobalMessage {
     ContentData(UserData),
@@ -83,8 +81,7 @@ async fn main() {
             });
         }
     };
-    let cb = Callback::new(Rc::new(RefCell::new(Box::new(cb_fn))));
-    rich_text.set_notifier(cb);
+    rich_text.set_notifier(cb_fn);
 
     rich_text.set_buffer_max_lines(50);
 

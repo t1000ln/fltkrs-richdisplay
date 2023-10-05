@@ -1,5 +1,5 @@
 # fltkrs-richdisplay
-![Static Badge](https://img.shields.io/badge/version-0.1.9-blue) 
+![Static Badge](https://img.shields.io/badge/version-0.1.10-blue) 
 ![Static Badge](https://img.shields.io/badge/build-passing-green) 
 ![Static Badge](https://img.shields.io/badge/deepin_linux-perfect-green) 
 ![Static Badge](https://img.shields.io/badge/win10_11-runnable-orange)
@@ -32,6 +32,20 @@
 
 
 ## 使用方法示例：
+基本依赖：
+```toml
+[dependencies]
+fltkrs-richdisplay = "0.1.9"
+```
+
+由于下面的`examples`示例用到`tokio`框架进行异步交互，并且简单输出日志，所以需要额外添加依赖:
+```toml
+[dev-dependencies]
+simple_logger = "4.2"
+tokio = { version = "1.32", features = ["full"] }
+```
+
+示例代码：
 ```rust
 use std::time::Duration;
 use fltk::{app, window};

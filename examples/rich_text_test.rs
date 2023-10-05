@@ -37,10 +37,12 @@ async fn main() {
     let _ = Button::new(0, 200, 50, 30, "left");
 
     let mut rich_text = RichText::new(100, 120, 800, 400, None);
-    let (sender, mut receiver) = tokio::sync::mpsc::channel::<UserData>(100);
+
+    // 应用层消息通道，该通道负责两个方向的消息传递：1将应用层产生的消息向下传递给fltk组件层通道，2将fltk组件层产生的事件消息向上传递给应用层。
+    let (action_sender, action_receiver) = tokio::sync::mpsc::channel::<UserData>(100);
     // 自定义回调函数，当用户鼠标点击可互动的数据段时，组件会调用回调函数。
     let cb_fn = {
-        let sender_rc = sender.clone();
+        let sender_rc = action_sender.clone();
         move |user_data| {
             let sender = sender_rc.clone();
             tokio::spawn(async move {
@@ -51,7 +53,6 @@ async fn main() {
         }
     };
     rich_text.set_notifier(cb_fn);
-
     rich_text.set_buffer_max_lines(1000);
 
     btn1.set_callback({
@@ -114,40 +115,11 @@ async fn main() {
     win.end();
     win.show();
 
+    // fltk组件层消息通道，该通道负责传递组件所需数据。
     let (global_sender, global_receiver) = app::channel::<GlobalMessage>();
 
-    let global_sender_rc = global_sender.clone();
-    tokio::spawn(async move {
-        while let Some(data) = receiver.recv().await {
-            if data.text.starts_with("10") {
-                let toggle = !data.blink;
-                let update_options = RichDataOptions::new(data.id).blink(toggle);
-                global_sender_rc.send(GlobalMessage::UpdateData(update_options));
-            } else if data.text.starts_with("13") {
-                let toggle = !data.blink;
-                let update_options = RichDataOptions::new(data.id).blink(toggle);
-                global_sender_rc.send(GlobalMessage::UpdateData(update_options));
-            } else if data.text.starts_with("14") {
-                let toggle = !data.underline;
-                let update_options = RichDataOptions::new(data.id).underline(toggle);
-                global_sender_rc.send(GlobalMessage::UpdateData(update_options));
-            } else if data.text.starts_with("22") {
-                global_sender_rc.send(GlobalMessage::DisableData(data.id));
-            } else if data.text.starts_with("23") {
-                let toggle = !data.strike_through;
-                let update_options = RichDataOptions::new(data.id).strike_through(toggle);
-                global_sender_rc.send(GlobalMessage::UpdateData(update_options));
-            } else if data.text.starts_with("25") {
-                let update_options = RichDataOptions::new(data.id).clickable(false).expired(true).bg_color(Color::DarkGreen);
-                global_sender_rc.send(GlobalMessage::UpdateData(update_options));
-            } else if data.data_type == DataType::Image {
-                let toggle = !data.disabled;
-                // let update_options = RichDataOptions::new(data.id).blink(toggle);
-                let update_options = RichDataOptions::new(data.id).disabled(toggle);
-                global_sender_rc.send(GlobalMessage::UpdateData(update_options));
-            }
-        }
-    });
+    // 由于事先已经通过rich_text.set_notifier(cb_fn)设置回调函数，当可互动数据段产生事件时会发送出来，所以在这里可以监听互动事件并进行处理。
+    handle_action(action_receiver, global_sender.clone());
 
 
     // 注意！在linux环境下Image不能放在tokio::spawn(future)里面，因其会导致应用失去正常响应，无法关闭。目前原因未知。
@@ -155,8 +127,7 @@ async fn main() {
     let (img1_width, img1_height, img1_data) = (img1.width(), img1.height(), img1.to_rgb_data());
     let img2 = SharedImage::load("res/2.jpg").unwrap();
     let (img2_width, img2_height, img2_data) = (img2.width(), img2.height(), img2.to_rgb_data());
-
-
+    // 异步生成模拟数据，将数据发送给fltk消息通道。
     tokio::spawn(async move {
         for i in 0..1 {
             let turn = i * 13;
@@ -188,24 +159,60 @@ async fn main() {
         debug!("Sender closed");
     });
 
-
     while app.wait() {
+        // 从fltk消息通道接收数据，并发送给组件。
         if let Some(msg) = global_receiver.recv() {
             match msg {
                 GlobalMessage::ContentData(data) => {
+                    // 新增数据段
                     rich_text.append(data);
                 }
                 GlobalMessage::UpdateData(options) => {
+                    // 更新数据段状态
                     rich_text.update_data(options);
                 }
                 GlobalMessage::DisableData(id) => {
+                    // 更新数据段状态为禁用
                     rich_text.disable_data(id);
                 }
             }
         }
 
-        // app::sleep(0.016);
         app::sleep(0.001);
         app::awake();
     }
+}
+
+pub fn handle_action(mut action_receiver: tokio::sync::mpsc::Receiver<UserData>, global_sender_rc: app::Sender<GlobalMessage>) {
+    tokio::spawn(async move {
+        while let Some(data) = action_receiver.recv().await {
+            if data.text.starts_with("10") {
+                let toggle = !data.blink;
+                let update_options = RichDataOptions::new(data.id).blink(toggle);
+                global_sender_rc.send(GlobalMessage::UpdateData(update_options));
+            } else if data.text.starts_with("13") {
+                let toggle = !data.blink;
+                let update_options = RichDataOptions::new(data.id).blink(toggle);
+                global_sender_rc.send(GlobalMessage::UpdateData(update_options));
+            } else if data.text.starts_with("14") {
+                let toggle = !data.underline;
+                let update_options = RichDataOptions::new(data.id).underline(toggle);
+                global_sender_rc.send(GlobalMessage::UpdateData(update_options));
+            } else if data.text.starts_with("22") {
+                global_sender_rc.send(GlobalMessage::DisableData(data.id));
+            } else if data.text.starts_with("23") {
+                let toggle = !data.strike_through;
+                let update_options = RichDataOptions::new(data.id).strike_through(toggle);
+                global_sender_rc.send(GlobalMessage::UpdateData(update_options));
+            } else if data.text.starts_with("25") {
+                let update_options = RichDataOptions::new(data.id).clickable(false).expired(true).bg_color(Color::DarkGreen);
+                global_sender_rc.send(GlobalMessage::UpdateData(update_options));
+            } else if data.data_type == DataType::Image {
+                let toggle = !data.disabled;
+                // let update_options = RichDataOptions::new(data.id).blink(toggle);
+                let update_options = RichDataOptions::new(data.id).disabled(toggle);
+                global_sender_rc.send(GlobalMessage::UpdateData(update_options));
+            }
+        }
+    });
 }

@@ -1,3 +1,103 @@
+//! 富文本查看器，支持图文混排，支持历史内容回顾。
+//! 由于目前的`fltk`基础决定，在`linux`环境下可以正确显示彩色`emoji`符号，而在`windows`环境下无法正确显示符号颜色。
+//! 组件用法简单示例：
+//! ```rust,no_run
+//! use fltk::{app, window};
+//! use fltk::enums::{Event, Key};
+//! use fltk::prelude::{GroupExt, WidgetBase, WidgetExt, WindowExt};
+//! use log::error;
+//! use fltkrs_richdisplay::rich_text::RichText;
+//! use fltkrs_richdisplay::{RichDataOptions, UserData};
+//!
+//! pub enum GlobalMessage {
+//!     ContentData(UserData),
+//!     UpdateData(RichDataOptions),
+//!     DisableData(i64),
+//! }
+//!
+//! #[tokio::main]
+//! async fn main() {
+//!    let app = app::App::default();
+//!    let mut win = window::Window::default().with_size(1000, 600).center_screen();
+//!    let mut rich_text = RichText::new(100, 120, 800, 400, None);
+//!    let (action_sender, mut action_receiver) = tokio::sync::mpsc::channel::<UserData>(100);
+//!    // 自定义回调函数，当用户鼠标点击可互动的数据段时，组件会调用回调函数。
+//!    let cb_fn = {
+//!        let sender_rc = action_sender.clone();
+//!        move |user_data| {
+//!            let sender = sender_rc.clone();
+//!            tokio::spawn(async move {
+//!                if let Err(e) = sender.send(user_data).await {
+//!                    error!("发送用户操作失败: {:?}", e);
+//!                }
+//!            });
+//!        }
+//!    };
+//!    rich_text.set_notifier(cb_fn);
+//!    rich_text.set_buffer_max_lines(1000);
+//!
+//!    /*
+//!    启用PageUp/PageDown快捷键打开和关闭回顾区的功能支持。
+//!    使用鼠标滚轮进行打开/关闭回顾区的功能已经内置在模块包中，而PageUp/PageDown的快捷键无法被内置组件检测到，因此需要外层容器主动调用API实现。
+//!    包里提供的两个API接口为此提供支持：`RichText::auto_open_reviewer(&self)`和`RichText::auto_close_reviewer(&self)`。
+//!     */
+//!    win.handle({
+//!        let rich_text_rc = rich_text.clone();
+//!        move |_, evt| {
+//!            let mut handled = false;
+//!            match evt {
+//!                Event::KeyDown => {
+//!                    if app::event_key_down(Key::PageDown) {
+//!                        handled = rich_text_rc.auto_close_reviewer();
+//!                    } else if app::event_key_down(Key::PageUp) {
+//!                        handled = rich_text_rc.auto_open_reviewer().unwrap();
+//!                    }
+//!                }
+//!                _ => {}
+//!            }
+//!            handled
+//!        }
+//!    });
+//!
+//!    let (global_sender, global_receiver) = app::channel::<GlobalMessage>();
+//!
+//!    win.end();
+//!    win.show();
+//!
+//!    let global_sender_rc = global_sender.clone();
+//!    tokio::spawn(async move {
+//!        while let Some(data) = action_receiver.recv().await {
+//!            if data.text.starts_with("10") {
+//!                let toggle = !data.blink;
+//!                let update_options = RichDataOptions::new(data.id).blink(toggle);
+//!                global_sender_rc.send(GlobalMessage::UpdateData(update_options));
+//!            }
+//!        }
+//!    });
+//!
+//!    while app.wait() {
+//!        if let Some(msg) = global_receiver.recv() {
+//!            match msg {
+//!                GlobalMessage::ContentData(data) => {
+//!                    rich_text.append(data);
+//!                }
+//!                GlobalMessage::UpdateData(options) => {
+//!                    rich_text.update_data(options);
+//!                }
+//!                GlobalMessage::DisableData(id) => {
+//!                    rich_text.disable_data(id);
+//!                }
+//!            }
+//!        }
+//!
+//!        app::sleep(0.001);
+//!        app::awake();
+//!    }
+//! }
+//! ```
+//!
+//!
+
 use std::cell::{Cell, RefCell};
 use std::cmp::{max, min, Ordering};
 use std::collections::{BTreeMap, HashMap};

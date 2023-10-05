@@ -1,7 +1,5 @@
 //! richdisplay包的测试应用。
 
-use std::cell::RefCell;
-use std::rc::Rc;
 use std::time::Duration;
 use fltk::{app, window};
 use fltk::button::Button;
@@ -11,7 +9,7 @@ use fltk::image::SharedImage;
 use fltk::prelude::{GroupExt, ImageExt, WidgetBase, WidgetExt, WindowExt};
 use log::{debug, error};
 use fltkrs_richdisplay::rich_text::{RichText};
-use fltkrs_richdisplay::{Callback, DataType, RichDataOptions, UserData};
+use fltkrs_richdisplay::{DataType, RichDataOptions, UserData};
 
 pub enum GlobalMessage {
     ContentData(UserData),
@@ -38,7 +36,6 @@ async fn main() {
 
     let _ = Button::new(0, 200, 50, 30, "left");
 
-    // let mut rich_text = RichText::new(100, 120, 800, 400, None);
     let mut rich_text = RichText::new(100, 120, 800, 400, None);
     let (sender, mut receiver) = tokio::sync::mpsc::channel::<UserData>(100);
     // 自定义回调函数，当用户鼠标点击可互动的数据段时，组件会调用回调函数。
@@ -53,8 +50,7 @@ async fn main() {
             });
         }
     };
-    let cb = Callback::new(Rc::new(RefCell::new(Box::new(cb_fn))));
-    rich_text.set_notifier(cb);
+    rich_text.set_notifier(cb_fn);
 
     rich_text.set_buffer_max_lines(1000);
 
@@ -153,6 +149,7 @@ async fn main() {
         }
     });
 
+
     // 注意！在linux环境下Image不能放在tokio::spawn(future)里面，因其会导致应用失去正常响应，无法关闭。目前原因未知。
     let img1 = SharedImage::load("res/1.jpg").unwrap();
     let (img1_width, img1_height, img1_data) = (img1.width(), img1.height(), img1.to_rgb_data());
@@ -161,7 +158,7 @@ async fn main() {
 
 
     tokio::spawn(async move {
-        for i in 0..100 {
+        for i in 0..1 {
             let turn = i * 13;
             let mut data: Vec<UserData> = Vec::from([
                 UserData::new_text(format!("{}安全并且高效地处理𝄞并发编程是Rust的另一个主要目标。💖并发编程和并行编程这两种概念随着计算机设备的多核a优化而变得越来越重要。并发编程🐉允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 1)).set_underline(true).set_font(Font::Helvetica, 38).set_bg_color(Some(Color::DarkYellow)).set_clickable(true),

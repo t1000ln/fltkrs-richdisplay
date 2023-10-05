@@ -2,7 +2,7 @@
 ![Static Badge](https://img.shields.io/badge/version-0.1.10-blue) 
 ![Static Badge](https://img.shields.io/badge/build-passing-green) 
 ![Static Badge](https://img.shields.io/badge/deepin_linux-perfect-green) 
-![Static Badge](https://img.shields.io/badge/win10_11-runnable-orange)
+![Static Badge](https://img.shields.io/badge/win10_11-runnable-green)
 ![Static Badge](https://img.shields.io/badge/Readonly-gray)
 ![Static Badge](https://img.shields.io/badge/Text_and_Image_Blending-blue)
 ![Static Badge](https://img.shields.io/badge/GPU_acceleration-blue)
@@ -16,7 +16,7 @@
 组件支持的主要功能：
 - 支持不同字体系列，粗体、斜体、颜色、背景色、下划线(禁用时自带删除线)，样式全面、自由组合。
 - 同一行内，不同字体系列，不同字号，不同宽高的图片，随意组合，自动垂直居中。文本内容超宽时自动换行。
-- 支持数据（文字/图片）互动，可鼠标点击、选择。选中文字后自动复制到剪贴板。可自定义互动的回调函数。
+- 支持数据（文字/图片）互动，可鼠标点击、选择。选中文本后自动复制到剪贴板。可自定义互动的回调函数。
 - 主视图内容是单向流水式显示，回顾区视图为历史数据提供静态查看能力。
 - 支持内容闪烁，图片灰度变换。
 
@@ -35,7 +35,7 @@
 基本依赖：
 ```toml
 [dependencies]
-fltkrs-richdisplay = "0.1.9"
+fltkrs-richdisplay = "0.1.10"
 ```
 
 由于下面的`examples`示例用到`tokio`框架进行异步交互，并且简单输出日志，所以需要额外添加依赖:
@@ -84,10 +84,12 @@ async fn main() {
     let _ = Button::new(0, 200, 50, 30, "left");
 
     let mut rich_text = RichText::new(100, 120, 800, 400, None);
-    let (sender, mut receiver) = tokio::sync::mpsc::channel::<UserData>(100);
+
+    // 应用层消息通道，该通道负责两个方向的消息传递：1将应用层产生的消息向下传递给fltk组件层通道，2将fltk组件层产生的事件消息向上传递给应用层。
+    let (action_sender, action_receiver) = tokio::sync::mpsc::channel::<UserData>(100);
     // 自定义回调函数，当用户鼠标点击可互动的数据段时，组件会调用回调函数。
     let cb_fn = {
-        let sender_rc = sender.clone();
+        let sender_rc = action_sender.clone();
         move |user_data| {
             let sender = sender_rc.clone();
             tokio::spawn(async move {
@@ -98,8 +100,7 @@ async fn main() {
         }
     };
     rich_text.set_notifier(cb_fn);
-
-    rich_text.set_buffer_max_lines(50);
+    rich_text.set_buffer_max_lines(1000);
 
     btn1.set_callback({
         let mut rt = rich_text.clone();
@@ -161,11 +162,77 @@ async fn main() {
     win.end();
     win.show();
 
+    // fltk组件层消息通道，该通道负责传递组件所需数据。
     let (global_sender, global_receiver) = app::channel::<GlobalMessage>();
 
-    let global_sender_rc = global_sender.clone();
+    // 由于事先已经通过rich_text.set_notifier(cb_fn)设置回调函数，当可互动数据段产生事件时会发送出来，所以在这里可以监听互动事件并进行处理。
+    handle_action(action_receiver, global_sender.clone());
+
+
+    // 注意！在linux环境下Image不能放在tokio::spawn(future)里面，因其会导致应用失去正常响应，无法关闭。目前原因未知。
+    let img1 = SharedImage::load("res/1.jpg").unwrap();
+    let (img1_width, img1_height, img1_data) = (img1.width(), img1.height(), img1.to_rgb_data());
+    let img2 = SharedImage::load("res/2.jpg").unwrap();
+    let (img2_width, img2_height, img2_data) = (img2.width(), img2.height(), img2.to_rgb_data());
+    // 异步生成模拟数据，将数据发送给fltk消息通道。
     tokio::spawn(async move {
-        while let Some(data) = receiver.recv().await {
+        for i in 0..1 {
+            let turn = i * 13;
+            let mut data: Vec<UserData> = Vec::from([
+                UserData::new_text(format!("{}安全并且高效地处理𝄞并发编程是Rust的另一个主要目标。💖并发编程和并行编程这两种概念随着计算机设备的多核a优化而变得越来越重要。并发编程🐉允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 1)).set_underline(true).set_font(Font::Helvetica, 38).set_bg_color(Some(Color::DarkYellow)).set_clickable(true),
+                UserData::new_text(format!("{}在大部分现在操作系统中，执行程序的代码会运行在进程中，操作系统会同时管理多个进程。类似地，程序内部也可以拥有多个同时运行的独立部分，用来运行这些独立部分的就叫做线程。", turn + 2)).set_font(Font::HelveticaItalic, 18).set_bg_color(Some(Color::Green)),
+                UserData::new_image(img1_data.clone(), img1_width, img1_height),
+                UserData::new_text(format!("{}由于多线程可以同时运行，🐉所以将计算操作拆分至多个线程可以提高性能。a但是这也增加了程序的复杂度，因为不同线程的执行顺序是无法确定的。\r\n", turn + 3)).set_fg_color(Color::Red).set_bg_color(Some(Color::Green)).set_underline(true),
+                UserData::new_text(format!("{}由于多线程可以同时运行，所以将计算操作拆分至多个线程可以提高性能。但是这也增加了程序的复杂度，因为不同线程的执行顺序是无法确定的。\r\n", turn + 4)).set_fg_color(Color::Red).set_bg_color(Some(Color::Green)),
+                UserData::new_text(format!("{}安全并且高效地处理并发编程是Rust的另一个主要目标。并发编程和并行编程这两种概念随着计算机设备的多核优化而变得越来越重要。并发编程允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。\r\n", turn + 5)).set_font(Font::Helvetica, 9).set_underline(true).set_blink(true),
+                UserData::new_text(format!("{}在大部分现在操作系统中，执行程序的代码会运行在进程中，操作系统会同时管理多个进程b。类似地，𝄞程序内部也可以拥有多个同时运行的独立部分，用来运行这些独立部分的就叫做线程。\r\n", turn + 6)).set_font(Font::Helvetica, 32),
+                UserData::new_text(format!("{}由于多线程可以同时运行，所以将计算操作拆分至多个线程可以提高性能。a但是这也增加了程序的复杂度，因为不同线程的执行顺序是无法确定的。\r\n", turn + 7)).set_fg_color(Color::Red).set_bg_color(Some(Color::Green)),
+                UserData::new_text(format!("{}由于多线程可以同时运行，所以将计算操作拆分至多个线程可以提高性能。a但是这也增加了程序的复杂度，因为不同线程的执行顺序是无法确定的。\r\n", turn + 8)).set_fg_color(Color::Red).set_bg_color(Some(Color::Green)),
+                UserData::new_image(img1_data.clone(), img1_width, img1_height).set_clickable(true),
+                UserData::new_text(format!("{}安全并且高效地处理并发编程是Rust的另一个主要目标。并发编程和并行编程这两种概念随着计算机设备的多核优化而变得越来越重要。并发编程允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 9)).set_fg_color(Color::Yellow).set_bg_color(Some(Color::DarkBlue)),
+                UserData::new_text(format!("{}在大部分现在操作系统中，执行程序的代码会运行在进程中，操作系统会同时管理多个进程。类似地，程序内部也可以拥有多个同时运行的独立部分，用来运行这些独立部分的就叫做线程。\r\n", turn + 10)).set_font(Font::HelveticaBold, 32).set_bg_color(Some(Color::Magenta)).set_clickable(true),
+                UserData::new_text(format!("{}由于多线程可以同时运行，所以将计算操作拆分至多个线程可以提高性能。a但是这也增加了程序的复杂度，因为不同线程的执行顺序是无法确定的。\r\n", turn + 11)).set_fg_color(Color::Red).set_bg_color(Some(Color::Green)),
+                UserData::new_text(format!("{}由于多线程可以同时运行，所以将计算操作拆分至多个线程可以提高性能。", turn + 12)).set_fg_color(Color::Red).set_bg_color(Some(Color::Green)).set_clickable(true),
+                UserData::new_text(format!("{}由于多线程可以同时运行，💖所以将计算操作拆分至多个线程可以提高性能。", turn + 13)).set_fg_color(Color::Cyan).set_font(Font::Courier, 18).set_clickable(true).set_blink(true),
+                UserData::new_image(img2_data.clone(), img2_width, img2_height).set_clickable(true).set_blink(true),
+            ]);
+            data.reverse();
+            while let Some(data_unit) = data.pop() {
+                global_sender.send(GlobalMessage::ContentData(data_unit));
+                tokio::time::sleep(Duration::from_millis(30)).await;
+            }
+        }
+
+        debug!("Sender closed");
+    });
+
+    while app.wait() {
+        // 从fltk消息通道接收数据，并发送给组件。
+        if let Some(msg) = global_receiver.recv() {
+            match msg {
+                GlobalMessage::ContentData(data) => {
+                    // 新增数据段
+                    rich_text.append(data);
+                }
+                GlobalMessage::UpdateData(options) => {
+                    // 更新数据段状态
+                    rich_text.update_data(options);
+                }
+                GlobalMessage::DisableData(id) => {
+                    // 更新数据段状态为禁用
+                    rich_text.disable_data(id);
+                }
+            }
+        }
+
+        app::sleep(0.001);
+        app::awake();
+    }
+}
+
+pub fn handle_action(mut action_receiver: tokio::sync::mpsc::Receiver<UserData>, global_sender_rc: app::Sender<GlobalMessage>) {
+    tokio::spawn(async move {
+        while let Some(data) = action_receiver.recv().await {
             if data.text.starts_with("10") {
                 let toggle = !data.blink;
                 let update_options = RichDataOptions::new(data.id).blink(toggle);
@@ -195,65 +262,6 @@ async fn main() {
             }
         }
     });
-
-    // 注意！在linux环境下Image不能放在tokio::spawn(future)里面，因其会导致应用失去正常响应，无法关闭。目前原因未知。
-    let img1 = SharedImage::load("res/1.jpg").unwrap();
-    let (img1_width, img1_height, img1_data) = (img1.width(), img1.height(), img1.to_rgb_data());
-    let img2 = SharedImage::load("res/2.jpg").unwrap();
-    let (img2_width, img2_height, img2_data) = (img2.width(), img2.height(), img2.to_rgb_data());
-
-
-    tokio::spawn(async move {
-        for i in 0..1 {
-            let turn = i * 13;
-            let mut data: Vec<UserData> = Vec::from([
-                UserData::new_text(format!("{}安全并且高效地处理并发编程是Rust的另一个主要目标。💖并发编程和并行编程这两种概念随着计算机设备的多核a优化而变得越来越重要。并发编程🐉允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 1)).set_underline(true).set_font(Font::Helvetica, 38).set_bg_color(Some(Color::DarkYellow)).set_clickable(true),
-                UserData::new_text(format!("{}在大部分现在操作系统中，执行程序的代码会运行在进程中，操作系统会同时管理多个进程。类似地，程序内部也可以拥有多个同时运行的独立部分，用来运行这些独立部分的就叫做线程。", turn + 2)).set_font(Font::HelveticaItalic, 18).set_bg_color(Some(Color::Green)),
-                UserData::new_image(img1_data.clone(), img1_width, img1_height),
-                UserData::new_text(format!("{}由于多线程可以同时运行，🐉所以将计算操作拆分至多个线程可以提高性能。a但是这也增加了程序的复杂度，因为不同线程的执行顺序是无法确定的。\r\n", turn + 3)).set_fg_color(Color::Red).set_bg_color(Some(Color::Green)).set_underline(true),
-                UserData::new_text(format!("{}由于多线程可以同时运行，所以将计算操作拆分至多个线程可以提高性能。但是这也增加了程序的复杂度，因为不同线程的执行顺序是无法确定的。\r\n", turn + 4)).set_fg_color(Color::Red).set_bg_color(Some(Color::Green)),
-                UserData::new_text(format!("{}安全并且高效地处理并发编程是Rust的另一个主要目标。并发编程和并行编程这两种概念随着计算机设备的多核优化而变得越来越重要。并发编程允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。\r\n", turn + 5)).set_font(Font::Helvetica, 9).set_underline(true).set_blink(true),
-                UserData::new_text(format!("{}在大部分现在操作系统中，执行程序的代码会运行在进程中，操作系统会同时管理多个进程b。类似地，𝄞程序内部也可以拥有多个同时运行的独立部分，用来运行这些独立部分的就叫做线程。\r\n", turn + 6)).set_font(Font::Helvetica, 32),
-                UserData::new_text(format!("{}由于多线程可以同时运行，所以将计算操作拆分至多个线程可以提高性能。a但是这也增加了程序的复杂度，因为不同线程的执行顺序是无法确定的。\r\n", turn + 7)).set_fg_color(Color::Red).set_bg_color(Some(Color::Green)),
-                UserData::new_text(format!("{}由于多线程可以同时运行，所以将计算操作拆分至多个线程可以提高性能。a但是这也增加了程序的复杂度，因为不同线程的执行顺序是无法确定的。\r\n", turn + 8)).set_fg_color(Color::Red).set_bg_color(Some(Color::Green)),
-                UserData::new_image(img1_data.clone(), img1_width, img1_height).set_clickable(true),
-                UserData::new_text(format!("{}安全并且高效地处理并发编程是Rust的另一个主要目标。并发编程和并行编程这两种概念随着计算机设备的多核优化而变得越来越重要。并发编程允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 9)).set_fg_color(Color::Yellow).set_bg_color(Some(Color::DarkBlue)),
-                UserData::new_text(format!("{}在大部分现在操作系统中，执行程序的代码会运行在进程中，操作系统会同时管理多个进程。类似地，程序内部也可以拥有多个同时运行的独立部分，用来运行这些独立部分的就叫做线程。\r\n", turn + 10)).set_font(Font::HelveticaBold, 32).set_bg_color(Some(Color::Magenta)).set_clickable(true),
-                UserData::new_text(format!("{}由于多线程可以同时运行，所以将计算操作拆分至多个线程可以提高性能。a但是这也增加了程序的复杂度，因为不同线程的执行顺序是无法确定的。\r\n", turn + 11)).set_fg_color(Color::Red).set_bg_color(Some(Color::Green)),
-                UserData::new_text(format!("{}由于多线程可以同时运行，所以将计算操作拆分至多个线程可以提高性能。", turn + 12)).set_fg_color(Color::Red).set_bg_color(Some(Color::Green)).set_clickable(true),
-                UserData::new_text(format!("{}由于多线程可以同时运行，💖所以将计算操作拆分至多个线程可以提高性能。", turn + 13)).set_fg_color(Color::Cyan).set_font(Font::Courier, 18).set_clickable(true).set_blink(true),
-                UserData::new_image(img2_data.clone(), img2_width, img2_height).set_clickable(true).set_blink(true),
-            ]);
-            data.reverse();
-            while let Some(data_unit) = data.pop() {
-                global_sender.send(GlobalMessage::ContentData(data_unit));
-                tokio::time::sleep(Duration::from_millis(30)).await;
-            }
-        }
-
-        debug!("Sender closed");
-    });
-
-
-    while app.wait() {
-        if let Some(msg) = global_receiver.recv() {
-            match msg {
-                GlobalMessage::ContentData(data) => {
-                    rich_text.append(data);
-                }
-                GlobalMessage::UpdateData(options) => {
-                    rich_text.update_data(options);
-                }
-                GlobalMessage::DisableData(id) => {
-                    rich_text.disable_data(id);
-                }
-            }
-        }
-
-        // app::sleep(0.016);
-        app::sleep(0.001);
-        app::awake();
-    }
 }
 ```
 示例代码中使用`tokio`发送异步消息，目的是演示组件的互动能力，但`richdisplay`包本身并不依赖`tokio`。

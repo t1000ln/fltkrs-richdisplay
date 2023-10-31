@@ -1,7 +1,7 @@
 # fltkrs-richdisplay
 ![Static Badge](https://img.shields.io/badge/version-0.1.11-blue) 
 ![Static Badge](https://img.shields.io/badge/build-passing-green) 
-![Static Badge](https://img.shields.io/badge/deepin_linux_win10-green) 
+![Static Badge](https://img.shields.io/badge/deepin__linux_win10-gray) 
 ![Static Badge](https://img.shields.io/badge/Readonly-gray)
 
 

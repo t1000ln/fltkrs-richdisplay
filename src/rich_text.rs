@@ -33,7 +33,6 @@ pub struct RichText {
     data_buffer: Rc<RefCell<VecDeque<RichData>>>,
     background_color: Rc<Cell<Color>>,
     buffer_max_lines: usize,
-    // notifier: Rc<RefCell<Option<tokio::sync::mpsc::Sender<UserData>>>>,
     notifier: Rc<RefCell<Option<Callback>>>,
     inner: Flex,
     reviewer: Rc<RefCell<Option<RichReviewer>>>,
@@ -59,7 +58,8 @@ impl RichText {
         let background_color = Rc::new(Cell::new(Color::Black));
         let reviewer = Rc::new(RefCell::new(None::<RichReviewer>));
 
-        let mut inner = Flex::new(x, y, w, h, title).column();
+        // let mut inner = Flex::new(x, y, w, h, title).column(); // fltk 1.4.15变更为私有函数
+        let mut inner = <Flex as WidgetBase>::new(x, y, w, h, title).column();
         inner.set_pad(0);
         inner.end();
 
@@ -74,7 +74,6 @@ impl RichText {
 
         let visible_lines = Rc::new(RefCell::new(HashMap::<Rectangle, LinePiece>::new()));
         let clickable_data = Rc::new(RefCell::new(HashMap::<Rectangle, usize>::new()));
-        // let notifier: Rc<RefCell<Option<tokio::sync::mpsc::Sender<UserData>>>> = Rc::new(RefCell::new(None));
         let notifier: Rc<RefCell<Option<Callback>>> = Rc::new(RefCell::new(None));
         let selected = Rc::new(Cell::new(false));
         let should_resize_content = Rc::new(Cell::new(0));
@@ -899,6 +898,7 @@ impl RichText {
     /// 自动关闭回顾区的接口。当回顾区滚动条已抵达最底部时会关闭回顾区，否则不关闭也不产生额外干扰。
     ///
     /// 通常无需调用此方法，当回顾区的滚动条滚动到最底部时会自动关闭。
+    /// 若希望响应PageDown按键关闭回顾区，需要自行在window上注册事件处理逻辑，并调用该接口。
     ///
     /// 该方法适合在调用者的事件处理器当中使用。
     ///
@@ -950,7 +950,8 @@ impl RichText {
 
     /// 自动打开回顾区的接口。当没有显示回顾区时自动打开回顾区，否则不关闭也不产生额外干扰。该方法适合在调用者的事件处理器当中使用。
     ///
-    /// 通常无需调用此方法，当鼠标滚轮向上滚动或按下PageUP键时会自动打开回顾区。
+    /// 通常无需调用此方法，当鼠标滚轮向上滚动时会自动打开回顾区。
+    /// 若希望响应PageUp按键打开回顾区，需要自行在window上注册事件处理逻辑，并调用该接口。
     ///
     /// returns: bool 当满足关闭条件时，返回 `true`，否则返回 `false`。对于事件处理器来说，当本方法返回 `true` 时，提示事件应被消耗，否则应忽略当前事件。
     ///

@@ -16,6 +16,8 @@
 - 主视图内容是单向流水式显示，回顾区视图为历史数据提供静态查看能力。
 - 支持内容闪烁，图片灰度变换。
 
+目前版本主视图的最小高度为200px(跟随系统缩放比例)。
+
 ## 性能参考
 在`win10`环境下快速添加数据时，界面刷新速度依赖于CPU和GPU运算速度及视图尺寸。
 
@@ -265,8 +267,12 @@ pub fn handle_action(mut action_receiver: tokio::sync::mpsc::Receiver<UserData>,
 下图是目前已实现的图文混排效果预览图：
 
 主内容预览
-![demo2](./res/demo2.png)
+[![demo2](./res/demo2.png)](https://gitee.com/t1000ln/fltkrs-richdisplay/blob/main/res/demo2.png)
 
 回顾区预览，包含文本选择、字符串查找
-![demo4](./res/demo4.png)
+[![demo4](./res/demo4.png)](https://gitee.com/t1000ln/fltkrs-richdisplay/blob/main/res/demo4.png)
 
+
+## 计划实施
+- 优化渲染性能。
+- 缓存方式可选：内存模式，临时文件模式。

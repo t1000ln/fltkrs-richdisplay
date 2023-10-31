@@ -25,3 +25,4 @@ parking_lot = "0.12.1"
 [dev-dependencies]
 simple_logger = "4.2"
 tokio = { version = "1.33", features = ["full"] }
+rand = "0.8.5"

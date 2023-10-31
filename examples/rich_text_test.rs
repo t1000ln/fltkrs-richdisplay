@@ -8,6 +8,7 @@ use fltk::group::Group;
 use fltk::image::SharedImage;
 use fltk::prelude::{GroupExt, ImageExt, WidgetBase, WidgetExt, WindowExt};
 use log::{debug, error};
+use rand::{Rng, thread_rng};
 use fltkrs_richdisplay::rich_text::{RichText};
 use fltkrs_richdisplay::{DataType, RichDataOptions, UserData};
 
@@ -22,7 +23,7 @@ async fn main() {
     simple_logger::init_with_level(log::Level::Debug).unwrap();
     let app = app::App::default();
     let mut win = window::Window::default()
-        .with_size(1000, 600)
+        .with_size(1800, 1000)
         .with_label("rich-display example")
         .center_screen();
     win.make_resizable(true);
@@ -36,7 +37,7 @@ async fn main() {
 
     let _ = Button::new(0, 200, 50, 30, "left");
 
-    let mut rich_text = RichText::new(100, 120, 800, 400, None);
+    let mut rich_text = RichText::new(100, 60, 800, 400, None);
 
     // 应用层消息通道，该通道负责两个方向的消息传递：1将应用层产生的消息向下传递给fltk组件层通道，2将fltk组件层产生的事件消息向上传递给应用层。
     let (action_sender, action_receiver) = tokio::sync::mpsc::channel::<UserData>(100);
@@ -54,6 +55,10 @@ async fn main() {
     };
     rich_text.set_notifier(cb_fn);
     rich_text.set_buffer_max_lines(1000);
+
+    let mut rich_text2 = RichText::new(980, 60, 800, 400, None);
+    let mut rich_text3 = RichText::new(100, 560, 800, 300, None);
+    let mut rich_text4 = RichText::new(980, 560, 400, 400, None);
 
     btn1.set_callback({
         let mut rt = rich_text.clone();
@@ -74,9 +79,9 @@ async fn main() {
         }
     });
 
-    let _ = Button::new(950, 200, 50, 50, "right");
+    let _ = Button::new(920, 200, 50, 50, "right");
 
-    let mut btn4 = Button::new(200, 550, 150, 50, "删除最后一个数据段");
+    let mut btn4 = Button::new(200, 470, 150, 50, "删除最后一个数据段");
     btn4.set_callback({
         let mut rt = rich_text.clone();
         move |_| {
@@ -129,7 +134,7 @@ async fn main() {
     let (img2_width, img2_height, img2_data) = (img2.width(), img2.height(), img2.to_rgb_data());
     // 异步生成模拟数据，将数据发送给fltk消息通道。
     tokio::spawn(async move {
-        for i in 0..1 {
+        for i in 0..100 {
             let turn = i * 13;
             let mut data: Vec<UserData> = Vec::from([
                 UserData::new_text(format!("{}安全并且高效地处理𝄞并发编程是Rust的另一个主要目标。💖并发编程和并行编程这两种概念随着计算机设备的多核a优化而变得越来越重要。并发编程🐉允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 1)).set_underline(true).set_font(Font::Helvetica, 38).set_bg_color(Some(Color::DarkYellow)).set_clickable(true),
@@ -159,13 +164,25 @@ async fn main() {
         debug!("Sender closed");
     });
 
+    let mut r = thread_rng();
+
     while app.wait() {
         // 从fltk消息通道接收数据，并发送给组件。
         if let Some(msg) = global_receiver.recv() {
             match msg {
                 GlobalMessage::ContentData(data) => {
                     // 新增数据段
+                    if r.gen_bool(0.45f64) {
+                        rich_text2.append(data.clone());
+                    }
+                    if r.gen_bool(0.1f64) {
+                        rich_text3.append(data.clone());
+                    }
+                    if r.gen_bool(0.01f64) {
+                        rich_text4.append(data.clone());
+                    }
                     rich_text.append(data);
+
                 }
                 GlobalMessage::UpdateData(options) => {
                     // 更新数据段状态

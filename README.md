@@ -1,12 +1,8 @@
 # fltkrs-richdisplay
-![Static Badge](https://img.shields.io/badge/version-0.1.10-blue) 
+![Static Badge](https://img.shields.io/badge/version-0.1.11-blue) 
 ![Static Badge](https://img.shields.io/badge/build-passing-green) 
-![Static Badge](https://img.shields.io/badge/deepin_linux-perfect-green) 
-![Static Badge](https://img.shields.io/badge/win10_11-runnable-green)
+![Static Badge](https://img.shields.io/badge/deepin_linux_win10-green) 
 ![Static Badge](https://img.shields.io/badge/Readonly-gray)
-![Static Badge](https://img.shields.io/badge/Text_and_Image_Blending-blue)
-![Static Badge](https://img.shields.io/badge/GPU_acceleration-blue)
-![Static Badge](https://img.shields.io/badge/low_consumption-blue)
 
 
 这是一个专为`fltk-rs`开发的富文本展示组件项目，只能展示不能编辑，目标是作为`fltk-TextDisplay`组件的一个补充。 该组件的设计目标是提供更多的文本样式展示，甚至支持图形展示，主要的展示形式以行为主，从上向下、从左到右的流式排列。 
@@ -23,7 +19,7 @@
 ## 性能参考
 在`win10`环境下快速添加数据时，界面刷新速度依赖于CPU和GPU运算速度及视图尺寸。
 
-| CPU型号   | GPU型号       | 数据量 | 最大缓存  | 新增数据间隔 | 起始内存  | 最大内存 | 平均CPU% | 平均GPU% | 视图尺寸     | 处理延迟     |
+| CPU   | GPU       | 数据量 | 最大缓存  | 新增数据间隔 | 起始内存  | 最大内存 | 平均CPU% | 平均GPU% | 视图尺寸     | 处理延迟     |
 |---------|-------------|-------|--------------|------|-------|------|--------|--------|----------|----------|
 | i7 12th | Nvidia 3070 | 1600条 | 1000条 | 30ms  | 3.4Mb | 61Mb | 2.8% | 10%    | 800x400  | &lt;30ms |
 | i7 12th | Nvidia 3070 | 1600条 | 1000条 | 30ms  | 3.4Mb | 67Mb | 9%    | 27%    | 1600x800 | &lt;30ms |
@@ -35,7 +31,7 @@
 基本依赖：
 ```toml
 [dependencies]
-fltkrs-richdisplay = "0.1.10"
+fltkrs-richdisplay = "0.1.11"
 ```
 
 由于下面的`examples`示例用到`tokio`框架进行异步交互，并且简单输出日志，所以需要额外添加依赖:

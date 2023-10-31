@@ -33,7 +33,6 @@ pub struct RichText {
     data_buffer: Rc<RefCell<VecDeque<RichData>>>,
     background_color: Rc<Cell<Color>>,
     buffer_max_lines: usize,
-    // notifier: Rc<RefCell<Option<tokio::sync::mpsc::Sender<UserData>>>>,
     notifier: Rc<RefCell<Option<Callback>>>,
     inner: Flex,
     reviewer: Rc<RefCell<Option<RichReviewer>>>,
@@ -59,7 +58,8 @@ impl RichText {
         let background_color = Rc::new(Cell::new(Color::Black));
         let reviewer = Rc::new(RefCell::new(None::<RichReviewer>));
 
-        let mut inner = Flex::new(x, y, w, h, title).column();
+        // let mut inner = Flex::new(x, y, w, h, title).column(); // fltk 1.4.15变更为私有函数
+        let mut inner = <Flex as WidgetBase>::new(x, y, w, h, title).column();
         inner.set_pad(0);
         inner.end();
 
@@ -74,7 +74,6 @@ impl RichText {
 
         let visible_lines = Rc::new(RefCell::new(HashMap::<Rectangle, LinePiece>::new()));
         let clickable_data = Rc::new(RefCell::new(HashMap::<Rectangle, usize>::new()));
-        // let notifier: Rc<RefCell<Option<tokio::sync::mpsc::Sender<UserData>>>> = Rc::new(RefCell::new(None));
         let notifier: Rc<RefCell<Option<Callback>>> = Rc::new(RefCell::new(None));
         let selected = Rc::new(Cell::new(false));
         let should_resize_content = Rc::new(Cell::new(0));

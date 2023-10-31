@@ -25,7 +25,6 @@ pub(crate) struct RichReviewer {
     visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
     clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
     reviewer_screen: Rc<RefCell<Offscreen>>,
-    // notifier: Rc<RefCell<Option<tokio::sync::mpsc::Sender<UserData>>>>,
     notifier: Rc<RefCell<Option<Callback>>>,
     search_string: Option<String>,
     /// 查找结果，保存查询到的目标数据段在data_buffer中的索引编号。
@@ -54,7 +53,6 @@ impl RichReviewer {
         let background_color = Rc::new(Cell::new(Color::Black));
         let visible_lines = Rc::new(RefCell::new(HashMap::<Rectangle, LinePiece>::new()));
         let clickable_data = Rc::new(RefCell::new(HashMap::<Rectangle, usize>::new()));
-        // let notifier: Rc<RefCell<Option<tokio::sync::mpsc::Sender<UserData>>>> = Rc::new(RefCell::new(None));
         let notifier: Rc<RefCell<Option<Callback>>> = Rc::new(RefCell::new(None));
         let reviewer_screen = Rc::new(RefCell::new(Offscreen::new(w, h).unwrap()));
         let scroll_panel_to_y_after_resize = Rc::new(Cell::new(0));

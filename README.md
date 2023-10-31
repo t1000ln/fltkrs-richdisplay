@@ -270,3 +270,7 @@ pub fn handle_action(mut action_receiver: tokio::sync::mpsc::Receiver<UserData>,
 回顾区预览，包含文本选择、字符串查找
 ![demo4](./res/demo4.png)
 
+## 计划实施
+- 优化渲染性能。
+- 测试多实例支持。
+- 缓存方式可选：内存模式，临时文件模式。

@@ -75,10 +75,12 @@
 //!        }
 //!    });
 //!
+//!    let mut has_recent_message = false;
 //!    while app.wait() {
 //!        if let Some(msg) = global_receiver.recv() {
 //!            match msg {
 //!                GlobalMessage::ContentData(data) => {
+//!                    has_recent_message = true;
 //!                    rich_text.append(data);
 //!                }
 //!                GlobalMessage::UpdateData(options) => {
@@ -88,10 +90,14 @@
 //!                    rich_text.disable_data(id);
 //!                }
 //!            }
+//!        } else {
+//!            has_recent_message = false; 
 //!        }
 //!
-//!        app::sleep(0.001);
-//!        app::awake();
+//!        if !has_recent_message {
+//!            app::sleep(0.001);
+//!            app::awake();
+//!        }
 //!    }
 //! }
 //! ```
@@ -113,7 +119,7 @@ use idgenerator_thin::YitIdHelper;
 use log::{error};
 
 pub mod rich_text;
-mod rich_reviewer;
+pub mod rich_reviewer;
 
 /// 默认内容边界到窗口之间的空白距离。
 pub const PADDING: Padding = Padding { left: 5, top: 5, right: 5, bottom: 5 };

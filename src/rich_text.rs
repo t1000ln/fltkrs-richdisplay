@@ -469,6 +469,8 @@ impl RichText {
         self.panel.set_damage(true);
     }
 
+
+
     /// 删除最后一个数据段。
     pub fn delete_last_data(&mut self) {
         self.data_buffer.borrow_mut().pop_back();

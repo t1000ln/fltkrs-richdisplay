@@ -17,7 +17,7 @@ use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_ent
 use crate::rich_text::{PANEL_PADDING};
 
 #[derive(Clone, Debug)]
-pub(crate) struct RichReviewer {
+pub struct RichReviewer {
     pub(crate) scroller: Scroll,
     pub(crate) panel: Frame,
     pub(crate) data_buffer: Rc<RefCell<Vec<RichData>>>,
@@ -31,6 +31,8 @@ pub(crate) struct RichReviewer {
     search_results: Vec<usize>,
     current_highlight_focus: Option<(usize, usize)>,
     blink_flag: Rc<Cell<BlinkState>>,
+    /// true表示历史记录模式，默认false表示在线回顾模式。
+    history_mode: Rc<Cell<bool>>,
 }
 widget_extends!(RichReviewer, Scroll, scroller);
 
@@ -57,6 +59,7 @@ impl RichReviewer {
         let reviewer_screen = Rc::new(RefCell::new(Offscreen::new(w, h).unwrap()));
         let scroll_panel_to_y_after_resize = Rc::new(Cell::new(0));
         let resize_panel_after_resize = Rc::new(Cell::new((0, 0, 0, 0)));
+        let history_mode = Rc::new(Cell::new(false));
 
         let search_results = Vec::<usize>::new();
         let search_str = None::<String>;
@@ -103,11 +106,12 @@ impl RichReviewer {
             let bg_rc = background_color.clone();
             let screen_rc = reviewer_screen.clone();
             let blink_flag_rc = blink_flag.clone();
+            let history_mode_rc = history_mode.clone();
             move |_| {
                 /*
                 先离线绘制内容面板，再根据面板大小复制所需区域内容。这样做是为了避免在线绘制时，会出现绘制内容超出面板边界的问题。
                  */
-                Self::draw_offline(screen_rc.clone(), &scroll_rc, visible_lines_rc.clone(), clickable_data_rc.clone(), data_buffer_rc.clone(), bg_rc.get(), blink_flag_rc.clone());
+                Self::draw_offline(screen_rc.clone(), &scroll_rc, visible_lines_rc.clone(), clickable_data_rc.clone(), data_buffer_rc.clone(), bg_rc.get(), blink_flag_rc.clone(), history_mode_rc.get());
 
                 screen_rc.borrow().copy(scroll_rc.x(), scroll_rc.y(), scroll_rc.width(), scroll_rc.height(), 0, 0);
             }
@@ -126,6 +130,7 @@ impl RichReviewer {
                 if evt == LocalEvent::RESIZE.into() {
                     let (x, y, w, h) = resize_panel_after_resize_rc.get();
                     // 强制滚动到最顶部，避免scroll.yposition()缓存，在窗口不需要滚动条时仍出现滚动条的问题。
+                    debug!("resize panel to ({}, {}, {}, {})", x, y, w, h);
                     scroller_rc.scroll_to(0, 0);
                     ctx.resize(x, y, w, h);
                     true
@@ -311,7 +316,7 @@ impl RichReviewer {
             }
         });
 
-        Self { scroller, panel, data_buffer, background_color, visible_lines, clickable_data, reviewer_screen, notifier, search_string: search_str, search_results, current_highlight_focus, blink_flag }
+        Self { scroller, panel, data_buffer, background_color, visible_lines, clickable_data, reviewer_screen, notifier, search_string: search_str, search_results, current_highlight_focus, blink_flag, history_mode }
     }
 
     #[throttle(1, Duration::from_millis(50))]
@@ -426,7 +431,8 @@ impl RichReviewer {
         clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
         data_buffer: Rc<RefCell<Vec<RichData>>>,
         background_color: Color,
-        blink_flag: Rc<Cell<BlinkState>>
+        blink_flag: Rc<Cell<BlinkState>>,
+        history_mode: bool
         ) {
 
         screen.borrow().begin();
@@ -505,11 +511,15 @@ impl RichReviewer {
         /*
         绘制分界线
          */
-        draw_rect_fill(0, drawable_height, window_width, PANEL_PADDING, background_color);
-        set_draw_color(Color::White);
-        set_line_style(LineStyle::DashDotDot, (PANEL_PADDING as f32 / 3f32).floor() as i32);
-        draw_xyline(0, drawable_height + (PANEL_PADDING / 2), scroller_x + window_width);
-        set_line_style(LineStyle::Solid, 1);
+        if !history_mode {
+            draw_rect_fill(0, drawable_height, window_width, PANEL_PADDING, background_color);
+            set_draw_color(Color::White);
+            set_line_style(LineStyle::DashDotDot, (PANEL_PADDING as f32 / 3f32).floor() as i32);
+            draw_xyline(0, drawable_height + (PANEL_PADDING / 2), scroller_x + window_width);
+            set_line_style(LineStyle::Solid, 1);
+        } else {
+            draw_rect_fill(0, scroller.h() - PADDING.bottom, window_width, PADDING.bottom, background_color);
+        }
 
         // 填充顶部边界空白
         draw_rect_fill(0, 0, window_width, PADDING.top, background_color);
@@ -555,7 +565,8 @@ impl RichReviewer {
             self.clickable_data.clone(),
             self.data_buffer.clone(),
             self.background_color.get(),
-            self.blink_flag.clone()
+            self.blink_flag.clone(),
+            self.history_mode.get()
         );
     }
 
@@ -923,5 +934,50 @@ impl RichReviewer {
                 }
             }
         }
+    }
+
+    pub fn history_mode(self) -> Self {
+        self.history_mode.set(true);
+        self
+    }
+
+    pub fn fill(&mut self, user_data_vec: &mut Vec<UserData>) {
+        let window_width = self.panel.width();
+        let drawable_max_width = window_width - PADDING.left - PADDING.right;
+
+        let mut data_buffer = Vec::<RichData>::new();
+
+        user_data_vec.reverse();
+        if let Some(user_data) = user_data_vec.pop() {
+            let mut rich_data: RichData = user_data.into();
+            let last_piece = LinePiece::init_piece();
+            rich_data.estimate(last_piece, drawable_max_width);
+            // debug!("first rd_bounds: {:?}", rich_data.v_bounds.get());
+            data_buffer.push(rich_data);
+        }
+
+
+        while let Some(user_data) = user_data_vec.pop() {
+            let mut rich_data: RichData = user_data.into();
+            if let Some(rd) = data_buffer.last() {
+                if let Some(last_piece) = rd.line_pieces.iter().last() {
+                    rich_data.estimate(last_piece.clone(), drawable_max_width);
+                }
+            }
+            let sh = self.scroller.h();
+            // debug!("scroller.h: {}, rd_bounds: {:?}", sh, rich_data.v_bounds.get());
+
+            data_buffer.push(rich_data);
+        }
+
+        self.set_data(data_buffer);
+
+        self.panel.set_damage(true);
+    }
+
+    pub fn clear(&mut self) {
+        self.data_buffer.borrow_mut().clear();
+        self.panel.resize(self.scroller.x(), self.scroller.y(), self.panel.w(), self.scroller.h());
+        self.scroller.set_damage(true);
     }
 }

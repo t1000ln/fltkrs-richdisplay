@@ -157,7 +157,7 @@ async fn main() {
             data.reverse();
             while let Some(data_unit) = data.pop() {
                 global_sender.send(GlobalMessage::ContentData(data_unit));
-                tokio::time::sleep(Duration::from_millis(30)).await;
+                tokio::time::sleep(Duration::from_millis(2)).await;
             }
         }
 
@@ -166,6 +166,7 @@ async fn main() {
 
     let mut r = thread_rng();
 
+    let mut has_recent_message = false;
     while app.wait() {
         // 从fltk消息通道接收数据，并发送给组件。
         if let Some(msg) = global_receiver.recv() {
@@ -181,8 +182,9 @@ async fn main() {
                     if r.gen_bool(0.01f64) {
                         rich_text4.append(data.clone());
                     }
+                    has_recent_message = true;
                     rich_text.append(data);
-
+                    // debug!("新增消息");
                 }
                 GlobalMessage::UpdateData(options) => {
                     // 更新数据段状态
@@ -193,10 +195,14 @@ async fn main() {
                     rich_text.disable_data(id);
                 }
             }
+        } else {
+            has_recent_message = false;
         }
 
-        app::sleep(0.001);
-        app::awake();
+        if !has_recent_message {
+            app::sleep(0.001);
+            app::awake();
+        }
     }
 }
 

@@ -1,5 +1,5 @@
 # fltkrs-richdisplay
-![Static Badge](https://img.shields.io/badge/version-0.1.11-blue) 
+![Static Badge](https://img.shields.io/badge/version-0.2.0-blue) 
 ![Static Badge](https://img.shields.io/badge/build-passing-green) 
 ![Static Badge](https://img.shields.io/badge/deepin__linux_win10-gray) 
 ![Static Badge](https://img.shields.io/badge/Readonly-gray)
@@ -274,5 +274,4 @@ pub fn handle_action(mut action_receiver: tokio::sync::mpsc::Receiver<UserData>,
 
 
 ## 计划实施
-- 优化渲染性能。
-- 缓存方式可选：内存模式，临时文件模式。
+- 添加历史模式数据的懒加载机制。

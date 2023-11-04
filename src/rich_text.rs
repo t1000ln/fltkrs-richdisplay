@@ -3,7 +3,6 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
-use std::sync::OnceLock;
 use std::time::{Duration};
 
 use fltk::draw::{draw_rect_fill, Offscreen};
@@ -19,8 +18,8 @@ use idgenerator_thin::{IdGeneratorOptions, YitIdHelper};
 use log::{error};
 use throttle_my_fn::throttle;
 use crate::rich_reviewer::RichReviewer;
+use crate::utils::ID_GENERATOR_INIT;
 
-static ID_GENERATOR_INIT: OnceLock<u8> = OnceLock::new();
 
 pub const MAIN_PANEL_FIX_HEIGHT: i32 = 200;
 pub const PANEL_PADDING: i32 = 8;

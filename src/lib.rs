@@ -120,6 +120,7 @@ use log::{error};
 
 pub mod rich_text;
 pub mod rich_reviewer;
+mod utils;
 
 /// 默认内容边界到窗口之间的空白距离。
 pub const PADDING: Padding = Padding { left: 5, top: 5, right: 5, bottom: 5 };
@@ -147,6 +148,7 @@ pub const HIGHLIGHT_RECT_CONTRAST_COLOR: Color = Color::from_rgb(0, 110, 255);
 
 /// 最亮的白色。
 pub const WHITE: Color = Color::from_rgb(255, 255, 255);
+
 
 /// 回调函数载体。
 /// 当用户使用鼠标点击主视图或回顾区视图上的可互动数据段时，会执行该回调函数，并将点击目标处的数据作为参数传入回调函数。
@@ -222,6 +224,41 @@ impl Debug for Callback {
     }
 }
 
+/// 分页请求参数
+pub enum PageOptions {
+    /// 下一页，附带当前页的最后一条记录的id。
+    NextPage(i64),
+    /// 上一页，附带当前页的第一条记录的id。
+    PrevPage(i64),
+}
+
+/// 请求新页数据的回调函数载体。
+/// 当视图滚动到页面底部或顶部时，通过鼠标滚轮或按键`PageDown`或`PageUp`时，会触发执行预定义的回调函数，
+/// 若有更多可用的数据，用户应当在此时提供下一页或上一页数据。
+#[derive(Clone)]
+pub struct CallPage {
+    /// 回调函数。
+    notifier: Rc<RefCell<Box<dyn FnMut(PageOptions)>>>,
+}
+
+impl Debug for CallPage {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "CallPage count: {}", Rc::<RefCell<Box<(dyn FnMut(PageOptions) + 'static)>>>::strong_count(&self.notifier))
+    }
+}
+
+impl CallPage {
+    /// 构建新的分页回调结构体实例。
+    pub fn new(notifier: Rc<RefCell<Box<dyn FnMut(PageOptions)>>>) -> Self {
+        Self { notifier }
+    }
+
+    fn notify(&mut self, opt: PageOptions) {
+        let notify = &mut* self.notifier.borrow_mut();
+        notify(opt);
+    }
+}
+
 /// 闪烁强度状态。
 #[derive(Debug, Clone,Copy, PartialEq, Eq)]
 pub enum BlinkDegree {
@@ -292,6 +329,10 @@ impl LocalEvent {
 
     /// 从rich-display容器外部发起打开回顾区的事件。
     pub const OPEN_REVIEWER_FROM_EXTERNAL: i32 = 103;
+
+    pub const CLEAR_REVIEWER: i32 = 104;
+
+    pub const RELOAD_DATA_FOR_REVIEWER: i32 = 105;
 }
 
 /// 矩形结构，元素0/1代表x/y坐标，表示左上角坐标；元素2/3代表w/h宽和高，w/h不为负值。
@@ -821,7 +862,7 @@ impl From<&RichData> for UserData {
 impl UserData {
     pub fn new_text(text: String) -> Self {
         Self {
-            id: 0,
+            id: YitIdHelper::next_id(),
             text,
             font: Font::Helvetica,
             font_size: 14,
@@ -842,7 +883,7 @@ impl UserData {
 
     pub fn new_image(image: Vec<u8>, width: i32, height: i32) -> Self {
         Self {
-            id: 0,
+            id: YitIdHelper::next_id(),
             text: String::new(),
             font: Font::Helvetica,
             font_size: 14,
@@ -898,26 +939,6 @@ impl UserData {
     }
 }
 
-// #[derive(Debug)]
-// pub enum BlinkRangeError {
-//     Overlap(usize, usize, usize),
-//     Reverse(usize, usize, usize),
-// }
-//
-// impl Display for BlinkRangeError {
-//     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-//         match self {
-//             BlinkRangeError::Overlap(i, from, to) => {
-//                 write!(f, "第 {} 个闪烁片段的起始位置 {} 不应小于等于前一个闪烁片段的结束位置 {} ！", i, from, to)
-//             }
-//             BlinkRangeError::Reverse(i, from, to) => {
-//                 write!(f, "第 {} 个闪烁片段的起始位置 {} 不应小于等于结束位置 {} ！", i, from, to)
-//             }
-//         }
-//     }
-// }
-//
-// impl Error for BlinkRangeError {}
 
 /// 计算两个重叠垂线居中对齐后，短线相对于长线的上端和下端的偏移量。
 ///
@@ -1118,7 +1139,7 @@ impl From<UserData> for RichData {
         match data.data_type {
             DataType::Text => {
                 RichData {
-                    id: YitIdHelper::next_id(),
+                    id: data.id,
                     text: data.text,
                     font: data.font,
                     font_size: data.font_size,
@@ -1149,7 +1170,7 @@ impl From<UserData> for RichData {
                     image_inactive.replace(inactive_image);
                 }
                 RichData {
-                    id: YitIdHelper::next_id(),
+                    id: data.id,
                     text: data.text,
                     font: data.font,
                     font_size: data.font_size,

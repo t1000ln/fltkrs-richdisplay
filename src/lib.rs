@@ -225,9 +225,10 @@ impl Debug for Callback {
 }
 
 /// 分页请求参数
+#[derive(Debug, Clone)]
 pub enum PageOptions {
     /// 下一页，附带当前页的最后一条记录的id。
-    NextPage(i64),
+    NextPage(i64, bool),
     /// 上一页，附带当前页的第一条记录的id。
     PrevPage(i64),
 }
@@ -254,6 +255,7 @@ impl CallPage {
     }
 
     fn notify(&mut self, opt: PageOptions) {
+        // let notify = &mut* self.notifier.borrow_mut();
         let notify = &mut* self.notifier.borrow_mut();
         notify(opt);
     }
@@ -315,7 +317,7 @@ impl BlinkState {
 }
 
 /// 自定义事件。
-pub struct LocalEvent;
+pub(crate) struct LocalEvent;
 impl LocalEvent {
 
     /// 滚动事件。
@@ -329,10 +331,6 @@ impl LocalEvent {
 
     /// 从rich-display容器外部发起打开回顾区的事件。
     pub const OPEN_REVIEWER_FROM_EXTERNAL: i32 = 103;
-
-    pub const CLEAR_REVIEWER: i32 = 104;
-
-    pub const RELOAD_DATA_FOR_REVIEWER: i32 = 105;
 }
 
 /// 矩形结构，元素0/1代表x/y坐标，表示左上角坐标；元素2/3代表w/h宽和高，w/h不为负值。
@@ -1199,6 +1197,33 @@ impl From<UserData> for RichData {
 }
 
 impl RichData {
+    pub(crate) fn empty() -> Self {
+        RichData {
+            id: 0,
+            text: String::new(),
+            font: Font::Helvetica,
+            font_size: 0,
+            fg_color: Color::White,
+            bg_color: None,
+            underline: false,
+            clickable: false,
+            expired: false,
+            blink: false,
+            disabled: false,
+            strike_through: false,
+            line_height: 1,
+            v_bounds: Rc::new(Cell::new((0, 0, 0, 0))),
+            line_pieces: Vec::with_capacity(0),
+            data_type: DataType::Text,
+            image: None,
+            image_width: 0,
+            image_height: 0,
+            image_inactive: None,
+            search_result_positions: None,
+            search_highlight_pos: None,
+        }
+    }
+    
     /// 处理超宽的数据单元，自动换行。
     ///
     /// # Arguments
@@ -1504,6 +1529,7 @@ impl LinedData for RichData {
         let last_piece = last_piece.borrow().clone();
         let (top_y, start_x) = (last_piece.next_y, last_piece.next_x);
         let (font, font_size) = (self.font, self.font_size);
+        self.line_pieces.clear();
         match self.data_type {
             DataType::Text => {
                 set_font(self.font, self.font_size);

@@ -6,7 +6,7 @@ use fltk::enums::{Color, Font};
 use fltk::image::SharedImage;
 use fltk::prelude::{GroupExt, ImageExt, WidgetBase, WidgetExt, WindowExt};
 use log::{debug, warn};
-use fltkrs_richdisplay::rich_reviewer::RichReviewer;
+use fltkrs_richdisplay::rich_reviewer::{RichReviewer, show_page};
 use fltkrs_richdisplay::{PageOptions, UserData};
 
 pub enum GlobalMessage {
@@ -27,25 +27,33 @@ async fn main() {
     let page_size = Rc::new(Cell::new(10usize));
     let mut btn1 = Button::new(120, 10, 100, 30, "page_size - 10");
     let mut btn2 = Button::new(240, 10, 100, 30, "page_size + 10");
+
+    let mut reviewer = RichReviewer::new(100, 60, 1600, 800, None).history_mode();
+    // reviewer.set_background_color(Color::Dark1);
+    reviewer.set_page_size(page_size.get());
+
     btn1.set_callback({
         let page_size_rc = page_size.clone();
+        let mut reviewer_rc = reviewer.clone();
         move |_| {
             if page_size_rc.get() >= 10 {
-                page_size_rc.set(page_size_rc.get() - 10);
+                let new_page_size = page_size_rc.get() - 10;
+                page_size_rc.set(new_page_size);
+                reviewer_rc.set_page_size(new_page_size);
             }
         }
     });
     btn2.set_callback({
         let page_size_rc = page_size.clone();
+        let mut reviewer_rc = reviewer.clone();
         move |_| {
             if page_size_rc.get() <= 100 {
-                page_size_rc.set(page_size_rc.get() + 10);
+                let new_page_size = page_size_rc.get() + 10;
+                page_size_rc.set(new_page_size);
+                reviewer_rc.set_page_size(new_page_size);
             }
         }
     });
-
-    let mut reviewer = RichReviewer::new(100, 60, 1600, 800, None).history_mode();
-    // reviewer.set_background_color(Color::Dark1);
 
     win.end();
     win.show();
@@ -90,16 +98,20 @@ async fn main() {
         move |opt| {
             let ps = page_size_rc.get();
             match opt {
-                PageOptions::NextPage(last_uid) => {
+                PageOptions::NextPage(last_uid, auto_extend) => {
                     if let Ok(last_pos) = data_buffer_rc.borrow().binary_search_by_key(&last_uid, |d| d.id) {
-                        debug!("找到当前页最后一条数据的索引位置: {}", last_pos);
+                        // debug!("找到当前页最后一条数据的索引位置: {}, {}", last_pos, auto_extend);
                         if data_buffer_rc.borrow().len() > last_pos + 1 {
                             let mut page_data = Vec::<UserData>::with_capacity(ps);
-                            for ud in data_buffer_rc.borrow()[last_pos..].iter().take(ps) {
+                            for ud in data_buffer_rc.borrow()[(last_pos + 1)..].iter().take(ps) {
                                 page_data.push(ud.clone());
                             }
                             // debug!("载入下一页数据");
-                            reviewer_rc.show_page(page_data);
+                            if auto_extend {
+                                reviewer_rc.load_page_now(page_data, opt);
+                            } else {
+                                show_page(&mut reviewer_rc, page_data, opt);
+                            }
                         }
                     } else {
                         warn!("未找到目标数据: {}", last_uid);
@@ -107,7 +119,7 @@ async fn main() {
                 }
                 PageOptions::PrevPage(first_uid) => {
                     if let Ok(first_pos) = data_buffer_rc.borrow().binary_search_by_key(&first_uid, |d| d.id) {
-                        debug!("找到当前页第一条数据的索引位置: {}", first_pos);
+                        // debug!("找到当前页第一条数据的索引位置: {}", first_pos);
                         if first_pos > 0 {
                             let mut page_data = Vec::<UserData>::with_capacity(ps);
                             let from = if first_pos >= ps {
@@ -120,7 +132,8 @@ async fn main() {
                                 page_data.push(ud.clone());
                             }
                             // debug!("载入上一页数据");
-                            reviewer_rc.show_page(page_data);
+                            // reviewer_rc.show_page(page_data, opt);
+                            show_page(&mut reviewer_rc, page_data, opt);
                         }
                     } else {
                         warn!("未找到目标数据: {}", first_uid);
@@ -135,7 +148,8 @@ async fn main() {
     for ud in data_buffer.borrow().iter().take(page_size.get()) {
         page_data.push(ud.clone());
     }
-    reviewer.show_page(page_data);
+    // reviewer.show_page(page_data, PageOptions::NextPage(0));
+    show_page(&mut reviewer, page_data, PageOptions::NextPage(0, false));
 
     app.run().unwrap();
 }

@@ -1,21 +1,31 @@
-use std::time::Duration;
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 use fltk::{app, window};
+use fltk::button::Button;
 use fltk::enums::{Color, Font};
 use fltk::image::SharedImage;
-use fltk::prelude::{GroupExt, ImageExt, WidgetExt, WindowExt};
-use log::debug;
+use fltk::prelude::{GroupExt, ImageExt, WidgetBase, WidgetExt, WindowExt};
+use log::{LevelFilter, warn};
+use simple_logger::SimpleLogger;
+use time::macros::format_description;
 use fltkrs_richdisplay::rich_reviewer::RichReviewer;
-use fltkrs_richdisplay::UserData;
+use fltkrs_richdisplay::{PageOptions, UserData};
 
 pub enum GlobalMessage {
-    FillData,
     Clear,
     AfterClear
 }
 
 #[tokio::main]
 async fn main() {
-    simple_logger::init_with_level(log::Level::Debug).unwrap();
+    // simple_logger::init_with_level(log::Level::Debug).unwrap();
+    SimpleLogger::new()
+        .with_local_timestamps()
+        .with_timestamp_format(format_description!("[hour]:[minute]:[second].[subsecond digits:3]"))
+        .with_level(LevelFilter::Debug)
+        .init()
+        .unwrap();
+
     let app = app::App::default();
     let mut win = window::Window::default()
         .with_size(1800, 1000)
@@ -23,20 +33,48 @@ async fn main() {
         .center_screen();
     win.make_resizable(true);
 
-    let mut reviewer = RichReviewer::new(100, 60, 1600, 800, None).history_mode();
-    // reviewer.set_background_color(Color::Black);
+    let page_size = Rc::new(Cell::new(10usize));
+    let mut btn1 = Button::new(120, 10, 100, 30, "page_size - 10");
+    let mut btn2 = Button::new(240, 10, 100, 30, "page_size + 10");
+
+    let mut reviewer = RichReviewer::new(100, 60, 1600, 800, None).lazy_page_mode();
+    // reviewer.set_background_color(Color::Dark1);
+    reviewer.set_page_size(page_size.get());
+
+    btn1.set_callback({
+        let page_size_rc = page_size.clone();
+        let mut reviewer_rc = reviewer.clone();
+        move |_| {
+            if page_size_rc.get() >= 10 {
+                let new_page_size = page_size_rc.get() - 10;
+                page_size_rc.set(new_page_size);
+                reviewer_rc.set_page_size(new_page_size);
+            }
+        }
+    });
+    btn2.set_callback({
+        let page_size_rc = page_size.clone();
+        let mut reviewer_rc = reviewer.clone();
+        move |_| {
+            if page_size_rc.get() <= 100 {
+                let new_page_size = page_size_rc.get() + 10;
+                page_size_rc.set(new_page_size);
+                reviewer_rc.set_page_size(new_page_size);
+            }
+        }
+    });
 
     win.end();
     win.show();
 
-    let mut data_buffer = Vec::<UserData>::new();
-    let (global_sender, global_receiver) = app::channel::<GlobalMessage>();
+
+    let data_buffer = Rc::new(RefCell::new(Vec::<UserData>::new()));
 
     let img1 = SharedImage::load("res/1.jpg").unwrap();
     let (img1_width, img1_height, img1_data) = (img1.width(), img1.height(), img1.to_rgb_data());
     let img2 = SharedImage::load("res/2.jpg").unwrap();
     let (img2_width, img2_height, img2_data) = (img2.width(), img2.height(), img2.to_rgb_data());
-    for i in 0..10 {
+    for i in 0..100 {
         let turn = i * 13;
         let mut data: Vec<UserData> = Vec::from([
             UserData::new_text(format!("{}安全并且高效地处理𝄞并发编程是Rust的另一个主要目标。💖并发编程和并行编程这两种概念随着计算机设备的多核a优化而变得越来越重要。并发编程🐉允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 1)).set_underline(true).set_font(Font::Helvetica, 38).set_bg_color(Some(Color::DarkYellow)).set_clickable(true),
@@ -58,40 +96,63 @@ async fn main() {
         ]);
         data.reverse();
         while let Some(data_unit) = data.pop() {
-            data_buffer.push(data_unit);
+            data_buffer.borrow_mut().push(data_unit);
         }
     }
 
-    // 模拟上层应用调用
-    tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        global_sender.send(GlobalMessage::FillData);
-        debug!("Sender closed");
-
-        tokio::time::sleep(Duration::from_secs(5)).await;
-        global_sender.send(GlobalMessage::Clear);
-        global_sender.send(GlobalMessage::AfterClear);
-    });
-
-    while app.wait() {
-        if let Some(msg) = global_receiver.recv() {
-            match msg {
-                GlobalMessage::FillData => {
-                    // 更新数据段状态
-                    reviewer.fill(&mut data_buffer);
+    let fetch_page_fn = {
+        let data_buffer_rc = data_buffer.clone();
+        let mut reviewer_rc = reviewer.clone();
+        let page_size_rc = page_size.clone();
+        move |opt| {
+            let ps = page_size_rc.get();
+            match opt {
+                PageOptions::NextPage(last_uid) => {
+                    if let Ok(last_pos) = data_buffer_rc.borrow().binary_search_by_key(&last_uid, |d| d.id) {
+                        // debug!("找到当前页最后一条数据的索引位置: {}, {}", last_pos, auto_extend);
+                        if data_buffer_rc.borrow().len() > last_pos + 1 {
+                            let mut page_data = Vec::<UserData>::with_capacity(ps);
+                            for ud in data_buffer_rc.borrow()[(last_pos + 1)..].iter().take(ps) {
+                                page_data.push(ud.clone());
+                            }
+                            // debug!("载入下一页数据");
+                            reviewer_rc.load_page_now(page_data, opt);
+                        }
+                    } else {
+                        warn!("未找到目标数据: {}", last_uid);
+                    }
                 }
-                GlobalMessage::Clear => {
-                    // 清空数据段状态
-                    reviewer.clear();
-                }
-                GlobalMessage::AfterClear => {
-                    let mut ud = vec![UserData::new_text(format!("--已清屏--")).set_fg_color(Color::Light1).set_font(Font::Courier, 12)];
-                    reviewer.fill(&mut ud);
+                PageOptions::PrevPage(first_uid) => {
+                    if let Ok(first_pos) = data_buffer_rc.borrow().binary_search_by_key(&first_uid, |d| d.id) {
+                        // debug!("找到当前页第一条数据的索引位置: {}", first_pos);
+                        if first_pos > 0 {
+                            let mut page_data = Vec::<UserData>::with_capacity(ps);
+                            let from = if first_pos >= ps {
+                                first_pos - ps
+                            } else {
+                                0
+                            };
+                            let to = from + ps;
+                            for ud in data_buffer_rc.borrow()[from..to].iter().take(ps) {
+                                page_data.push(ud.clone());
+                            }
+                            // debug!("载入上一页数据");
+                            reviewer_rc.load_page_now(page_data, opt);
+                        }
+                    } else {
+                        warn!("未找到目标数据: {}", first_uid);
+                    }
                 }
             }
         }
+    };
+    reviewer.set_page_notifier(fetch_page_fn);
 
-        app::sleep(0.001);
-        app::awake();
+    let mut page_data = Vec::<UserData>::with_capacity(page_size.get());
+    for ud in data_buffer.borrow().iter().take(page_size.get()) {
+        page_data.push(ud.clone());
     }
+    reviewer.load_page_now(page_data, PageOptions::NextPage(0));
+
+    app.run().unwrap();
 }

@@ -1,4 +1,5 @@
-//! 内容源自rich_text的快照，可滚动浏览的组件。
+//! 展示缓存数据的组件，数据可来自主视图(主视图+回顾区配合使用)的快照，也可直接填充外部数据，可滚动浏览。
+//! 当以历史模式(即脱离主视图单独使用)展示数据时，不应修改数据。
 
 use std::cell::{Cell, RefCell};
 use std::cmp::{max, min, Ordering};
@@ -11,10 +12,14 @@ use fltk::frame::Frame;
 use fltk::group::{Scroll, ScrollType};
 use fltk::prelude::{GroupExt, WidgetBase, WidgetExt};
 use fltk::{app, draw, widget_extends};
+use fltk::app::{awake_callback, MouseWheel};
+use idgenerator_thin::{IdGeneratorOptions, YitIdHelper};
 use log::{debug, error};
 use throttle_my_fn::throttle;
-use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData, ClickPoint, select_text2, locate_target_rd, clear_selected_pieces, BlinkState, BLINK_INTERVAL, Callback};
+use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData, ClickPoint, select_text2, locate_target_rd, clear_selected_pieces, BlinkState, BLINK_INTERVAL, Callback, CallPage, PageOptions};
 use crate::rich_text::{PANEL_PADDING};
+use crate::utils::ID_GENERATOR_INIT;
+
 
 #[derive(Clone, Debug)]
 pub struct RichReviewer {
@@ -26,6 +31,7 @@ pub struct RichReviewer {
     clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
     reviewer_screen: Rc<RefCell<Offscreen>>,
     notifier: Rc<RefCell<Option<Callback>>>,
+    page_notifier: Rc<RefCell<Option<CallPage>>>,
     search_string: Option<String>,
     /// 查找结果，保存查询到的目标数据段在data_buffer中的索引编号。
     search_results: Vec<usize>,
@@ -33,6 +39,9 @@ pub struct RichReviewer {
     blink_flag: Rc<Cell<BlinkState>>,
     /// true表示历史记录模式，默认false表示在线回顾模式。
     history_mode: Rc<Cell<bool>>,
+    /// 历史模式下，分页数据大小。
+    page_size: Rc<Cell<usize>>,
+
 }
 widget_extends!(RichReviewer, Scroll, scroller);
 
@@ -42,6 +51,12 @@ impl RichReviewer {
 
     pub fn new<T>(x: i32, y: i32, w: i32, h: i32, title: T) -> Self
         where T: Into<Option<&'static str>> + Clone {
+        let _ = ID_GENERATOR_INIT.get_or_init(|| {
+            // 初始化ID生成器。
+            let options = IdGeneratorOptions::new(1);
+            YitIdHelper::set_id_generator(options);
+            0
+        });
         let mut scroller = Scroll::new(x, y, w, h, title);
         scroller.set_type(ScrollType::Vertical);
         scroller.set_scrollbar_size(Self::SCROLL_BAR_WIDTH);
@@ -56,10 +71,12 @@ impl RichReviewer {
         let visible_lines = Rc::new(RefCell::new(HashMap::<Rectangle, LinePiece>::new()));
         let clickable_data = Rc::new(RefCell::new(HashMap::<Rectangle, usize>::new()));
         let notifier: Rc<RefCell<Option<Callback>>> = Rc::new(RefCell::new(None));
+        let page_notifier: Rc<RefCell<Option<CallPage>>> = Rc::new(RefCell::new(None));
         let reviewer_screen = Rc::new(RefCell::new(Offscreen::new(w, h).unwrap()));
         let scroll_panel_to_y_after_resize = Rc::new(Cell::new(0));
         let resize_panel_after_resize = Rc::new(Cell::new((0, 0, 0, 0)));
         let history_mode = Rc::new(Cell::new(false));
+        let page_size = Rc::new(Cell::new(10));
 
         let search_results = Vec::<usize>::new();
         let search_str = None::<String>;
@@ -147,6 +164,7 @@ impl RichReviewer {
             let buffer_rc = data_buffer.clone();
             let last_window_size = Rc::new(Cell::new((w, h)));
             let notifier_rc = notifier.clone();
+            let page_notifier_rc = page_notifier.clone();
             let screen_rc = reviewer_screen.clone();
             let panel_rc = panel.clone();
             let new_scroll_y_rc = scroll_panel_to_y_after_resize.clone();
@@ -310,13 +328,49 @@ impl RichReviewer {
 
                         return true;
                     }
+                    Event::MouseWheel => {
+                        let mut id = 0i64;
+                        if app::event_dy() == MouseWheel::Down {
+                            // 向上滚动
+                            if scroller.yposition() < (scroller.h() / 4) {
+                                // debug!("请求前一页");
+                                // 获取id与执行回调之间分开处理，避免buffer_rc的嵌套借用出现问题
+                                if let Some(rd) = buffer_rc.borrow().first() {
+                                    id = rd.id;
+                                }
+
+                                if id != 0 {
+                                    if let Some(cb) = &mut *page_notifier_rc.borrow_mut() {
+                                        // cb.notify(PageOptions::PrevPage(id));
+                                        Self::load_page(cb, PageOptions::PrevPage(id));
+                                    };
+                                };
+                            }
+                        } else if app::event_dy() == MouseWheel::Up {
+                            // 向下滚动
+                            if scroller.yposition() > panel_rc.height() - scroller.h() - (scroller.h() / 4) {
+                                // debug!("请求后一页");
+                                // 获取id与执行回调之间分开处理，避免buffer_rc的嵌套借用出现问题
+                                if let Some(rd) = buffer_rc.borrow().last() {
+                                    id = rd.id;
+                                }
+
+                                if id != 0 {
+                                    if let Some(cb) = &mut *page_notifier_rc.borrow_mut() {
+                                        // cb.notify(PageOptions::NextPage(id, false));
+                                        Self::load_page(cb, PageOptions::NextPage(id));
+                                    };
+                                }
+                            }
+                        }
+                    }
                     _ => {}
                 }
                 false
             }
         });
 
-        Self { scroller, panel, data_buffer, background_color, visible_lines, clickable_data, reviewer_screen, notifier, search_string: search_str, search_results, current_highlight_focus, blink_flag, history_mode }
+        Self { scroller, panel, data_buffer, background_color, visible_lines, clickable_data, reviewer_screen, notifier, page_notifier, search_string: search_str, search_results, current_highlight_focus, blink_flag, history_mode, page_size }
     }
 
     #[throttle(1, Duration::from_millis(50))]
@@ -356,9 +410,10 @@ impl RichReviewer {
         self.background_color.replace(color);
     }
 
-    pub(crate) fn set_data(&mut self, data: Vec<RichData>) {
+    pub(crate) fn set_data(&mut self, mut data: Vec<RichData>) {
         // 更新回看数据
-        self.data_buffer.replace(data);
+        self.data_buffer.borrow_mut().clear();
+        self.data_buffer.borrow_mut().append(&mut data);
 
         let (scroller_width, scroller_height) = (self.panel.width(), self.scroller.height());
 
@@ -367,27 +422,6 @@ impl RichReviewer {
         self.panel.resize(self.panel.x(), self.panel.y(), scroller_width, panel_height);
     }
 
-    // /// 根据当前回顾`scroller`窗口大小创建对应的离线绘图板，并设置滚动条到最底部。
-    // ///
-    // /// # Arguments
-    // ///
-    // /// * `w`:
-    // /// * `h`:
-    // ///
-    // /// returns: ()
-    // ///
-    // /// # Examples
-    // ///
-    // /// ```
-    // ///
-    // /// ```
-    // pub fn renew_offscreen(&mut self, w: i32, h: i32) {
-    //     if let Some(offs) = Offscreen::new(w, h) {
-    //         self.reviewer_screen.replace(offs);
-    //         // 滚动到最底部
-    //         self.scroller.scroll_to(0, self.panel.height() - self.scroller.height());
-    //     }
-    // }
 
     pub fn scroll_to_bottom(&mut self) {
         self.scroller.scroll_to(0, self.panel.height() - self.scroller.height());
@@ -407,22 +441,7 @@ impl RichReviewer {
     /// ```
     ///
     /// ```
-    pub(crate) fn calc_panel_height(buffer_rc: Rc<RefCell<Vec<RichData>>>, scroller_height: i32) -> i32 {
-        let buffer = &*buffer_rc.borrow();
-        let (mut top, mut bottom) = (0, 0);
-        if let Some(first) = buffer.first() {
-            top = first.v_bounds.get().0;
-        }
-        if let Some(last) = buffer.last() {
-            bottom = last.v_bounds.get().1;
-        }
-        let content_height = bottom - top + PADDING.bottom + PADDING.top;
-        if content_height > scroller_height {
-            content_height
-        } else {
-            scroller_height
-        }
-    }
+
 
     fn draw_offline(
         screen: Rc<RefCell<Offscreen>>,
@@ -557,6 +576,25 @@ impl RichReviewer {
         self.notifier.replace(Some(notifier));
     }
 
+    /// 设置分页请求回调函数。
+    ///
+    /// # Arguments
+    ///
+    /// * `notifier`:
+    ///
+    /// returns: ()
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
+    pub fn set_page_notifier<F>(&mut self, cb: F) where F: FnMut(PageOptions) + 'static {
+        let call_page = CallPage::new(Rc::new(RefCell::new(Box::new(cb))));
+        self.page_notifier.replace(Some(call_page));
+        // self.page_notifier = Rc::new(Some(call_page));
+    }
+
     fn draw_offline2(&self) {
         Self::draw_offline(
             self.reviewer_screen.clone(),
@@ -590,6 +628,10 @@ impl RichReviewer {
     ///
     /// ```
     pub fn update_data(&mut self, options: RichDataOptions) {
+        if self.history_mode.get() {
+            return;
+        }
+
         let mut find_out = false;
         let mut target_idx = 0;
         if let Ok(idx) = self.data_buffer.borrow().binary_search_by_key(&options.id, |rd| rd.id) {
@@ -614,6 +656,10 @@ impl RichReviewer {
     }
 
     pub fn disable_data(&mut self, id: i64) {
+        if self.history_mode.get() {
+            return;
+        }
+
         let mut find_out = false;
         let mut target_idx = 0;
         if let Ok(idx) = self.data_buffer.borrow().binary_search_by_key(&id, |rd| rd.id) {
@@ -936,48 +982,267 @@ impl RichReviewer {
         }
     }
 
-    pub fn history_mode(self) -> Self {
+    /// 大数据量懒加载模式。
+    pub fn lazy_page_mode(self) -> Self {
         self.history_mode.set(true);
         self
     }
 
-    pub fn fill(&mut self, user_data_vec: &mut Vec<UserData>) {
+
+
+    /// 立即加载页数据。
+    ///
+    /// # Arguments
+    ///
+    /// * `user_data_page`:
+    /// * `direction`:
+    ///
+    /// returns: ()
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fltkrs_richdisplay::{PageOptions, UserData};
+    /// use fltkrs_richdisplay::rich_reviewer::RichReviewer;
+    ///
+    /// let mut reviewer = RichReviewer::new(100, 60, 1600, 800, None).lazy_page_mode();    ///
+    ///
+    /// let mut reviewer_rc = reviewer.clone();
+    /// let mut page_data: Vec<UserData> = vec![
+    ///     UserData::new_text("由于多线程可以同时运行，所以将计算操作拆分至多个线程可以提高性能。".to_string()),
+    ///     UserData::new_text("由于多线程可以同时运行，所以将计算操作拆分至多个线程可以提高性能。".to_string()),
+    /// ];
+    /// let opt = PageOptions::NextPage(1);
+    /// reviewer_rc.load_page_now(page_data, opt);
+    /// ```
+    pub fn load_page_now(&mut self, user_data_page: Vec<UserData>, direction: PageOptions) {
+        // debug!("已载入页数据");
         let window_width = self.panel.width();
         let drawable_max_width = window_width - PADDING.left - PADDING.right;
 
-        let mut data_buffer = Vec::<RichData>::new();
-
-        user_data_vec.reverse();
-        if let Some(user_data) = user_data_vec.pop() {
-            let mut rich_data: RichData = user_data.into();
-            let last_piece = LinePiece::init_piece();
-            rich_data.estimate(last_piece, drawable_max_width);
-            // debug!("first rd_bounds: {:?}", rich_data.v_bounds.get());
-            data_buffer.push(rich_data);
+        let mut page_buffer = Vec::<RichData>::new();
+        for ud in user_data_page {
+            page_buffer.push(ud.into());
         }
 
+        // 在尾部或头部添加页数据
+        match direction {
+            PageOptions::NextPage(_) => {
+                self.data_buffer.borrow_mut().append(&mut page_buffer);
+            }
+            PageOptions::PrevPage(_) => {
+                let mut buffer = self.data_buffer.borrow_mut();
+                buffer.reverse();
+                page_buffer.reverse();
+                buffer.append(&mut page_buffer);
+                buffer.reverse();
+            }
+        }
+        // debug!("缓存数据已变化");
 
-        while let Some(user_data) = user_data_vec.pop() {
-            let mut rich_data: RichData = user_data.into();
-            if let Some(rd) = data_buffer.last() {
-                if let Some(last_piece) = rd.line_pieces.iter().last() {
-                    rich_data.estimate(last_piece.clone(), drawable_max_width);
+        // 重新计算数据绘制坐标，并检测是否需要继续补充页数据。
+        let (need_more, panel_height) = Self::recalculate_data_buffer_position(self.data_buffer.clone(), drawable_max_width, self.panel.clone(), self.scroller.clone());
+        if need_more {
+            // debug!("需要更多数据");
+            let load_more_fn = {
+                let buffer_rc = self.data_buffer.clone();
+                let page_notifier_rc = self.page_notifier.clone();
+                let dir = direction.clone();
+                move || {
+                    let mut id = 0i64;
+                    if let Some(rd) = buffer_rc.borrow().last() {
+                        id = rd.id;
+                    }
+                    if id != 0 {
+                        // debug!("执行回调");
+                        if let Some(cp) = &mut *page_notifier_rc.borrow_mut() {
+                            match dir {
+                                PageOptions::NextPage(_) => {
+                                    cp.notify(PageOptions::NextPage(id));
+                                }
+                                PageOptions::PrevPage(_) => {
+                                    cp.notify(PageOptions::PrevPage(id));
+                                }
+                            }
+                            // debug!("补充数据完成！");
+                        }
+                    }
+                }
+            };
+            // debug!("准备在下一个循环中补充数据...");
+            awake_callback(load_more_fn);
+        } else {
+            // debug!("刷新页面");
+            match direction {
+                PageOptions::NextPage(_) => {
+                    if self.scroller.yposition() as f32 / self.scroller.h() as f32 > 4.0 {
+                        // debug!("当前前进位置超过4倍，触发移除远端数据操作...");
+                        awake_callback({
+                            let buffer_rc = self.data_buffer.clone();
+                            let page_size = self.page_size.get();
+                            let scroll_rc = self.scroller.clone();
+                            let mut panel_rc = self.panel.clone();
+                            move || {
+                                let mut last_height = 0;
+                                {
+                                    let len = buffer_rc.borrow().len();
+                                    let mut buffer = buffer_rc.borrow_mut();
+                                    if let Some(rd) = buffer.get(page_size - 1) {
+                                        last_height = rd.v_bounds.get().1
+                                    }
+                                    buffer.reverse();
+                                    buffer.truncate(len - page_size);
+                                    buffer.reverse();
+                                }
+
+                                Self::recalculate_data_buffer_position(buffer_rc.clone(), drawable_max_width, panel_rc.clone(), scroll_rc.clone());
+                                panel_rc.set_damage(true);
+                                // debug!("清除远端数据完成！");
+
+                                Self::scroll_page(panel_rc.clone(), scroll_rc.clone(), (true, last_height));
+                            }
+                        })
+                    } else {
+                        Self::scroll_page(self.panel.clone(), self.scroller.clone(), (false, 0));
+                        self.panel.set_damage(true);
+                    }
+                }
+                PageOptions::PrevPage(_) => {
+                    if self.scroller.yposition() > 0 && panel_height as f32 / self.scroller.h() as f32 > 4.0 {
+                        // debug!("当前后退位置超过4倍，触发移除远端数据操作...");
+                        awake_callback({
+                            let buffer_rc = self.data_buffer.clone();
+                            let page_size = self.page_size.get();
+                            let scroll_rc = self.scroller.clone();
+                            let mut panel_rc = self.panel.clone();
+                            move || {
+                                let mut last_height = 0;
+                                {
+                                    let len = buffer_rc.borrow().len();
+                                    let mut buffer = buffer_rc.borrow_mut();
+                                    if let Some(rd) = buffer.get(page_size - 1) {
+                                        last_height = rd.v_bounds.get().1
+                                    }
+                                    // buffer.reverse();
+                                    buffer.truncate(len - page_size);
+                                    // buffer.reverse();
+                                }
+
+                                Self::recalculate_data_buffer_position(buffer_rc.clone(), drawable_max_width, panel_rc.clone(), scroll_rc.clone());
+                                panel_rc.set_damage(true);
+                                // debug!("清除远端数据完成！");
+
+                                Self::scroll_page(panel_rc.clone(), scroll_rc.clone(), (true, -last_height));
+                            }
+                        })
+                    } else {
+                        Self::scroll_page(self.panel.clone(), self.scroller.clone(), (false, 0));
+                        self.panel.set_damage(true);
+                    }
                 }
             }
-            let sh = self.scroller.h();
-            // debug!("scroller.h: {}, rd_bounds: {:?}", sh, rich_data.v_bounds.get());
 
-            data_buffer.push(rich_data);
         }
-
-        self.set_data(data_buffer);
-
-        self.panel.set_damage(true);
     }
+
 
     pub fn clear(&mut self) {
         self.data_buffer.borrow_mut().clear();
         self.panel.resize(self.scroller.x(), self.scroller.y(), self.panel.w(), self.scroller.h());
         self.scroller.set_damage(true);
+    }
+
+    /// 设置历史模式下的分页大小。这个数值作为页面可见数据量的参考值，并不一定只显示这么多数据，可能会显示最多分页大小2倍的数据。
+    ///
+    /// # Arguments
+    ///
+    /// * `new_size`:
+    ///
+    /// returns: ()
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
+    pub fn set_page_size(&mut self, new_size: usize) {
+        self.page_size.replace(new_size);
+    }
+
+
+    #[throttle(1, Duration::from_millis(500))]
+    fn load_page(callpage: &mut CallPage, opt: PageOptions) {
+        callpage.notify(opt);
+    }
+
+    fn recalculate_data_buffer_position(data_buffer: Rc<RefCell<Vec<RichData>>>, drawable_max_width: i32, mut panel: Frame, scroller: Scroll) -> (bool, i32) {
+        let _empty = RichData::empty();
+        let mut last_rd = &_empty;
+        let mut is_first_data = true;
+
+        {
+            let mut buffer = data_buffer.borrow_mut();
+            for rd in buffer.iter_mut() {
+                let last_piece = if is_first_data {
+                    is_first_data = false;
+                    LinePiece::init_piece()
+                } else {
+                    last_rd.line_pieces.last().unwrap().clone()
+                };
+                rd.estimate(last_piece, drawable_max_width);
+                // debug!("rd.text: {}, rd.v_bounds: {:?}", rd.text, rd.v_bounds);
+                last_rd = rd;
+            }
+        }
+
+        // 设置新的窗口尺寸
+        let (scroller_width, scroller_height) = (panel.width(), scroller.height());
+        let panel_height = Self::calc_panel_height(data_buffer.clone(), scroller_height);
+        panel.resize(panel.x(), panel.y(), scroller_width, panel_height);
+        // debug!("panel_height: {}, scroller_height: {}", panel_height, scroller_height);
+        if let Some(rd) = data_buffer.borrow().last() {
+            // debug!("panel_height: {}, data bottom y: {}, scroller_height: {}", panel_height, rd.v_bounds.get().1, scroller_height);
+            (rd.v_bounds.get().1 <= scroller_height, panel_height)
+        } else {
+            (false, 0)
+        }
+    }
+
+    fn calc_panel_height(buffer_rc: Rc<RefCell<Vec<RichData>>>, scroller_height: i32) -> i32 {
+        let buffer = &*buffer_rc.borrow();
+        let (mut top, mut bottom) = (0, 0);
+        if let Some(first) = buffer.first() {
+            top = first.v_bounds.get().0;
+        }
+        if let Some(last) = buffer.last() {
+            bottom = last.v_bounds.get().1;
+        }
+        let content_height = bottom - top + PADDING.bottom + PADDING.top;
+        if content_height > scroller_height {
+            content_height
+        } else {
+            scroller_height
+        }
+    }
+
+    fn scroll_page(panel: Frame, mut scroller: Scroll, offset: (bool, i32)) {
+        // debug!("yposition: {}, diff: {}", self.scroller.yposition(), self.panel.h() - self.scroller.h());
+        let height_diff = panel.h() - scroller.h();
+        let yposition = scroller.yposition();
+        if yposition > height_diff {
+            // scroller.scroll_to(0, height_diff);
+            awake_callback({
+                let mut scroller_rc = scroller.clone();
+                move || {
+                    // debug!("滚动到1: {}", height_diff);
+                    scroller_rc.scroll_to(0, height_diff);
+                    scroller_rc.set_damage(true);
+                }
+            });
+        } else if offset.0 {
+            // debug!("滚动到2: {}", yposition - offset.1);
+            scroller.scroll_to(0, max(0, yposition - offset.1));
+            scroller.set_damage(true);
+        }
     }
 }

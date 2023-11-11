@@ -1,20 +1,19 @@
 # fltkrs-richdisplay
 ![Static Badge](https://img.shields.io/badge/version-0.2.0-blue) 
-![Static Badge](https://img.shields.io/badge/build-passing-green) 
-![Static Badge](https://img.shields.io/badge/deepin__linux_win10-gray) 
+![Static Badge](https://img.shields.io/badge/build-passing-green)
 ![Static Badge](https://img.shields.io/badge/Readonly-gray)
 
 
-这是一个专为`fltk-rs`开发的富文本展示组件项目，只能展示不能编辑，目标是作为`fltk-TextDisplay`组件的一个补充。 该组件的设计目标是提供更多的文本样式展示，甚至支持图形展示，主要的展示形式以行为主，从上向下、从左到右的流式排列。 
-
-本组件支持随意组合字体、字号、颜色、下划线、粗体/斜体等，支持文本与图形混合排布，支持历史内容回顾(缓存范围内)。
+这是一个基于`fltk-rs`的富文本展示组件，可用于展示文本和图片，不支持编辑操作。 该组件的设计目标是提供更多的文本样式展示，支持文、图混合，主要的展示形式以行为主，从上向下、从左到右的流式排列。 
 
 组件支持的主要功能：
 - 支持不同字体系列，粗体、斜体、颜色、背景色、下划线(禁用时自带删除线)，样式全面、自由组合。
 - 同一行内，不同字体系列，不同字号，不同宽高的图片，随意组合，自动垂直居中。文本内容超宽时自动换行。
+- 支持文字与图片混合展示。
 - 支持数据（文字/图片）互动，可鼠标点击、选择。选中文本后自动复制到剪贴板。可自定义互动的回调函数。
 - 主视图内容是单向流水式显示，回顾区视图为历史数据提供静态查看能力。
 - 支持内容闪烁，图片灰度变换。
+- 支持大数据量懒加载模式，按需加载/卸载分页化的数据。
 
 目前版本主视图的最小高度为200px(跟随系统缩放比例)。
 
@@ -33,7 +32,8 @@
 基本依赖：
 ```toml
 [dependencies]
-fltkrs-richdisplay = "0.1.11"
+fltk = "1.4"
+fltkrs-richdisplay = "0.2.0"
 ```
 
 由于下面的`examples`示例用到`tokio`框架进行异步交互，并且简单输出日志，所以需要额外添加依赖:
@@ -272,6 +272,3 @@ pub fn handle_action(mut action_receiver: tokio::sync::mpsc::Receiver<UserData>,
 回顾区预览，包含文本选择、字符串查找
 [![demo4](./res/demo4.png)](https://gitee.com/t1000ln/fltkrs-richdisplay/blob/main/res/demo4.png)
 
-
-## 计划实施
-- 添加历史模式数据的懒加载机制。

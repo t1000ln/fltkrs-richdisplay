@@ -228,7 +228,7 @@ impl Debug for Callback {
 #[derive(Debug, Clone)]
 pub enum PageOptions {
     /// 下一页，附带当前页的最后一条记录的id。
-    NextPage(i64, bool),
+    NextPage(i64),
     /// 上一页，附带当前页的第一条记录的id。
     PrevPage(i64),
 }

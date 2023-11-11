@@ -16,15 +16,14 @@ exclude = ["res/*", "examples/*"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-fltk = { version = "1.4.15", features = ["use-ninja"] }
+fltk = { version = "1.4.16", features = ["use-ninja"] }
 idgenerator-thin = "0.1.2"
 log = "0.4"
 throttle_my_fn = "0.2.6"
 parking_lot = "0.12.1"
-#async-global-executor = "2.3.1"
-#edge-executor = "0.4.0"
 
 [dev-dependencies]
 simple_logger = "4.2"
 tokio = { version = "1.33", features = ["full"] }
 rand = "0.8.5"
+time = "0.3"

@@ -745,7 +745,6 @@ impl RichReviewer {
     pub fn set_page_notifier<F>(&mut self, cb: F) where F: FnMut(PageOptions) + 'static {
         let call_page = CallPage::new(Rc::new(RefCell::new(Box::new(cb))));
         self.page_notifier.replace(Some(call_page));
-        // self.page_notifier = Rc::new(Some(call_page));
     }
 
     fn draw_offline2(&self) {
@@ -796,14 +795,6 @@ impl RichReviewer {
             if let Some(rd) = self.data_buffer.borrow_mut().get_mut(target_idx) {
                 update_data_properties(options, rd);
             }
-            // Self::draw_offline(
-            //     self.reviewer_screen.clone(),
-            //     &self.scroller,
-            //     self.visible_lines.clone(),
-            //     self.clickable_data.clone(),
-            //     self.data_buffer.clone(),
-            //     self.background_color.get(),
-            // );
             self.draw_offline2();
         }
     }
@@ -825,14 +816,6 @@ impl RichReviewer {
                 disable_data(rd);
             }
 
-            // Self::draw_offline(
-            //     self.reviewer_screen.clone(),
-            //     &self.scroller,
-            //     self.visible_lines.clone(),
-            //     self.clickable_data.clone(),
-            //     self.data_buffer.clone(),
-            //     self.background_color.get(),
-            // );
             self.draw_offline2();
         }
     }

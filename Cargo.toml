@@ -1,10 +1,10 @@
 [package]
 name = "fltkrs-richdisplay"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2021"
 rust-version = "1.70.0"
 keywords = ["richdisplay", "fltk"]
-description = "基于fltk-rs的富文本组件，作为fltk-TextDisplay组件的补充，增强样式组合，支持图文混排。"
+description = "基于fltk-rs的富文本组件，增强样式组合，支持图文混排，支持分页加载历史数据。"
 readme = "README.md"
 authors = ["t1000ln <t1000_ln@aliyun.com>"]
 license = "MIT"

@@ -41,6 +41,11 @@ async fn main() {
     // reviewer.set_background_color(Color::Dark1);
     reviewer.set_page_size(page_size.get());
 
+    // 设置默认字体和颜色
+    reviewer.set_text_font(Font::Times);
+    reviewer.set_text_color(Color::Light1);
+    reviewer.set_text_size(12);
+
     btn1.set_callback({
         let page_size_rc = page_size.clone();
         let mut reviewer_rc = reviewer.clone();
@@ -75,8 +80,9 @@ async fn main() {
     let img2 = SharedImage::load("res/2.jpg").unwrap();
     let (img2_width, img2_height, img2_data) = (img2.width(), img2.height(), img2.to_rgb_data());
     for i in 0..100 {
-        let turn = i * 13;
+        let turn = i * 14;
         let mut data: Vec<UserData> = Vec::from([
+            UserData::new_text(format!("{}安全并且高效地处理𝄞并发编程是Rust的另一个主要目标。💖并发编程和并行编程这两种概念随着计算机设备的多核a优化而变得越来越重要。并发编程🐉允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 0)),
             UserData::new_text(format!("{}安全并且高效地处理𝄞并发编程是Rust的另一个主要目标。💖并发编程和并行编程这两种概念随着计算机设备的多核a优化而变得越来越重要。并发编程🐉允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 1)).set_underline(true).set_font(Font::Helvetica, 38).set_bg_color(Some(Color::DarkYellow)).set_clickable(true),
             UserData::new_text(format!("{}在大部分现在操作系统中，执行程序的代码会运行在进程中，操作系统会同时管理多个进程。类似地，程序内部也可以拥有多个同时运行的独立部分，用来运行这些独立部分的就叫做线程。", turn + 2)).set_font(Font::HelveticaItalic, 18).set_bg_color(Some(Color::Green)),
             UserData::new_image(img1_data.clone(), img1_width, img1_height),

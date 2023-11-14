@@ -149,6 +149,9 @@ pub const HIGHLIGHT_RECT_CONTRAST_COLOR: Color = Color::from_rgb(0, 110, 255);
 /// 最亮的白色。
 pub const WHITE: Color = Color::from_rgb(255, 255, 255);
 
+/// 默认字体尺寸。
+pub const DEFAULT_FONT_SIZE: i32 = 14;
+
 
 /// 回调函数载体。
 /// 当用户使用鼠标点击主视图或回顾区视图上的可互动数据段时，会执行该回调函数，并将点击目标处的数据作为参数传入回调函数。
@@ -832,6 +835,8 @@ pub struct UserData {
     pub image: Option<Vec<u8>>,
     pub image_width: i32,
     pub image_height: i32,
+    pub(crate) custom_font_text: bool,
+    pub(crate) custom_font_color: bool,
 }
 
 impl From<&RichData> for UserData {
@@ -853,6 +858,8 @@ impl From<&RichData> for UserData {
             image: data.image.clone(),
             image_width: data.image_width,
             image_height: data.image_height,
+            custom_font_text: false,
+            custom_font_color: false,
         }
     }
 }
@@ -876,6 +883,8 @@ impl UserData {
             image: None,
             image_width: 0,
             image_height: 0,
+            custom_font_text: false,
+            custom_font_color: false,
         }
     }
 
@@ -897,17 +906,21 @@ impl UserData {
             image: Some(image),
             image_width: width,
             image_height: height,
+            custom_font_text: false,
+            custom_font_color: false,
         }
     }
 
     pub fn set_font(mut self, font: Font, size: i32) -> Self {
         self.font = font;
         self.font_size = size;
+        self.custom_font_text = true;
         self
     }
 
     pub fn set_fg_color(mut self, fg_color: Color) -> Self {
         self.fg_color = fg_color;
+        self.custom_font_color = true;
         self
     }
 

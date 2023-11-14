@@ -154,7 +154,7 @@ use std::collections::{HashMap};
 use std::rc::{Rc, Weak};
 use std::time::{Duration};
 use fltk::draw::{draw_rect_fill, draw_xyline, LineStyle, Offscreen, set_draw_color, set_line_style};
-use fltk::enums::{Align, Color, Cursor, Event};
+use fltk::enums::{Align, Color, Cursor, Event, Font};
 use fltk::frame::Frame;
 use fltk::group::{Scroll, ScrollType};
 use fltk::prelude::{GroupExt, WidgetBase, WidgetExt};
@@ -163,7 +163,7 @@ use fltk::app::{awake_callback, MouseWheel};
 use idgenerator_thin::{IdGeneratorOptions, YitIdHelper};
 use log::{debug, error};
 use throttle_my_fn::throttle;
-use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData, ClickPoint, select_text2, locate_target_rd, clear_selected_pieces, BlinkState, BLINK_INTERVAL, Callback, CallPage, PageOptions};
+use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData, ClickPoint, select_text2, locate_target_rd, clear_selected_pieces, BlinkState, BLINK_INTERVAL, Callback, CallPage, PageOptions, DEFAULT_FONT_SIZE, WHITE};
 use crate::rich_text::{PANEL_PADDING};
 use crate::utils::ID_GENERATOR_INIT;
 
@@ -188,7 +188,9 @@ pub struct RichReviewer {
     history_mode: Rc<Cell<bool>>,
     /// 历史模式下，分页数据大小。
     page_size: Rc<Cell<usize>>,
-
+    text_font: Font,
+    text_color: Color,
+    text_size: i32,
 }
 widget_extends!(RichReviewer, Scroll, scroller);
 
@@ -209,6 +211,10 @@ impl RichReviewer {
         scroller.set_scrollbar_size(Self::SCROLL_BAR_WIDTH);
         scroller.set_align(Align::Bottom);
         scroller.end();
+
+        let text_font = Font::Helvetica;
+        let text_color = WHITE;
+        let text_size = DEFAULT_FONT_SIZE;
 
         let mut panel = Frame::new(x, y, w, h, None);
         scroller.add_resizable(&panel);
@@ -517,7 +523,7 @@ impl RichReviewer {
             }
         });
 
-        Self { scroller, panel, data_buffer, background_color, visible_lines, clickable_data, reviewer_screen, notifier, page_notifier, search_string: search_str, search_results, current_highlight_focus, blink_flag, history_mode, page_size }
+        Self { scroller, panel, data_buffer, background_color, visible_lines, clickable_data, reviewer_screen, notifier, page_notifier, search_string: search_str, search_results, current_highlight_focus, blink_flag, history_mode, page_size, text_font, text_color, text_size }
     }
 
     #[throttle(1, Duration::from_millis(50))]
@@ -1169,7 +1175,17 @@ impl RichReviewer {
 
         let mut page_buffer = Vec::<RichData>::new();
         for ud in user_data_page {
-            page_buffer.push(ud.into());
+            let default_font_text = !ud.custom_font_text;
+            let default_font_color = !ud.custom_font_color;
+            let mut rich_data: RichData = ud.into();
+            if default_font_text {
+                rich_data.font = self.text_font;
+                rich_data.font_size = self.text_size;
+            }
+            if default_font_color {
+                rich_data.fg_color = self.text_color;
+            }
+            page_buffer.push(rich_data);
         }
 
         // 在尾部或头部添加页数据
@@ -1391,5 +1407,71 @@ impl RichReviewer {
             scroller.scroll_to(0, max(0, yposition - offset.1));
             scroller.set_damage(true);
         }
+    }
+
+    /// 设置默认的字体，并与`fltk`的其他输入型组件同名接口方法保持兼容。
+    ///
+    /// # Arguments
+    ///
+    /// * `font`: 默认字体。
+    ///
+    /// returns: ()
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
+    pub fn set_text_font(&mut self, font: Font) {
+        self.text_font = font;
+    }
+
+    /// 获取默认的字体。
+    pub fn text_font(&self) -> Font {
+        self.text_font
+    }
+
+    /// 设置默认的字体颜色，并与`fltk`的其他输入型组件同名接口方法保持兼容。
+    ///
+    /// # Arguments
+    ///
+    /// * `color`:
+    ///
+    /// returns: ()
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
+    pub fn set_text_color(&mut self, color: Color) {
+        self.text_color = color;
+    }
+
+    /// 获取默认的字体颜色。
+    pub fn text_color(&self) -> Color {
+        self.text_color
+    }
+
+    /// 设置默认的字体尺寸，并与`fltk`的其他输入型组件同名接口方法保持兼容。
+    ///
+    /// # Arguments
+    ///
+    /// * `color`:
+    ///
+    /// returns: ()
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
+    pub fn set_text_size(&mut self, size: i32) {
+        self.text_size = size;
+    }
+
+    /// 获取默认的字体尺寸。
+    pub fn text_size(&self) -> i32 {
+        self.text_size
     }
 }

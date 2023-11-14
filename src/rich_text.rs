@@ -6,13 +6,13 @@ use std::rc::Rc;
 use std::time::{Duration};
 
 use fltk::draw::{draw_rect_fill, Offscreen};
-use fltk::enums::{Color, Cursor, Event};
+use fltk::enums::{Color, Cursor, Event, Font};
 use fltk::frame::Frame;
 use fltk::prelude::{FltkError, GroupExt, WidgetBase, WidgetExt};
 use fltk::{app, draw, widget_extends};
 use fltk::app::{MouseWheel};
 use fltk::group::{Flex};
-use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData, select_text, BLINK_INTERVAL, BlinkState, Callback};
+use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData, select_text, BLINK_INTERVAL, BlinkState, Callback, DEFAULT_FONT_SIZE, WHITE};
 
 use idgenerator_thin::{IdGeneratorOptions, YitIdHelper};
 use log::{error};
@@ -40,6 +40,11 @@ pub struct RichText {
     /// 主面板上可见行片段的集合容器，在每次离线绘制时被清空和填充。
     visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
     blink_flag: Rc<Cell<BlinkState>>,
+    /// 默认字体。
+    text_font: Font,
+    /// 默认字体颜色。
+    text_color: Color,
+    text_size: i32,
 }
 widget_extends!(RichText, Flex, inner);
 
@@ -53,6 +58,10 @@ impl RichText {
             YitIdHelper::set_id_generator(options);
             0
         });
+
+        let text_font = Font::Helvetica;
+        let text_color = WHITE;
+        let text_size = DEFAULT_FONT_SIZE;
 
         let background_color = Rc::new(Cell::new(Color::Black));
         let reviewer = Rc::new(RefCell::new(None::<RichReviewer>));
@@ -365,7 +374,7 @@ impl RichText {
             }
         });
 
-        Self { panel, data_buffer, background_color, buffer_max_lines, notifier, inner, reviewer, panel_screen, visible_lines, clickable_data, blink_flag }
+        Self { panel, data_buffer, background_color, buffer_max_lines, notifier, inner, reviewer, panel_screen, visible_lines, clickable_data, blink_flag, text_font, text_color, text_size, }
     }
 
     #[throttle(1, Duration::from_millis(50))]
@@ -438,7 +447,16 @@ impl RichText {
     ///
     /// ```
     pub fn append(&mut self, user_data: UserData) {
+        let default_font_text = !user_data.custom_font_text;
+        let default_font_color = !user_data.custom_font_color;
         let mut rich_data: RichData = user_data.into();
+        if default_font_text {
+            rich_data.font = self.text_font;
+            rich_data.font_size = self.text_size;
+        }
+        if default_font_color {
+            rich_data.fg_color = self.text_color;
+        }
         let window_width = self.panel.width();
         let drawable_max_width = window_width - PADDING.left - PADDING.right;
 
@@ -1004,5 +1022,71 @@ impl RichText {
         } else {
             Ok(false)
         }
+    }
+
+    /// 设置默认的字体，并与`fltk`的其他输入型组件同名接口方法保持兼容。
+    ///
+    /// # Arguments
+    ///
+    /// * `font`: 默认字体。
+    ///
+    /// returns: ()
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
+    pub fn set_text_font(&mut self, font: Font) {
+        self.text_font = font;
+    }
+
+    /// 获取默认的字体。
+    pub fn text_font(&self) -> Font {
+        self.text_font
+    }
+
+    /// 设置默认的字体颜色，并与`fltk`的其他输入型组件同名接口方法保持兼容。
+    ///
+    /// # Arguments
+    ///
+    /// * `color`:
+    ///
+    /// returns: ()
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
+    pub fn set_text_color(&mut self, color: Color) {
+        self.text_color = color;
+    }
+
+    /// 获取默认的字体颜色。
+    pub fn text_color(&self) -> Color {
+        self.text_color
+    }
+
+    /// 设置默认的字体尺寸，并与`fltk`的其他输入型组件同名接口方法保持兼容。
+    ///
+    /// # Arguments
+    ///
+    /// * `color`:
+    ///
+    /// returns: ()
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
+    pub fn set_text_size(&mut self, size: i32) {
+        self.text_size = size;
+    }
+
+    /// 获取默认的字体尺寸。
+    pub fn text_size(&self) -> i32 {
+        self.text_size
     }
 }

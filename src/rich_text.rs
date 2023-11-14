@@ -797,14 +797,6 @@ impl RichText {
             if let Some(rd) = self.data_buffer.borrow_mut().get_mut(target_idx) {
                 update_data_properties(options.clone(), rd);
             }
-            // Self::draw_offline(
-            //     self.panel_screen.clone(),
-            //     &self.panel,
-            //     self.visible_lines.clone(),
-            //     self.clickable_data.clone(),
-            //     self.background_color.get(),
-            //     self.data_buffer.clone()
-            // );
             self.draw_offline_2();
         }
 
@@ -895,14 +887,6 @@ impl RichText {
                 disable_data(rd);
             }
 
-            // Self::draw_offline(
-            //     self.panel_screen.clone(),
-            //     &self.panel,
-            //     self.visible_lines.clone(),
-            //     self.clickable_data.clone(),
-            //     self.background_color.get(),
-            //     self.data_buffer.clone(),
-            // );
             self.draw_offline_2();
         }
 

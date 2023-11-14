@@ -473,9 +473,6 @@ impl ClickPoint {
     pub fn to_rect(&self, to_point: &Self) -> Rectangle {
         Rectangle::new(self.x, self.y, to_point.x - self.x, to_point.y - self.y)
     }
-    // pub fn towards_down(&self, to_point: &Self) -> bool {
-    //     self.y < to_point.y
-    // }
 }
 
 /// 同一行内多个分片之间共享的信息。通过Rc<RefCell<ThroughLine>>进行链接。
@@ -521,13 +518,6 @@ impl ThroughLine {
         }
         self
     }
-
-    // pub fn set_exist_image(&mut self, exist_image: bool) -> &mut Self {
-    //     if exist_image == true {
-    //         self.exist_image = true;
-    //     }
-    //     self
-    // }
 
     pub fn add_piece(&mut self, lp: Rc<RefCell<LinePiece>>) -> &mut Self {
         self.ys.borrow_mut().push(Rc::downgrade(&lp));
@@ -679,14 +669,6 @@ impl LinePiece {
     pub fn select_all(&self) {
         self.selected_range.set(Some((0, self.line.chars().count())));
     }
-
-    // pub fn selection_text(&self) -> Option<String> {
-    //     if let Some((from, to)) = self.selected_range.get() {
-    //         Some(self.line.chars().skip(from).take(to - from).collect::<String>())
-    //     } else {
-    //         None
-    //     }
-    // }
 
     pub fn copy_selection(&self, selection: &mut String) {
         if let Some((from, to)) = self.selected_range.get() {
@@ -1331,13 +1313,6 @@ impl RichData {
         }
     }
 
-    // pub fn truncate(&mut self, from: Option<usize>) {
-    //     if let Some(from) = from {
-    //         self.text.truncate(from);
-    //     } else {
-    //         self.text.clear();
-    //     }
-    // }
 }
 
 
@@ -2430,16 +2405,6 @@ fn extend_from_end(piece: &LinePiece) {
     }
 }
 
-// pub(crate) fn locate_piece_at_point(visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>, win_point: ClickPoint, offset_y: i32) -> Option<LinePiece> {
-//     for (_, piece) in visible_lines.borrow().iter() {
-//         if is_overlap(&piece.rect(offset_y), &win_point.as_rect()) {
-//             debug!("piece y: {}, offset_y: {}", piece.y, offset_y);
-//             return Some(piece.clone());
-//         }
-//     }
-//     None
-// }
-
 pub(crate) fn clear_selected_pieces(selected_pieces: Rc<RefCell<Vec<Weak<RefCell<LinePiece>>>>>) {
     for piece in selected_pieces.borrow().iter() {
         if let Some(p) = piece.upgrade() {
@@ -2726,25 +2691,6 @@ pub fn get_contrast_color(color: Color) -> Color {
 /// ```
 pub fn get_lighter_or_darker_color(color: Color) -> Color {
     let (r, g, b) = color.to_rgb();
-    // let supported = draw::can_do_alpha_blending();
-    // if supported {
-    //      // 使用alpha blending算法降低色彩饱和度，效果不好。
-    //     Color::from_rgba_tuple((r, g, b, 60u8))
-    // } else {
-    //     let total = r as u16 + g as u16 + b as u16;
-    //     let max_c = max(r, max(g, b));
-    //     if total >= 383 || max_c as u16 + 127 > 255u16 {
-    //         let (cr, cg, cb) = (max(0i16, r as i16 - 127), max(0i16, g as i16 - 127), max(0i16, b as i16 - 127));
-    //         Color::from_rgb(cr as u8, cg as u8, cb as u8)
-    //          // 使用内置api降低亮度，效果不理想
-    //         // color.darker()
-    //     } else {
-    //         let (cr, cg, cb) = (min(255i16, r as i16 + 127), min(255i16, g as i16 + 127), min(255i16, b as i16 + 127));
-    //         Color::from_rgb(cr as u8, cg as u8, cb as u8)
-    //          // 使用内置api提高亮度，效果不理想
-    //         // color.lighter()
-    //     }
-    // }
 
     let total = r as u16 + g as u16 + b as u16;
     let max_c = max(r, max(g, b));

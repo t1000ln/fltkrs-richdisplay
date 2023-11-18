@@ -5,7 +5,7 @@ use fltk::button::Button;
 use fltk::enums::{Color, Font};
 use fltk::image::SharedImage;
 use fltk::prelude::{GroupExt, ImageExt, WidgetBase, WidgetExt, WindowExt};
-use log::{LevelFilter, warn};
+use log::{debug, LevelFilter, warn};
 use simple_logger::SimpleLogger;
 use time::macros::format_description;
 use fltkrs_richdisplay::rich_reviewer::RichReviewer;
@@ -160,5 +160,6 @@ async fn main() {
     }
     reviewer.load_page_now(page_data, PageOptions::NextPage(0));
 
+    debug!("生成流水号：{:?}", reviewer.get_next_sn());
     app.run().unwrap();
 }

@@ -1457,4 +1457,8 @@ impl RichReviewer {
     pub fn text_size(&self) -> i32 {
         self.text_size
     }
+
+    pub fn get_next_sn(&self) -> i64 {
+        YitIdHelper::next_id()
+    }
 }

@@ -5,9 +5,7 @@ use fltk::button::Button;
 use fltk::enums::{Color, Font};
 use fltk::image::SharedImage;
 use fltk::prelude::{GroupExt, ImageExt, WidgetBase, WidgetExt, WindowExt};
-use log::{debug, LevelFilter, warn};
-use simple_logger::SimpleLogger;
-use time::macros::format_description;
+use log::{debug, warn};
 use fltkrs_richdisplay::rich_reviewer::RichReviewer;
 use fltkrs_richdisplay::{PageOptions, UserData};
 
@@ -18,13 +16,7 @@ pub enum GlobalMessage {
 
 #[tokio::main]
 async fn main() {
-    // simple_logger::init_with_level(log::Level::Debug).unwrap();
-    SimpleLogger::new()
-        .with_local_timestamps()
-        .with_timestamp_format(format_description!("[hour]:[minute]:[second].[subsecond digits:3]"))
-        .with_level(LevelFilter::Debug)
-        .init()
-        .unwrap();
+    simple_logger::init_with_level(log::Level::Debug).unwrap();
 
     let app = app::App::default();
     let mut win = window::Window::default()
@@ -160,6 +152,5 @@ async fn main() {
     }
     reviewer.load_page_now(page_data, PageOptions::NextPage(0));
 
-    debug!("生成流水号：{:?}", reviewer.get_next_sn());
     app.run().unwrap();
 }

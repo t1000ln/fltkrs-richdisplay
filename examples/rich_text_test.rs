@@ -170,8 +170,6 @@ async fn main() {
         debug!("Sender closed");
     });
 
-    debug!("生成流水号：{:?}", rich_text.get_next_sn());
-
     let mut r = thread_rng();
 
     let mut has_recent_message = false;

@@ -1075,6 +1075,7 @@ impl RichText {
     }
 
 
+    /// 可以在app中使用的获取雪花流水号的工具方法。
     pub fn get_next_sn(&self) -> i64 {
         YitIdHelper::next_id()
     }

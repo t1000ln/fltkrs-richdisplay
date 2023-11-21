@@ -188,9 +188,9 @@ pub struct RichReviewer {
     history_mode: Rc<Cell<bool>>,
     /// 历史模式下，分页数据大小。
     page_size: Rc<Cell<usize>>,
-    text_font: Font,
-    text_color: Color,
-    text_size: i32,
+    text_font: Rc<Cell<Font>>,
+    text_color: Rc<Cell<Color>>,
+    text_size: Rc<Cell<i32>>,
 }
 widget_extends!(RichReviewer, Scroll, scroller);
 
@@ -212,9 +212,9 @@ impl RichReviewer {
         scroller.set_align(Align::Bottom);
         scroller.end();
 
-        let text_font = Font::Helvetica;
-        let text_color = WHITE;
-        let text_size = DEFAULT_FONT_SIZE;
+        let text_font = Rc::new(Cell::new(Font::Helvetica));
+        let text_color = Rc::new(Cell::new(WHITE));
+        let text_size = Rc::new(Cell::new(DEFAULT_FONT_SIZE));
 
         let mut panel = Frame::new(x, y, w, h, None);
         scroller.add_resizable(&panel);
@@ -1162,11 +1162,11 @@ impl RichReviewer {
             let default_font_color = !ud.custom_font_color;
             let mut rich_data: RichData = ud.into();
             if default_font_text {
-                rich_data.font = self.text_font;
-                rich_data.font_size = self.text_size;
+                rich_data.font = self.text_font.get();
+                rich_data.font_size = self.text_size.get();
             }
             if default_font_color {
-                rich_data.fg_color = self.text_color;
+                rich_data.fg_color = self.text_color.get();
             }
             page_buffer.push(rich_data);
         }
@@ -1406,12 +1406,12 @@ impl RichReviewer {
     ///
     /// ```
     pub fn set_text_font(&mut self, font: Font) {
-        self.text_font = font;
+        self.text_font.set(font);
     }
 
     /// 获取默认的字体。
     pub fn text_font(&self) -> Font {
-        self.text_font
+        self.text_font.get()
     }
 
     /// 设置默认的字体颜色，并与`fltk`的其他输入型组件同名接口方法保持兼容。
@@ -1428,12 +1428,12 @@ impl RichReviewer {
     ///
     /// ```
     pub fn set_text_color(&mut self, color: Color) {
-        self.text_color = color;
+        self.text_color.set(color);
     }
 
     /// 获取默认的字体颜色。
     pub fn text_color(&self) -> Color {
-        self.text_color
+        self.text_color.get()
     }
 
     /// 设置默认的字体尺寸，并与`fltk`的其他输入型组件同名接口方法保持兼容。
@@ -1450,12 +1450,12 @@ impl RichReviewer {
     ///
     /// ```
     pub fn set_text_size(&mut self, size: i32) {
-        self.text_size = size;
+        self.text_size.set(size);
     }
 
     /// 获取默认的字体尺寸。
     pub fn text_size(&self) -> i32 {
-        self.text_size
+        self.text_size.get()
     }
 
     /// 可以在app中使用的获取雪花流水号的工具方法。

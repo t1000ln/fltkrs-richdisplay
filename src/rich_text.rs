@@ -41,10 +41,10 @@ pub struct RichText {
     visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
     blink_flag: Rc<Cell<BlinkState>>,
     /// 默认字体。
-    text_font: Font,
+    text_font: Rc<Cell<Font>>,
     /// 默认字体颜色。
-    text_color: Color,
-    text_size: i32,
+    text_color: Rc<Cell<Color>>,
+    text_size: Rc<Cell<i32>>,
 }
 widget_extends!(RichText, Flex, inner);
 
@@ -59,9 +59,9 @@ impl RichText {
             0
         });
 
-        let text_font = Font::Helvetica;
-        let text_color = WHITE;
-        let text_size = DEFAULT_FONT_SIZE;
+        let text_font = Rc::new(Cell::new(Font::Helvetica));
+        let text_color = Rc::new(Cell::new(WHITE));
+        let text_size = Rc::new(Cell::new(DEFAULT_FONT_SIZE));
 
         let background_color = Rc::new(Cell::new(Color::Black));
         let reviewer = Rc::new(RefCell::new(None::<RichReviewer>));
@@ -451,11 +451,11 @@ impl RichText {
         let default_font_color = !user_data.custom_font_color;
         let mut rich_data: RichData = user_data.into();
         if default_font_text {
-            rich_data.font = self.text_font;
-            rich_data.font_size = self.text_size;
+            rich_data.font = self.text_font.get();
+            rich_data.font_size = self.text_size.get();
         }
         if default_font_color {
-            rich_data.fg_color = self.text_color;
+            rich_data.fg_color = self.text_color.get();
         }
         let window_width = self.panel.width();
         let drawable_max_width = window_width - PADDING.left - PADDING.right;
@@ -1022,12 +1022,20 @@ impl RichText {
     ///
     /// ```
     pub fn set_text_font(&mut self, font: Font) {
-        self.text_font = font;
+        // let old_font = self.text_font;
+        self.text_font.set(font);
+
+        // // 将缓存数据中的默认旧字体全部更换为新字体
+        // self.data_buffer.borrow_mut().iter_mut().for_each(|rd| {
+        //     if rd.font == old_font {
+        //         rd.font = font;
+        //     }
+        // });
     }
 
     /// 获取默认的字体。
     pub fn text_font(&self) -> Font {
-        self.text_font
+        self.text_font.get()
     }
 
     /// 设置默认的字体颜色，并与`fltk`的其他输入型组件同名接口方法保持兼容。
@@ -1044,12 +1052,20 @@ impl RichText {
     ///
     /// ```
     pub fn set_text_color(&mut self, color: Color) {
-        self.text_color = color;
+        // let old_cold = self.text_color;
+        self.text_color.set(color);
+
+        // // 将缓存数据中的默认旧字体颜色全部更换为新字体颜色
+        // self.data_buffer.borrow_mut().iter_mut().for_each(|rd| {
+        //     if rd.fg_color == old_cold {
+        //         rd.fg_color = color;
+        //     }
+        // });
     }
 
     /// 获取默认的字体颜色。
     pub fn text_color(&self) -> Color {
-        self.text_color
+        self.text_color.get()
     }
 
     /// 设置默认的字体尺寸，并与`fltk`的其他输入型组件同名接口方法保持兼容。
@@ -1066,12 +1082,20 @@ impl RichText {
     ///
     /// ```
     pub fn set_text_size(&mut self, size: i32) {
-        self.text_size = size;
+        // let old_size = self.text_size;
+        self.text_size.set(size);
+
+        // // 将缓存数据中的默认旧字体尺寸全部更换为新字体尺寸
+        // self.data_buffer.borrow_mut().iter_mut().for_each(|rd| {
+        //     if rd.font_size == old_size {
+        //         rd.font_size = size
+        //     }
+        // });
     }
 
     /// 获取默认的字体尺寸。
     pub fn text_size(&self) -> i32 {
-        self.text_size
+        self.text_size.get()
     }
 
 

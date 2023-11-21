@@ -1,5 +1,5 @@
 # fltkrs-richdisplay
-![Static Badge](https://img.shields.io/badge/crates-0.2.4-blue) 
+![Static Badge](https://img.shields.io/badge/crates-0.2.5-blue) 
 ![Static Badge](https://img.shields.io/badge/build-passing-green)
 ![Static Badge](https://img.shields.io/badge/Readonly-gray)
 

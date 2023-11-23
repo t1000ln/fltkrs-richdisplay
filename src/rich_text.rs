@@ -45,6 +45,7 @@ pub struct RichText {
     /// 默认字体颜色。
     text_color: Rc<Cell<Color>>,
     text_size: Rc<Cell<i32>>,
+    piece_spacing: Rc<Cell<i32>>,
 }
 widget_extends!(RichText, Flex, inner);
 
@@ -62,6 +63,7 @@ impl RichText {
         let text_font = Rc::new(Cell::new(Font::Helvetica));
         let text_color = Rc::new(Cell::new(WHITE));
         let text_size = Rc::new(Cell::new(DEFAULT_FONT_SIZE));
+        let piece_spacing = Rc::new(Cell::new(0));
 
         let background_color = Rc::new(Cell::new(Color::Black));
         let reviewer = Rc::new(RefCell::new(None::<RichReviewer>));
@@ -374,7 +376,7 @@ impl RichText {
             }
         });
 
-        Self { panel, data_buffer, background_color, buffer_max_lines, notifier, inner, reviewer, panel_screen, visible_lines, clickable_data, blink_flag, text_font, text_color, text_size, }
+        Self { panel, data_buffer, background_color, buffer_max_lines, notifier, inner, reviewer, panel_screen, visible_lines, clickable_data, blink_flag, text_font, text_color, text_size, piece_spacing}
     }
 
     #[throttle(1, Duration::from_millis(50))]
@@ -450,6 +452,7 @@ impl RichText {
         let default_font_text = !user_data.custom_font_text;
         let default_font_color = !user_data.custom_font_color;
         let mut rich_data: RichData = user_data.into();
+        rich_data.piece_spacing = self.piece_spacing.get();
         if default_font_text {
             rich_data.font = self.text_font.get();
             rich_data.font_size = self.text_size.get();
@@ -1096,6 +1099,23 @@ impl RichText {
     /// 获取默认的字体尺寸。
     pub fn text_size(&self) -> i32 {
         self.text_size.get()
+    }
+
+    /// 设置单个数据被自动分割成适应行宽的片段之间的水平间距（像素数，自动缩放），默认为0。
+    ///
+    /// # Arguments
+    ///
+    /// * `spacing`:
+    ///
+    /// returns: ()
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
+    pub fn set_piece_spacing(&mut self, spacing: i32) {
+        self.piece_spacing.set(spacing);
     }
 
 

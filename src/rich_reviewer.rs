@@ -191,6 +191,7 @@ pub struct RichReviewer {
     text_font: Rc<Cell<Font>>,
     text_color: Rc<Cell<Color>>,
     text_size: Rc<Cell<i32>>,
+    piece_spacing: Rc<Cell<i32>>,
 }
 widget_extends!(RichReviewer, Scroll, scroller);
 
@@ -230,6 +231,7 @@ impl RichReviewer {
         let resize_panel_after_resize = Rc::new(Cell::new((0, 0, 0, 0)));
         let history_mode = Rc::new(Cell::new(false));
         let page_size = Rc::new(Cell::new(10));
+        let piece_spacing = Rc::new(Cell::new(0));
 
         let search_results = Vec::<usize>::new();
         let search_str = None::<String>;
@@ -523,7 +525,7 @@ impl RichReviewer {
             }
         });
 
-        Self { scroller, panel, data_buffer, background_color, visible_lines, clickable_data, reviewer_screen, notifier, page_notifier, search_string: search_str, search_results, current_highlight_focus, blink_flag, history_mode, page_size, text_font, text_color, text_size }
+        Self { scroller, panel, data_buffer, background_color, visible_lines, clickable_data, reviewer_screen, notifier, page_notifier, search_string: search_str, search_results, current_highlight_focus, blink_flag, history_mode, page_size, text_font, text_color, text_size, piece_spacing }
     }
 
     #[throttle(1, Duration::from_millis(50))]
@@ -1118,7 +1120,7 @@ impl RichReviewer {
         }
     }
 
-    /// 大数据量懒加载模式。
+    /// 大数据量懒加载模式，也可称为历史模式。
     pub fn lazy_page_mode(self) -> Self {
         self.history_mode.set(true);
         self
@@ -1161,6 +1163,7 @@ impl RichReviewer {
             let default_font_text = !ud.custom_font_text;
             let default_font_color = !ud.custom_font_color;
             let mut rich_data: RichData = ud.into();
+            rich_data.set_piece_spacing(self.piece_spacing.get());
             if default_font_text {
                 rich_data.font = self.text_font.get();
                 rich_data.font_size = self.text_size.get();
@@ -1456,6 +1459,23 @@ impl RichReviewer {
     /// 获取默认的字体尺寸。
     pub fn text_size(&self) -> i32 {
         self.text_size.get()
+    }
+
+    /// 设置单个数据被自动分割成适应行宽的片段之间的水平间距（像素数，自动缩放），默认为0。仅在懒加载模式/历史模式有效。
+    ///
+    /// # Arguments
+    ///
+    /// * `spacing`:
+    ///
+    /// returns: ()
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
+    pub fn set_piece_spacing(&mut self, spacing: i32) {
+        self.piece_spacing.set(spacing);
     }
 
     /// 可以在app中使用的获取雪花流水号的工具方法。

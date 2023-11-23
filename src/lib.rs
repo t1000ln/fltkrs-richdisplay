@@ -1372,6 +1372,11 @@ impl LinedData for RichData {
                 set_font(self.font, self.font_size);
                 for piece in self.line_pieces.iter() {
                     let piece = &*piece.borrow();
+                    let text = piece.line.trim_end_matches('\n');
+                    if text.is_empty() {
+                        continue;
+                    }
+
                     let y = piece.y - offset_y;
 
                     if !self.blink || blink_state.next == BlinkDegree::Normal {
@@ -1474,7 +1479,7 @@ impl LinedData for RichData {
 
                     // 绘制文本，使用draw_text_n()函数可以正确渲染'@'字符而无需转义处理。
                     // draw_text2(piece.line.as_str(), piece.x, y + bg_offset, piece.w, piece.h, Align::Left);
-                    draw_text_n(piece.line.as_str(), piece.x, y + bg_offset + self.font_size);
+                    draw_text_n(text, piece.x, y + bg_offset + self.font_size);
 
                     if self.strike_through {
                         // 绘制删除线

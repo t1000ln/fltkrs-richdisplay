@@ -114,7 +114,7 @@ use std::ops::{RangeInclusive};
 use std::rc::{Rc, Weak};
 use std::slice::Iter;
 use fltk::{app, draw};
-use fltk::draw::{descent, draw_image, draw_line, draw_rect_with_color, draw_rectf, draw_text2, measure, set_draw_color, set_font};
+use fltk::draw::{descent, draw_image, draw_line, draw_rect_with_color, draw_rectf, draw_text2, draw_text_n, measure, set_draw_color, set_font};
 use fltk::enums::{Align, Color, ColorDepth, Cursor, Font};
 
 use idgenerator_thin::YitIdHelper;
@@ -1473,7 +1473,8 @@ impl LinedData for RichData {
                     }
 
                     // 绘制文本
-                    draw_text2(piece.line.as_str(), piece.x, y + bg_offset, piece.w, piece.h, Align::Left);
+                    // draw_text2(piece.line.as_str(), piece.x, y + bg_offset, piece.w, piece.h, Align::Left);
+                    draw_text_n(piece.line.as_str(), piece.x, y + bg_offset + self.font_size);
 
                     if self.strike_through {
                         // 绘制删除线

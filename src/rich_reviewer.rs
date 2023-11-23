@@ -155,11 +155,11 @@ use std::rc::{Rc, Weak};
 use std::time::{Duration};
 use fltk::draw::{draw_rect_fill, draw_xyline, LineStyle, Offscreen, set_draw_color, set_line_style};
 use fltk::enums::{Align, Color, Cursor, Event, Font};
-use fltk::frame::Frame;
 use fltk::group::{Scroll, ScrollType};
 use fltk::prelude::{GroupExt, WidgetBase, WidgetExt};
 use fltk::{app, draw, widget_extends};
 use fltk::app::{awake_callback, MouseWheel};
+use fltk::widget::Widget;
 use idgenerator_thin::{IdGeneratorOptions, YitIdHelper};
 use log::{debug, error};
 use throttle_my_fn::throttle;
@@ -171,7 +171,7 @@ use crate::utils::ID_GENERATOR_INIT;
 #[derive(Clone, Debug)]
 pub struct RichReviewer {
     pub(crate) scroller: Scroll,
-    pub(crate) panel: Frame,
+    pub(crate) panel: Widget,
     pub(crate) data_buffer: Rc<RefCell<Vec<RichData>>>,
     background_color: Rc<Cell<Color>>,
     visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
@@ -217,7 +217,7 @@ impl RichReviewer {
         let text_color = Rc::new(Cell::new(WHITE));
         let text_size = Rc::new(Cell::new(DEFAULT_FONT_SIZE));
 
-        let mut panel = Frame::new(x, y, w, h, None);
+        let mut panel = Widget::new(x, y, w, h, None);
         scroller.add_resizable(&panel);
 
         let data_buffer: Rc<RefCell<Vec<RichData>>> = Rc::new(RefCell::new(vec![]));
@@ -1324,7 +1324,7 @@ impl RichReviewer {
         callpage.notify(opt);
     }
 
-    fn recalculate_data_buffer_position(data_buffer: Rc<RefCell<Vec<RichData>>>, drawable_max_width: i32, mut panel: Frame, scroller: Scroll) -> (bool, i32) {
+    fn recalculate_data_buffer_position(data_buffer: Rc<RefCell<Vec<RichData>>>, drawable_max_width: i32, mut panel: Widget, scroller: Scroll) -> (bool, i32) {
         let _empty = RichData::empty();
         let mut last_rd = &_empty;
         let mut is_first_data = true;
@@ -1374,7 +1374,7 @@ impl RichReviewer {
         }
     }
 
-    fn scroll_page(panel: Frame, mut scroller: Scroll, offset: (bool, i32)) {
+    fn scroll_page(panel: Widget, mut scroller: Scroll, offset: (bool, i32)) {
         // debug!("yposition: {}, diff: {}", self.scroller.yposition(), self.panel.h() - self.scroller.h());
         let height_diff = panel.h() - scroller.h();
         let yposition = scroller.yposition();

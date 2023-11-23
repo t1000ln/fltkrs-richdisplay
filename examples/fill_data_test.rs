@@ -32,6 +32,7 @@ async fn main() {
     let mut reviewer = RichReviewer::new(100, 60, 1600, 800, None).lazy_page_mode();
     // reviewer.set_background_color(Color::Dark1);
     reviewer.set_page_size(page_size.get());
+    reviewer.set_piece_spacing(5);
 
     // 设置默认字体和颜色
     reviewer.set_text_font(Font::Times);

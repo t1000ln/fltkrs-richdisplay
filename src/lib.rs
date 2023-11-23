@@ -134,7 +134,7 @@ pub const IMAGE_PADDING_H: i32 = 2;
 pub const IMAGE_PADDING_V: i32 = 2;
 
 /// 同一行内多个文字分片之间的水平间距。
-pub const PIECE_SPACING: i32 = 2;
+// pub const PIECE_SPACING: i32 = 2;
 
 /// 闪烁强度切换间隔事件，目前使用固定频率。
 pub const BLINK_INTERVAL: f64 = 0.5;
@@ -1124,6 +1124,8 @@ pub(crate) struct RichData {
     image_height: i32,
     /// 格式为`ColorDepth::L8`的灰度数据。
     image_inactive: Option<Vec<u8>>,
+    /// 多行片段之间的水平空白距离。
+    piece_spacing: i32,
 
     pub(crate) search_result_positions: Option<Vec<(usize, usize)>>,
     pub(crate) search_highlight_pos: Option<usize>,
@@ -1154,6 +1156,7 @@ impl From<UserData> for RichData {
                     image_width: 0,
                     image_height: 0,
                     image_inactive: None,
+                    piece_spacing: 0,
                     search_result_positions: None,
                     search_highlight_pos: None,
                 }
@@ -1185,6 +1188,7 @@ impl From<UserData> for RichData {
                     image_width: data.image_width,
                     image_height: data.image_height,
                     image_inactive,
+                    piece_spacing: 0,
                     search_result_positions: None,
                     search_highlight_pos: None,
                 }
@@ -1216,9 +1220,14 @@ impl RichData {
             image_width: 0,
             image_height: 0,
             image_inactive: None,
+            piece_spacing: 0,
             search_result_positions: None,
             search_highlight_pos: None,
         }
+    }
+
+    pub(crate) fn set_piece_spacing(&mut self, piece_spacing: i32) {
+        self.piece_spacing = piece_spacing;
     }
     
     /// 处理超宽的数据单元，自动换行。
@@ -1245,7 +1254,7 @@ impl RichData {
         let text_len = text.chars().count();
         let (font, font_size) = (self.font, self.font_size);
         if let Ok(stop_pos) = (0..text_len).collect::<Vec<usize>>().binary_search_by({
-            let x = last_piece.next_x + PIECE_SPACING;
+            let x = last_piece.next_x + self.piece_spacing;
             let tw_rc = tw.clone();
             move |pos| {
                 let (tw1, _) = measure(text.chars().take(*pos).collect::<String>().as_str(), false);
@@ -1294,7 +1303,7 @@ impl RichData {
                 let rest_x = next_x;
                 let rest_y = next_y;
                 let top_y = next_y;
-                let mut rest_next_x = rest_x + rest_width + PIECE_SPACING;
+                let mut rest_next_x = rest_x + rest_width + self.piece_spacing;
                 let mut rest_next_y = next_y;
                 if rest_str.ends_with("\n") {
                     rest_next_x = PADDING.left;
@@ -1591,7 +1600,7 @@ impl LinedData for RichData {
                     } else {
                         let y = top_y;
                         let through_line = ThroughLine::create_or_update(PADDING.left, start_x, ref_font_height, ret, false);
-                        let new_piece = LinePiece::new(self.text.clone(), start_x, y, tw, ref_font_height, top_y, current_line_spacing, start_x + tw + PIECE_SPACING, top_y, ref_font_height, font, font_size, through_line, self.v_bounds.clone());
+                        let new_piece = LinePiece::new(self.text.clone(), start_x, y, tw, ref_font_height, top_y, current_line_spacing, start_x + tw + self.piece_spacing, top_y, ref_font_height, font, font_size, through_line, self.v_bounds.clone());
                         self.line_pieces.push(new_piece.clone());
                         ret = new_piece;
                     }
@@ -1612,7 +1621,7 @@ impl LinedData for RichData {
                     ret = new_piece;
                 } else {
                     let x = start_x + IMAGE_PADDING_H;
-                    let next_x = start_x + self.image_width + IMAGE_PADDING_H * 2 + PIECE_SPACING;
+                    let next_x = start_x + self.image_width + IMAGE_PADDING_H * 2 + self.piece_spacing;
                     if last_piece.line.ends_with("\n") {
                         // 定位在行首
                         let y = top_y + IMAGE_PADDING_V;

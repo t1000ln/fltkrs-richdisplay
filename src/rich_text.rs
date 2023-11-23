@@ -7,11 +7,11 @@ use std::time::{Duration};
 
 use fltk::draw::{draw_rect_fill, Offscreen};
 use fltk::enums::{Color, Cursor, Event, Font};
-use fltk::frame::Frame;
 use fltk::prelude::{FltkError, GroupExt, WidgetBase, WidgetExt};
 use fltk::{app, draw, widget_extends};
 use fltk::app::{MouseWheel};
 use fltk::group::{Flex};
+use fltk::widget::Widget;
 use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData, select_text, BLINK_INTERVAL, BlinkState, Callback, DEFAULT_FONT_SIZE, WHITE};
 
 use idgenerator_thin::{IdGeneratorOptions, YitIdHelper};
@@ -28,7 +28,7 @@ pub const PANEL_PADDING: i32 = 8;
 ///
 #[derive(Debug, Clone)]
 pub struct RichText {
-    panel: Frame,
+    panel: Widget,
     data_buffer: Rc<RefCell<VecDeque<RichData>>>,
     background_color: Rc<Cell<Color>>,
     buffer_max_lines: usize,
@@ -74,7 +74,8 @@ impl RichText {
         inner.end();
 
 
-        let mut panel = Frame::new(x, y, w, h, None);
+        let mut panel = Widget::new(x, y, w, h, None);
+
         inner.add(&panel);
 
         let panel_screen = Rc::new(RefCell::new(Offscreen::new(w, h).unwrap()));
@@ -381,7 +382,7 @@ impl RichText {
 
     #[throttle(1, Duration::from_millis(50))]
     fn redraw_after_drag(selection_rect: Rectangle, offscreen: Rc<RefCell<Offscreen>>,
-                         panel: &mut Frame,
+                         panel: &mut Widget,
                          visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
                          clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
                          bg_color: Color, data_buffer: Rc<RefCell<VecDeque<RichData>>>,
@@ -409,7 +410,7 @@ impl RichText {
     fn should_hide_reviewer(
         reviewer_rc: Rc<RefCell<Option<RichReviewer>>>,
         flex: &mut Flex,
-        panel_rc: &Frame,
+        panel_rc: &Widget,
         should_resize: Rc<Cell<i32>>
     ) {
         let mut should_remove = false;
@@ -566,7 +567,7 @@ impl RichText {
 
     fn new_offline(
         w: i32, h: i32, offscreen: Rc<RefCell<Offscreen>>,
-        panel: &Frame,
+        panel: &Widget,
         visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
         clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
         bg_color: Color, data_buffer: Rc<RefCell<VecDeque<RichData>>>,
@@ -580,7 +581,7 @@ impl RichText {
 
     fn draw_offline(
         offscreen: Rc<RefCell<Offscreen>>,
-        panel: &Frame,
+        panel: &Widget,
         visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
         clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
         bg_color: Color, data_buffer: Rc<RefCell<VecDeque<RichData>>>,

@@ -114,8 +114,8 @@ use std::ops::{RangeInclusive};
 use std::rc::{Rc, Weak};
 use std::slice::Iter;
 use fltk::{app, draw};
-use fltk::draw::{descent, draw_image, draw_line, draw_rect_with_color, draw_rectf, draw_text2, draw_text_n, measure, set_draw_color, set_font};
-use fltk::enums::{Align, Color, ColorDepth, Cursor, Font};
+use fltk::draw::{descent, draw_image, draw_line, draw_rect_with_color, draw_rectf, draw_text_n, measure, set_draw_color, set_font};
+use fltk::enums::{Color, ColorDepth, Cursor, Font};
 
 use idgenerator_thin::YitIdHelper;
 use log::{error};
@@ -1472,7 +1472,7 @@ impl LinedData for RichData {
                         draw_line(piece.x, line_y, piece.x + piece.w - 4, line_y);
                     }
 
-                    // 绘制文本
+                    // 绘制文本，使用draw_text_n()函数可以正确渲染'@'字符而无需转义处理。
                     // draw_text2(piece.line.as_str(), piece.x, y + bg_offset, piece.w, piece.h, Align::Left);
                     draw_text_n(piece.line.as_str(), piece.x, y + bg_offset + self.font_size);
 

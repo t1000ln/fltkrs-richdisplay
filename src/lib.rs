@@ -36,7 +36,7 @@
 //!        }
 //!    };
 //!    rich_text.set_notifier(cb_fn);
-//!    rich_text.set_buffer_max_lines(1000);
+//!    rich_text.set_cache_size(1000);
 //!
 //!    /*
 //!    启用PageUp/PageDown快捷键打开和关闭回顾区的功能支持。

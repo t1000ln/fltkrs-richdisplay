@@ -64,7 +64,7 @@ async fn main() {
         }
     };
     rich_text.set_notifier(cb_fn);
-    rich_text.set_buffer_max_lines(1000);
+    rich_text.set_cache_size(1000);
 
     let mut rich_text2 = RichText::new(980, 60, 800, 400, None);
     let mut rich_text3 = RichText::new(100, 560, 800, 300, None);

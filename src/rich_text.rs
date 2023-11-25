@@ -685,7 +685,7 @@ impl RichText {
     /// ```
     ///
     /// ```
-    pub fn set_buffer_max_lines(&mut self, max_lines: usize) {
+    pub fn set_cache_size(&mut self, max_lines: usize) {
         self.buffer_max_lines = max_lines;
         if self.data_buffer.borrow().len() > self.buffer_max_lines {
             let r = 0..(self.data_buffer.borrow().len() - self.buffer_max_lines);

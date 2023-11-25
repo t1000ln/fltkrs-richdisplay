@@ -331,9 +331,9 @@ impl RichReviewer {
             let selected_pieces = Rc::new(RefCell::new(Vec::<Weak<RefCell<LinePiece>>>::new()));
             move |scroller, evt| {
                 match evt {
-                    Event::Close => {
-                        debug!("Closing");
-                    }
+                    // Event::Close => {
+                    //     debug!("Closing");
+                    // }
                     Event::Resize => {
                         // 缩放窗口后重新计算分片绘制信息。
                         let (current_width, current_height) = (scroller.width(), scroller.height());

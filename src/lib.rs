@@ -1975,7 +1975,7 @@ pub(crate) fn select_text(from_point: &ClickPoint, to_point: &ClickPoint, data_b
         // 只有一行
         // debug!("选区只有一个数据段");
         if let Some(rd) = data_buffer.get(r_start) {
-            let across_pieces = t_p_i - f_p_i;
+            let across_pieces = if t_p_i > f_p_i {t_p_i - f_p_i} else {0};
             if across_pieces > 0 {
                 // 超过一个分片
                 // debug!("选区超过一个分片");
@@ -2167,6 +2167,7 @@ pub(crate) fn update_selection_when_drag(
             select_to_row..=select_from_row
         };
         select_text(&push_from_point, current_point, data_buffer_slice, rd_range, selected_pieces);
+        // debug!("push_from: {:?}, current_point: {:?}", push_from_point, current_point);
         panel.set_damage(true);
         true
     } else {

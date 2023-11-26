@@ -5,7 +5,7 @@ use fltk::button::Button;
 use fltk::enums::{Color, Font};
 use fltk::image::SharedImage;
 use fltk::prelude::{GroupExt, ImageExt, WidgetBase, WidgetExt, WindowExt};
-use log::{debug, warn};
+use log::{warn};
 use fltkrs_richdisplay::rich_reviewer::RichReviewer;
 use fltkrs_richdisplay::{PageOptions, UserData};
 

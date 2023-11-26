@@ -47,7 +47,7 @@ async fn main() {
     rich_text.set_text_font(Font::Courier);
     rich_text.set_text_color(Color::White);
     rich_text.set_text_size(20);
-    rich_text.set_piece_spacing(20);
+    // rich_text.set_piece_spacing(20);
 
     // 应用层消息通道，该通道负责两个方向的消息传递：1将应用层产生的消息向下传递给fltk组件层通道，2将fltk组件层产生的事件消息向上传递给应用层。
     let (action_sender, action_receiver) = tokio::sync::mpsc::channel::<UserData>(100);
@@ -144,7 +144,7 @@ async fn main() {
     let (img2_width, img2_height, img2_data) = (img2.width(), img2.height(), img2.to_rgb_data());
     // 异步生成模拟数据，将数据发送给fltk消息通道。
     tokio::spawn(async move {
-        for i in 0..1 {
+        for i in 0..3 {
             let turn = i * 15;
             let mut data: Vec<UserData> = Vec::from([
                 UserData::new_text(format!("{}安全并且高效地处理𝄞并发编程是Rust的另一个主要目标。💖并发编程和并行编程这两种概念随着计算机设备的多核a优化而变得越来越重要。并发编程🐉允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 0)).set_bg_color(Some(Color::DarkCyan)),
@@ -154,6 +154,7 @@ async fn main() {
                 UserData::new_text(format!("{}由于多线程可以同时运行，🐉所以将计算操作拆分至多个线程可以提高性能。a但是这也增加了程序的复杂度，因为不同线程的执行顺序是无法确定的。\r\n", turn + 3)).set_fg_color(Color::Red).set_bg_color(Some(Color::Green)).set_underline(true),
                 UserData::new_text(format!("{}由于多线程可以同时运行，所以将计算操作拆分至多个线程可以提高性能。但是这也增加了程序的复杂度，因为不同线程的执行顺序是无法确定的。\r\n", turn + 4)).set_fg_color(Color::Red).set_bg_color(Some(Color::Green)),
                 UserData::new_text(format!("{}安全并且高效地处理并发编程是Rust的另一个主要目标。并发编程和并行编程这两种概念随着计算机设备的多核优化而变得越来越重要。并发编程允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。\r\n", turn + 5)).set_font(Font::Helvetica, 9).set_underline(true).set_blink(true),
+                // UserData::new_text(format!("{}安全并且高效地处理并发编程是Rust的另一个主要目标。并发编程和并行编程这两种概念随着计算机设备的多核优化而变得越来越重要。并发编程允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。\r\n", turn + 5)).set_font(Font::Helvetica, 9).set_underline(true),
                 UserData::new_text(format!("{}在大部分现在操作系统中，执行程序的代码会运行在进程中，操作系统会同时管理多个进程b。类似地，𝄞程序内部也可以拥有多个同时运行的独立部分，用来运行这些独立部分的就叫做线程。\r\n", turn + 6)).set_font(Font::Helvetica, 32),
                 UserData::new_text(format!("{}由于多线程可以同时运行，所以将计算操作拆分至多个线程可以提高性能。a但是这也增加了程序的复杂度，因为不同线程的执行顺序是无法确定的。\r\n", turn + 7)).set_fg_color(Color::Red).set_bg_color(Some(Color::Green)),
                 UserData::new_text(format!("{}由于多线程可以同时运行，所以将计算操作拆分至多个线程可以提高性能。a但是这也增加了程序的复杂度，因为不同线程的执行顺序是无法确定的。\r\n", turn + 8)).set_fg_color(Color::Red).set_bg_color(Some(Color::Green)),
@@ -164,8 +165,10 @@ async fn main() {
                 UserData::new_text(format!("{}由于多线程可以同时运行，所以将计算操作拆分至多个线程可以提高性能。", turn + 12)),
                 UserData::new_text(format!("{}由于多线程可以同时运行，所以将计算操作拆分至多个线程可以提高性能。", turn + 13)).set_fg_color(Color::Red).set_bg_color(Some(Color::Green)).set_clickable(true),
                 UserData::new_text(format!("{}由于多线程可以同时运行，💖所以将计算操作拆分至多个线程可以提高性能。", turn + 14)).set_fg_color(Color::Cyan).set_font(Font::Courier, 18).set_clickable(true).set_blink(true),
+                // UserData::new_text(format!("{}由于多线程可以同时运行，💖所以将计算操作拆分至多个线程可以提高性能。", turn + 14)).set_fg_color(Color::Cyan).set_font(Font::Courier, 18).set_clickable(true),
                 UserData::new_text(format!("{}由于多线程可以@同时运行，💖所以将计算操作拆分至多个线程可以提高性能。", turn + 15)),
                 UserData::new_image(img2_data.clone(), img2_width, img2_height).set_clickable(true).set_blink(true),
+                // UserData::new_image(img2_data.clone(), img2_width, img2_height).set_clickable(true),
             ]);
             data.reverse();
             while let Some(data_unit) = data.pop() {

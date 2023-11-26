@@ -349,8 +349,10 @@ impl RichText {
                             select_from_row = 0;
                         }
                         let (p_offset_x, p_offset_y) = (ctx.x(), ctx.y());
+                        let scroll_y = Self::calc_scroll_height(buffer_rc.clone(), ctx.height());
                         push_from_point.x = push_from_x - p_offset_x;
-                        push_from_point.y = push_from_y - p_offset_y + PADDING.top;
+                        push_from_point.y = push_from_y - p_offset_y + scroll_y + PADDING.top;
+                        // debug!("push_from: {:?}", push_from_point);
 
                         // 尝试检测起始点击位置是否位于某个数据段内，可减少后续划选过程中的检测目标范围
                         let index_vec = (0..buffer_rc.borrow().len()).collect::<Vec<usize>>();
@@ -369,7 +371,8 @@ impl RichText {
                     Event::Drag => {
                         let (current_x, current_y) = app::event_coords();
                         let (p_offset_x, p_offset_y) = (ctx.x(), ctx.y());
-                        let mut current_point = ClickPoint::new(current_x - p_offset_x, current_y - p_offset_y + PADDING.top);
+                        let scroll_y = Self::calc_scroll_height(buffer_rc.clone(), ctx.height());
+                        let mut current_point = ClickPoint::new(current_x - p_offset_x, current_y - p_offset_y + scroll_y + PADDING.top);
                         if let Some(_) = update_selection_when_drag(
                             push_from_point,
                             select_from_row,
@@ -408,6 +411,33 @@ impl RichText {
         });
 
         Self { panel, data_buffer, background_color, buffer_max_lines, notifier, inner, reviewer, panel_screen, visible_lines, clickable_data, blink_flag, text_font, text_color, text_size, piece_spacing}
+    }
+
+    /// 计算当前数据缓存的高度超出目标面板的高度差。
+    ///
+    /// # Arguments
+    ///
+    /// * `buffer_rc`: 数据缓存。
+    /// * `panel_height`: 目标面板。在当前场景中是主视图面板。
+    ///
+    /// returns: i32 返回高度差，如果数据高度小于面板高度则返回0。
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
+    fn calc_scroll_height(buffer_rc: Rc<RefCell<VecDeque<RichData>>>, panel_height: i32) -> i32 {
+        if let Some(last_rd) = buffer_rc.borrow().iter().last() {
+            let last_rd_bottom = last_rd.v_bounds.get().1;
+            if last_rd_bottom + PADDING.bottom > panel_height {
+                last_rd_bottom - panel_height + PADDING.bottom
+            } else {
+                0
+            }
+        } else {
+            0
+        }
     }
 
     /// 检查是否应该关闭回顾区，若满足关闭条件则关闭回顾区并记录待销毁的回顾区组件。

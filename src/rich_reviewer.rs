@@ -161,9 +161,12 @@ use fltk::{app, draw, widget_extends};
 use fltk::app::{awake_callback, MouseWheel};
 use fltk::widget::Widget;
 use idgenerator_thin::{IdGeneratorOptions, YitIdHelper};
-use log::{debug, error};
+use log::{error};
 use throttle_my_fn::throttle;
-use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData, ClickPoint, select_text2, locate_target_rd, clear_selected_pieces, BlinkState, BLINK_INTERVAL, Callback, CallPage, PageOptions, DEFAULT_FONT_SIZE, WHITE};
+use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING,
+            RichData, RichDataOptions, update_data_properties, UserData, ClickPoint,
+            clear_selected_pieces, BlinkState, BLINK_INTERVAL, Callback, CallPage, PageOptions,
+            DEFAULT_FONT_SIZE, WHITE, locate_target_rd, update_selection_when_drag};
 use crate::rich_text::{PANEL_PADDING};
 use crate::utils::ID_GENERATOR_INIT;
 
@@ -302,7 +305,7 @@ impl RichReviewer {
                 if evt == LocalEvent::RESIZE.into() {
                     let (x, y, w, h) = resize_panel_after_resize_rc.get();
                     // 强制滚动到最顶部，避免scroll.yposition()缓存，在窗口不需要滚动条时仍出现滚动条的问题。
-                    debug!("resize panel to ({}, {}, {}, {})", x, y, w, h);
+                    // debug!("resize panel to ({}, {}, {}, {})", x, y, w, h);
                     scroller_rc.scroll_to(0, 0);
                     ctx.resize(x, y, w, h);
                     true
@@ -331,9 +334,9 @@ impl RichReviewer {
             let selected_pieces = Rc::new(RefCell::new(Vec::<Weak<RefCell<LinePiece>>>::new()));
             move |scroller, evt| {
                 match evt {
-                    Event::Close => {
-                        debug!("Closing");
-                    }
+                    // Event::Close => {
+                    //     debug!("Closing");
+                    // }
                     Event::Resize => {
                         // 缩放窗口后重新计算分片绘制信息。
                         let (current_width, current_height) = (scroller.width(), scroller.height());
@@ -432,8 +435,8 @@ impl RichReviewer {
 
                         // 尝试检测起始点击位置是否位于某个数据段内，可减少后续划选过程中的检测目标范围
                         let index_vec = (0..buffer_rc.borrow().len()).collect::<Vec<usize>>();
-                        let push_rect = push_from_point.as_rect();
-                        if let Some(row) = locate_target_rd(&mut push_from_point, &push_rect, scroller.w(), buffer_rc.clone(), &index_vec) {
+                        let rect = push_from_point.as_rect();
+                        if let Some(row) = locate_target_rd(&mut push_from_point, rect, scroller.w(), buffer_rc.borrow().as_slice(), index_vec) {
                             select_from_row = row;
                         }
 
@@ -464,14 +467,19 @@ impl RichReviewer {
                             offset_y += first.v_bounds.get().0;
                         }
                         if offset_y < 0 {offset_y = 0;}
-
-                        if let Some(_) = Self::redraw_after_drag(
+                        let data_buffer_ref = buffer_rc.borrow();
+                        let data_buffer_slice = data_buffer_ref.as_slice();
+                        let mut current_point = ClickPoint::new(
+                            current_x - p_offset_x,
+                            current_y + offset_y - p_offset_y + PADDING.top
+                        );
+                        if let Some(_) = update_selection_when_drag(
                             push_from_point,
                             select_from_row,
-                            ClickPoint::new(current_x - p_offset_x, current_y + offset_y - p_offset_y + PADDING.top),
-                            buffer_rc.clone(),
+                            &mut current_point,
+                            data_buffer_slice,
                             selected_pieces.clone(),
-                            scroller,
+                            &mut scroller.as_base_widget(),
                         ) {
                             selected = !selected_pieces.borrow().is_empty();
                             // debug!("拖选结果：{selected}");
@@ -526,39 +534,6 @@ impl RichReviewer {
         });
 
         Self { scroller, panel, data_buffer, background_color, visible_lines, clickable_data, reviewer_screen, notifier, page_notifier, search_string: search_str, search_results, current_highlight_focus, blink_flag, history_mode, page_size, text_font, text_color, text_size, piece_spacing }
-    }
-
-    #[throttle(1, Duration::from_millis(50))]
-    fn redraw_after_drag(
-        push_from_point: ClickPoint,
-        select_from_row: usize,
-        current_point: ClickPoint,
-        data_buffer: Rc<RefCell<Vec<RichData>>>,
-        selected_pieces: Rc<RefCell<Vec<Weak<RefCell<LinePiece>>>>>,
-        scroller: &mut Scroll,) -> bool {
-
-        let mut down = true;
-        let index_vec = if current_point.y >= push_from_point.y {
-            // 向下选择
-            (select_from_row..data_buffer.borrow().len()).collect::<Vec<usize>>()
-        } else {
-            // 向上选择
-            down = false;
-            (0..=select_from_row).collect::<Vec<usize>>()
-        };
-        // debug!("开始查找结束点所在数据段: {:?}", index_vec);
-        let mut point = current_point.clone();
-        if let Some(select_to_row) = locate_target_rd(&mut point, &current_point.as_rect(), scroller.w(), data_buffer.clone(), &index_vec) {
-            let rd_range = if down {
-                select_from_row..=(select_from_row + select_to_row)
-            } else {
-                select_to_row..=select_from_row
-            };
-            select_text2(&push_from_point, point, data_buffer, rd_range, selected_pieces);
-            scroller.set_damage(true);
-            return true;
-        }
-        false
     }
 
     pub fn set_background_color(&self, color: Color) {

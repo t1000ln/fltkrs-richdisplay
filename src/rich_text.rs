@@ -11,10 +11,7 @@ use fltk::{app, draw, widget_extends};
 use fltk::app::{MouseWheel};
 use fltk::group::{Flex};
 use fltk::widget::Widget;
-use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING,
-            RichData, RichDataOptions, update_data_properties, UserData, BLINK_INTERVAL,
-            BlinkState, Callback, DEFAULT_FONT_SIZE, WHITE, clear_selected_pieces, ClickPoint,
-            locate_target_rd, update_selection_when_drag};
+use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData, BLINK_INTERVAL, BlinkState, Callback, DEFAULT_FONT_SIZE, WHITE, clear_selected_pieces, ClickPoint, locate_target_rd, update_selection_when_drag};
 
 use idgenerator_thin::{IdGeneratorOptions, YitIdHelper};
 use log::{error};
@@ -283,7 +280,7 @@ impl RichText {
             let selected_pieces = Rc::new(RefCell::new(Vec::<Weak<RefCell<LinePiece>>>::new()));
             let should_resize = should_resize_content.clone();
             let blink_flag_rc = blink_flag.clone();
-            move |ctx, evt| {
+            move |mut ctx, evt| {
                 match evt {
                     Event::Resize => {
                         // 缩放窗口后重新计算分片绘制信息。
@@ -361,11 +358,6 @@ impl RichText {
                             select_from_row = row;
                         }
 
-                        #[cfg(target_os = "linux")]
-                        if let Some(mut parent) = scroller.parent() {
-                            parent.set_damage(true);
-                        }
-
                         return true;
                     }
                     Event::Drag => {
@@ -379,7 +371,7 @@ impl RichText {
                             &mut current_point,
                             buffer_rc.borrow().as_slices().0,
                             selected_pieces.clone(),
-                            ctx
+                            &mut ctx
                         ) {
                             // selected.set(ret);
                             let need_redraw = !selected_pieces.borrow().is_empty();
@@ -388,7 +380,7 @@ impl RichText {
                                 // debug!("{need_redraw}");
                                 Self::draw_offline(
                                     screen_rc.clone(),
-                                    ctx,
+                                    &ctx,
                                     visible_lines_rc.clone(),
                                     clickable_data_rc.clone(),
                                     bg_rc.get(),
@@ -397,10 +389,6 @@ impl RichText {
                                 );
                             }
 
-                            #[cfg(target_os = "linux")]
-                            if let Some(mut parent) = scroller.parent() {
-                                parent.set_damage(true);
-                            }
                         }
                         return true;
                     }

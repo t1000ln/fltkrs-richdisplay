@@ -113,12 +113,12 @@ use std::fmt::{Debug, Formatter};
 use std::ops::{RangeInclusive};
 use std::rc::{Rc, Weak};
 use std::slice::Iter;
-use std::time::Duration;
 use fltk::{app, draw};
 use fltk::draw::{descent, draw_image, draw_line, draw_rect_with_color, draw_rectf, draw_text_n, measure, set_draw_color, set_font};
 use fltk::enums::{Color, ColorDepth, Cursor, Font};
 use fltk::prelude::WidgetExt;
 use fltk::widget::Widget;
+use std::time::Duration;
 
 use idgenerator_thin::YitIdHelper;
 use log::{error};

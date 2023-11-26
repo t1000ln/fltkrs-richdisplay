@@ -2,8 +2,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
-use std::rc::Rc;
-use std::time::{Duration};
+use std::rc::{Rc, Weak};
 
 use fltk::draw::{draw_rect_fill, Offscreen};
 use fltk::enums::{Color, Cursor, Event, Font};
@@ -12,11 +11,13 @@ use fltk::{app, draw, widget_extends};
 use fltk::app::{MouseWheel};
 use fltk::group::{Flex};
 use fltk::widget::Widget;
-use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData, select_text, BLINK_INTERVAL, BlinkState, Callback, DEFAULT_FONT_SIZE, WHITE};
+use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING,
+            RichData, RichDataOptions, update_data_properties, UserData, BLINK_INTERVAL,
+            BlinkState, Callback, DEFAULT_FONT_SIZE, WHITE, clear_selected_pieces, ClickPoint,
+            locate_target_rd, update_selection_when_drag};
 
 use idgenerator_thin::{IdGeneratorOptions, YitIdHelper};
 use log::{error};
-use throttle_my_fn::throttle;
 use crate::rich_reviewer::RichReviewer;
 use crate::utils::ID_GENERATOR_INIT;
 
@@ -276,9 +277,10 @@ impl RichText {
             let notifier_rc = notifier.clone();
             let screen_rc = panel_screen.clone();
             let bg_rc = background_color.clone();
-            let mut push_from_x = 0;
-            let mut push_from_y = 0;
             let selected = selected.clone();
+            let mut select_from_row = 0;
+            let mut push_from_point = ClickPoint::new(0, 0);
+            let selected_pieces = Rc::new(RefCell::new(Vec::<Weak<RefCell<LinePiece>>>::new()));
             let should_resize = should_resize_content.clone();
             let blink_flag_rc = blink_flag.clone();
             move |ctx, evt| {
@@ -330,13 +332,10 @@ impl RichText {
                         }
                     }
                     Event::Push => {
-                        let coords = app::event_coords();
-                        push_from_x = coords.0;
-                        push_from_y = coords.1;
+                        let (push_from_x, push_from_y) = app::event_coords();
                         if selected.replace(false) {
-                            for (_, piece) in visible_lines_rc.borrow_mut().iter_mut() {
-                                piece.deselect();
-                            }
+                            // debug!("清除选区");
+                            clear_selected_pieces(selected_pieces.clone());
                             Self::draw_offline(
                                 screen_rc.clone(),
                                 &ctx,
@@ -346,28 +345,59 @@ impl RichText {
                                 buffer_rc.clone(),
                                 blink_flag_rc.clone(),
                             );
-                            // ctx.redraw();
                             ctx.set_damage(true);
+                            select_from_row = 0;
+                        }
+                        let (p_offset_x, p_offset_y) = (ctx.x(), ctx.y());
+                        push_from_point.x = push_from_x - p_offset_x;
+                        push_from_point.y = push_from_y - p_offset_y + PADDING.top;
+
+                        // 尝试检测起始点击位置是否位于某个数据段内，可减少后续划选过程中的检测目标范围
+                        let index_vec = (0..buffer_rc.borrow().len()).collect::<Vec<usize>>();
+                        let rect = push_from_point.as_rect();
+                        if let Some(row) = locate_target_rd(&mut push_from_point, rect, ctx.w(), buffer_rc.borrow().as_slices().0, index_vec) {
+                            select_from_row = row;
+                        }
+
+                        #[cfg(target_os = "linux")]
+                        if let Some(mut parent) = scroller.parent() {
+                            parent.set_damage(true);
                         }
 
                         return true;
                     }
                     Event::Drag => {
-                        let (ox, oy) = app::event_coords();
-                        let selection_rect = Rectangle::new(push_from_x, push_from_y, ox - push_from_x, oy - push_from_y);
-                        if let Some(ret) = Self::redraw_after_drag(
-                            selection_rect,
-                            screen_rc.clone(),
-                            ctx,
-                            visible_lines_rc.clone(),
-                            clickable_data_rc.clone(),
-                            bg_rc.get(),
-                            buffer_rc.clone(),
-                            (push_from_x, push_from_y),
-                            ctx.x(),
-                            blink_flag_rc.clone(),
+                        let (current_x, current_y) = app::event_coords();
+                        let (p_offset_x, p_offset_y) = (ctx.x(), ctx.y());
+                        let mut current_point = ClickPoint::new(current_x - p_offset_x, current_y - p_offset_y + PADDING.top);
+                        if let Some(_) = update_selection_when_drag(
+                            push_from_point,
+                            select_from_row,
+                            &mut current_point,
+                            buffer_rc.borrow().as_slices().0,
+                            selected_pieces.clone(),
+                            ctx
                         ) {
-                            selected.set(ret);
+                            // selected.set(ret);
+                            let need_redraw = !selected_pieces.borrow().is_empty();
+                            selected.set(need_redraw);
+                            if need_redraw {
+                                // debug!("{need_redraw}");
+                                Self::draw_offline(
+                                    screen_rc.clone(),
+                                    ctx,
+                                    visible_lines_rc.clone(),
+                                    clickable_data_rc.clone(),
+                                    bg_rc.get(),
+                                    buffer_rc.clone(),
+                                    blink_flag_rc.clone(),
+                                );
+                            }
+
+                            #[cfg(target_os = "linux")]
+                            if let Some(mut parent) = scroller.parent() {
+                                parent.set_damage(true);
+                            }
                         }
                         return true;
                     }
@@ -378,32 +408,6 @@ impl RichText {
         });
 
         Self { panel, data_buffer, background_color, buffer_max_lines, notifier, inner, reviewer, panel_screen, visible_lines, clickable_data, blink_flag, text_font, text_color, text_size, piece_spacing}
-    }
-
-    #[throttle(1, Duration::from_millis(50))]
-    fn redraw_after_drag(selection_rect: Rectangle, offscreen: Rc<RefCell<Offscreen>>,
-                         panel: &mut Widget,
-                         visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
-                         clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
-                         bg_color: Color, data_buffer: Rc<RefCell<VecDeque<RichData>>>,
-                         push_from: (i32, i32),
-                         panel_x: i32,
-                        blink_flag: Rc<Cell<BlinkState>>) -> bool {
-        let selected = select_text(&selection_rect, visible_lines.clone(), false, push_from, panel_x, panel.w() - PADDING.left - PADDING.right);
-        panel.set_damage(true);
-        if selected {
-            RichText::draw_offline(
-                offscreen,
-                panel,
-                visible_lines,
-                clickable_data,
-                bg_color,
-                data_buffer,
-                blink_flag,
-            );
-        }
-
-        selected
     }
 
     /// 检查是否应该关闭回顾区，若满足关闭条件则关闭回顾区并记录待销毁的回顾区组件。

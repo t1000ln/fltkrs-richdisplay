@@ -108,17 +108,21 @@
 
 use std::cell::{Cell, RefCell};
 use std::cmp::{max, min, Ordering};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{HashMap};
 use std::fmt::{Debug, Formatter};
 use std::ops::{RangeInclusive};
 use std::rc::{Rc, Weak};
 use std::slice::Iter;
+use std::time::Duration;
 use fltk::{app, draw};
 use fltk::draw::{descent, draw_image, draw_line, draw_rect_with_color, draw_rectf, draw_text_n, measure, set_draw_color, set_font};
 use fltk::enums::{Color, ColorDepth, Cursor, Font};
+use fltk::prelude::WidgetExt;
+use fltk::widget::Widget;
 
 use idgenerator_thin::YitIdHelper;
 use log::{error};
+use throttle_my_fn::throttle;
 
 pub mod rich_text;
 pub mod rich_reviewer;
@@ -132,9 +136,6 @@ pub const IMAGE_PADDING_H: i32 = 2;
 
 /// 图片与其他内容之间的水平间距。
 pub const IMAGE_PADDING_V: i32 = 2;
-
-/// 同一行内多个文字分片之间的水平间距。
-// pub const PIECE_SPACING: i32 = 2;
 
 /// 闪烁强度切换间隔事件，目前使用固定频率。
 pub const BLINK_INTERVAL: f64 = 0.5;
@@ -646,10 +647,6 @@ impl LinePiece {
         }));
         through_line.borrow_mut().add_piece(init_piece.clone());
         init_piece
-    }
-
-    pub fn eq2(&self, other: &Self) -> bool {
-        self.x == other.x && self.y == other.y && self.w == other.w && self.h == other.h && self.line.eq(&other.line)
     }
 
     pub fn select_from(&self, from: usize) {
@@ -1826,378 +1823,21 @@ pub(crate) fn is_overlap(target_area: &Rectangle, selection_area: &Rectangle) ->
     target_area.0 < (selection_area.0 + selection_area.2) && (target_area.0 + target_area.2) > selection_area.0 && target_area.1 < (selection_area.1 + selection_area.3) && (target_area.1 + target_area.3) > selection_area.1
 }
 
-/// 拖选时，当前片段相对于拖选起点位置的方位。
-#[derive(Debug)]
-enum PosOfDrag {
-    /// 上方，选区位于片段内
-    UpInside,
-    /// 上方，选区包裹片段
-    UpCover,
-    /// 左上方，与选区有交叉
-    UpLeftInside,
-    /// 左上方，与选区有交叉，起点在选区外
-    UpLeftOutside,
-    /// 左上方，选区外
-    UpLeft,
-    /// 右上方，与选区有交叉
-    UpRightInside,
-    /// 右上方，与选区有交叉，起点在选区外。
-    UpRightOutside,
-    /// 右上方，选区外
-    UpRight,
-    /// 下方，选区位于片段内
-    DownInside,
-    /// 下方，选区包裹片段
-    DownCover,
-    /// 左下方，与选区有交叉
-    DownLeftInside,
-    /// 左下方，选区外
-    DownLeft,
-    /// 右下方，与选区有交叉
-    DownRightInside,
-    /// 右下方，与选区有交叉，起点在外部。
-    DownRightOutside,
-    /// 左下方，与选区有交叉，起点在外部。
-    DownLeftOutside,
-    /// 右下方，选区外
-    DownRight,
-}
 
-/// 水平方位
-enum HorizonPosOfDrag {
-    /// 选区位于片段内
-    Inside,
-    /// 选区位于左侧，有交叉
-    LeftInside,
-    /// 选区位于左侧，无交叉
-    Left,
-    /// 选区位于右侧，有交叉
-    RightInside,
-    /// 选区位于右侧，无交叉
-    Right,
-    /// 选区位于左侧，有交叉，起点位于外部
-    RightOutside,
-    /// 选区位于右侧，有交叉，起点位于外部
-    LeftOutside,
-    /// 选区包裹片段
-    Cover,
-}
-
-fn _check_pos(pos: usize, border: i32, x: i32, text: &str) -> Ordering {
-    if pos == 0 {
-        Ordering::Equal
-    } else {
-        let (pw2, _) = measure(text.chars().take(pos).collect::<String>().as_str(), false);
-        if x + pw2 <= border {
-            Ordering::Equal
-        } else {
-            Ordering::Greater
-        }
-    }
-}
-
-/// 通过鼠标选择文本时，根据划选区域和方向，自动选择符合用户习惯的文本内容范围。
+/// 复制选中片段的内容。
 ///
 /// # Arguments
 ///
-/// * `drag_area`: 拖选区域。
-/// * `visible_lines`: 当前窗口内可见的内容行。
-/// * `column_mode`: 是否列模式。普通操作时不选列模式。
-/// * `push_from`: 鼠标拖选开始时的坐标。
-/// * `panel_x`: 当前内容面板的x坐标。
+/// * `it`:
+/// * `selection`:
 ///
-/// returns: bool
+/// returns: ()
 ///
 /// # Examples
 ///
 /// ```
 ///
 /// ```
-pub(crate) fn select_text(drag_area: &Rectangle, visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>, column_mode: bool, push_from: (i32, i32), panel_x: i32, line_max_width: i32) -> bool {
-    /*
-    遍历可见行，检查每一行的矩形范围是否与选区有重叠，若有重叠则继续检测出现重叠的行中哪些文字片段与选区有重叠。
-     */
-    let mut selected = false;
-    // 选中行的代表
-    let mut selected_lines: BTreeMap<i32, LinePiece> = BTreeMap::new();
-    for (line_rect, piece) in visible_lines.borrow_mut().iter_mut() {
-        let extended_line_rect = Rectangle::new(line_rect.0, line_rect.1, line_max_width, line_rect.3);
-        if is_overlap(&extended_line_rect, drag_area) {
-            /*
-            记录每一行位于选择区域中最左边那个片段，作为每一行的代表片段。
-            由于同一行内的不同片段可能绘制高度不同，但是都具有的top_y属性可以表示虚拟行高的顶部位置。
-             */
-            if !selected_lines.contains_key(&piece.top_y) {
-                selected_lines.insert(piece.top_y, piece.clone());
-            } else {
-                if let Some(old_piece) = selected_lines.get(&piece.top_y) {
-                    if piece.x < old_piece.x {
-                        selected_lines.insert(piece.top_y, piece.clone());
-                    }
-                }
-            }
-
-            set_font(piece.font, piece.font_size);
-
-            /*
-            采用二分法依次检索选区中字符串左边界和右边界的字符索引，并记录左右边界字符右侧水平坐标。
-             */
-            let (x, len)= (line_rect.0, piece.line.chars().count());
-            let text = piece.line.as_str();
-            let from_vec = (0..len).collect::<Vec<usize>>();
-            if let Ok(from) = from_vec.binary_search_by({
-                let left_border = drag_area.0;
-                move |pos| {
-                    let (pw1, _) = measure(text.chars().take(*pos + 1).collect::<String>().as_str(), false);
-                    if x + pw1 < left_border {
-                        Ordering::Less
-                    } else {
-                        _check_pos(*pos, left_border, x, text)
-                    }
-                }
-            }) {
-                if from == len - 1 {
-                    piece.select_range(from, len);
-                    selected = true;
-                } else {
-                    // 查找右边界字符位置
-                    let to_vec = (from..len).collect::<Vec<usize>>();
-                    if let Ok(to) = to_vec.binary_search_by({
-                        let right_boarder = drag_area.0 + drag_area.2;
-                        move |pos| {
-                            let (pw1, _) = measure(text.chars().take(*pos + 1).collect::<String>().as_str(), false);
-                            if x + pw1 < right_boarder {
-                                if pos + 1 == len {
-                                    Ordering::Equal
-                                } else {
-                                    Ordering::Less
-                                }
-                            } else {
-                                _check_pos(*pos, right_boarder, x, text)
-                            }
-                        }
-                    }) {
-                        piece.select_range(from, to_vec[to] + 1);
-                        selected = true;
-                    } else {
-                        error!("检测结尾时异常！")
-                    }
-                }
-            }
-        } else {
-            piece.deselect();
-        }
-    }
-
-    if selected && !column_mode {
-        let selected_lines_clone = selected_lines.clone();
-        if selected_lines.len() > 1 {
-            // 选区有跨行情况
-            // 首先处理(消费)最后一行
-            if let Some((_, piece)) = selected_lines.pop_last() {
-                let last_line = &piece.through_line.borrow_mut().ys;
-                for p in last_line.borrow_mut().iter_mut() {
-                    if let Some(p) = p.upgrade() {
-                        let lp = &mut *p.borrow_mut();
-
-                        /*
-                        对位于代表片段左边的所有分片进行全选处理，而代表片段右边的片段不处理(选中或未选中都不变)。
-                         */
-                        if lp.eq2(&piece) {
-                            if drag_area.0 >= panel_x + lp.x {
-                                let mut new_to = 0;
-                                if let Some((old_from, old_to)) = lp.selected_range.get() {
-                                    if drag_area.1 < push_from.1 {
-                                        if drag_area.0 < push_from.0 {
-                                            // 选区向起始点左上方延伸，结束位不变。
-                                            new_to = old_to;
-                                        } else {
-                                            // 选区向起始点右上方延伸，结束位是选区起始位。
-                                            new_to = old_from + 1;
-                                        }
-                                    } else {
-                                        if drag_area.0 < push_from.0 {
-                                            // 选区向起始点左下方延伸，结束位是选区起始位。
-                                            new_to = old_from + 1;
-                                        } else {
-                                            // 选区向起始点右下方延伸，结束位不变。
-                                            new_to = old_to;
-                                        }
-                                    }
-                                }
-                                lp.select_to(new_to);
-                            } else {
-                                // 选区间隙，维持不变
-                            }
-                        } else {
-
-                            if push_from.0 < panel_x + lp.x {
-                                if drag_area.1 < push_from.1 {
-                                    // 右侧片段，向上拖选时不选
-                                    lp.deselect();
-                                } else if lp.next_x > lp.x && drag_area.0 + drag_area.2 > panel_x + lp.next_x {
-                                    lp.select_all();
-                                }
-                                // 右侧片段，向下拖选时维持选择状态
-                            } else if push_from.0 >= panel_x + lp.next_x {
-                                if drag_area.0 > panel_x + lp.x {
-                                    // 左侧片段，全选
-                                    lp.select_all();
-                                } else {
-                                    if drag_area.1 + drag_area.3 > push_from.1 {
-                                        // 向左下拖选，选区片段左边界大于选区左边界，不选
-                                        lp.deselect();
-                                    } else {
-                                        // 向左上拖选，当前片段维持原态
-                                    }
-                                }
-                            } else {
-                                // 拖选起点位于片段两端之间
-                                if drag_area.0 < panel_x + lp.x && (drag_area.1 + drag_area.3 > push_from.1) {
-                                    // 向左下拖选，左端大于选区左边界，不选择
-                                    lp.deselect();
-                                } else if push_from.1 == drag_area.1 && (drag_area.0 + drag_area.2 > panel_x + lp.next_x) {
-                                    // 向下拖选，选区右边界超出片段右边界，全选
-                                    lp.select_all();
-                                } else {
-                                    // 向左上拖选，维持原态
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 接着处理(消费)第一行
-            if let Some((_, piece)) = selected_lines.pop_first() {
-                let first_line = &piece.through_line.borrow_mut().ys;
-                for p in first_line.borrow_mut().iter_mut() {
-                    if let Some(p) = p.upgrade() {
-                        let lp = &*p.borrow_mut();
-                        /*
-                        根据当前分片相对于选区的方位，对选中内容进行调整，以符合用户操作习惯。
-                        总计有20种情况需要判断处理。
-                         */
-                        let pos = find_position_of_piece(drag_area, push_from, panel_x, lp);
-                        match pos {
-                            PosOfDrag::UpInside => {
-                                // 向上拖选，选区位于当前片段内
-                                if drag_area.0 != push_from.0 {
-                                    // 从起始点向左划选，从选区左边界向右扩选。
-                                    extend_from_end(lp);
-                                } else {
-                                    // 从起始点向右划选，从选区右边界向右反选。
-                                    reverse_to_extend_from_end(lp);
-                                }
-                            }
-                            PosOfDrag::DownInside => {
-                                // 向下拖选，选区位于当前片段内。
-                                if drag_area.0 != push_from.0 {
-                                    // 向左划选，以选区末尾字符为起始向右扩选内容。
-                                    reverse_to_extend_from_end(lp);
-                                } else {
-                                    // 向右划选，扩选起点字符之后的内容
-                                    extend_from_end(lp);
-                                }
-                            }
-                            PosOfDrag::UpLeftInside | PosOfDrag::DownLeftOutside | PosOfDrag::DownLeft => {
-                                // 向上拖选，片段位于选区左部有交叉，不选
-                                lp.deselect();
-                            }
-                            PosOfDrag::UpLeft | PosOfDrag::UpLeftOutside | PosOfDrag::DownLeftInside => {
-                                // 向上拖选，选区位于当前片段左侧外部，不选择。实际上维持不变。
-                            }
-                            PosOfDrag::UpRightInside | PosOfDrag::UpRight | PosOfDrag::DownRight | PosOfDrag::DownRightOutside => {
-                                // 向上拖选，当前片段在选区右部有交叉，全选
-                                lp.select_all();
-                            }
-                            // PosOfDrag::UpLeftOutside => {
-                            //     // 向上拖选，当前片段在选区左部有交叉，维持不变
-                            // }
-                            // PosOfDrag::UpRight => {
-                            //     // 向上拖选，选区位于当前片段右侧外部，全选。
-                            //     lp.selected_range.set(Some((0, lp.line.chars().count())));
-                            // }
-                            PosOfDrag::UpRightOutside | PosOfDrag::DownRightInside => {
-                                // 向上拖选，片段位于选区右部有交叉，向右反选
-                                reverse_to_extend_from_end(lp);
-                            }
-                            PosOfDrag::DownCover => {
-                                // 向下拖选，选区包括片段，不选择。
-                                if drag_area.0 == push_from.0 {
-                                    // 选区起点在片段左外侧，全选
-                                    lp.select_all();
-                                } else {
-                                    // 选区起点在片段右外侧，不选
-                                    lp.deselect();
-                                }
-                            }
-                            PosOfDrag::UpCover => {
-                                // 向上拖选，选区包括片段
-                                if drag_area.0 != push_from.0 {
-                                    // 向左划选，全选。
-                                    lp.select_all();
-                                } else {
-                                    // 向右划选，不选
-                                    lp.deselect();
-                                }
-                            }
-                            // PosOfDrag::DownLeftInside => {
-                            //     // 向下拖选，选区位于当前片段右部，有交叉，维持不变。
-                            // }
-                            // PosOfDrag::DownLeft => {
-                            //     // 向下拖选，选区位于当前片段左侧外部，不选择。
-                            //     lp.deselect();
-                            // }
-                            // PosOfDrag::DownRightInside => {
-                            //     // 向下拖选，当前片段在选区右部有交叉，以选区末尾字符为起始向右扩选内容。
-                            //     reverse_to_extend_from_end(lp);
-                            // }
-                            // PosOfDrag::DownRight => {
-                            //     // 向下拖选，选区位于当前片段右侧外部，全选。
-                            //     lp.selected_range.set(Some((0, lp.line.chars().count())));
-                            // }
-                            // PosOfDrag::DownRightOutside => {
-                            //     // 向下拖选，选区位于当前片段右侧外部，全选。
-                            //     lp.selected_range.set(Some((0, lp.line.chars().count())));
-                            // }
-                            // PosOfDrag::DownLeftOutside => {
-                            //     // 向下拖选，选区位于当前片段右侧外部，不选。
-                            //     lp.deselect(;)
-                            // }
-                        }
-                    }
-                }
-            }
-            // 最后处理中间行即剩余的行，进行全选处理。
-            selected_lines.iter_mut().for_each({
-                |(_, piece)| {
-                    let tl = &piece.through_line.borrow_mut().ys;
-                    tl.borrow_mut().iter_mut().for_each({
-                        |p| {
-                            if let Some(p) = p.upgrade() {
-                                let lp = &mut *p.borrow_mut();
-                                lp.select_all();
-                            }
-                        }
-                    });
-                }
-            });
-        }
-
-        /*
-        拷贝至剪贴板
-         */
-        let mut selection = String::new();
-        for (_, piece) in selected_lines_clone.iter() {
-            let tl = &piece.through_line.borrow().ys;
-            copy_pieces(tl.borrow().iter(), &mut selection);
-        }
-        app::copy(selection.as_str());
-    }
-    selected
-}
-
 fn copy_pieces(it: Iter<Weak<RefCell<LinePiece>>>, selection: &mut String) {
     for p in it {
         if let Some(p) = p.upgrade() {
@@ -2207,188 +1847,11 @@ fn copy_pieces(it: Iter<Weak<RefCell<LinePiece>>>, selection: &mut String) {
     }
 }
 
-/// 检查拖选区与当前分片的方位关系。
+/// 清除数据片段的选中属性。
 ///
 /// # Arguments
 ///
-/// * `drag_area`: 拖选区范围。
-/// * `push_from`: 拖选起始坐标(x, y)。
-/// * `panel_x`: 面板的x坐标。
-/// * `piece`: 当前片段。
-///
-/// returns: PosOfDrag 返回对应的方位枚举。
-///
-/// # Examples
-///
-/// ```
-///
-/// ```
-fn find_position_of_piece(drag_area: &Rectangle, push_from: (i32, i32), panel_x: i32, piece: &LinePiece) -> PosOfDrag {
-    let to_down = drag_to_down(drag_area, push_from.1);
-    match drag_from_piece(drag_area, panel_x, push_from.0, piece) {
-        HorizonPosOfDrag::Inside => {
-            if to_down {
-                PosOfDrag::DownInside
-            } else {
-                PosOfDrag::UpInside
-            }
-        }
-        HorizonPosOfDrag::Left => {
-            if to_down {
-                PosOfDrag::DownLeft
-            } else {
-                PosOfDrag::UpLeft
-            }
-        },
-        HorizonPosOfDrag::Right => {
-            if to_down {
-                PosOfDrag::DownRight
-            } else {
-                PosOfDrag::UpRight
-            }
-        }
-        HorizonPosOfDrag::LeftInside => {
-            if to_down {
-                PosOfDrag::DownLeftInside
-            } else {
-                PosOfDrag::UpLeftInside
-            }
-        }
-        HorizonPosOfDrag::RightInside => {
-            if to_down {
-                PosOfDrag::DownRightInside
-            } else {
-                PosOfDrag::UpRightInside
-            }
-        }
-        HorizonPosOfDrag::RightOutside => {
-            if to_down {
-                PosOfDrag::DownRightOutside
-            } else {
-                PosOfDrag::UpRightOutside
-            }
-        }
-        HorizonPosOfDrag::LeftOutside => {
-            if to_down {
-                PosOfDrag::DownLeftOutside
-            } else {
-                PosOfDrag::UpLeftOutside
-            }
-        }
-        HorizonPosOfDrag::Cover => {
-            if to_down {
-                PosOfDrag::DownCover
-            } else {
-                PosOfDrag::UpCover
-            }
-        }
-    }
-}
-
-/// 检测拖拽起始位置是否位于片段内。
-///
-/// # Arguments
-///
-/// * `panel_x`: 面板x坐标。
-/// * `piece`: 片段。
-/// * `push_from_x`: 拖拽起始点x坐标。
-///
-/// returns: bool 若起始点位于片段内返回true，否则返回false。
-///
-/// # Examples
-///
-/// ```
-///
-/// ```
-fn drag_from_piece(drag_area: &Rectangle, panel_x: i32, push_from_x: i32, piece: &LinePiece) -> HorizonPosOfDrag {
-    if push_from_x >= panel_x + piece.x {
-        // 拖拽起始点位于当前片段起始点右侧
-        if piece.next_x > piece.x {
-            // 非右边顶头的片段
-            if push_from_x < panel_x + piece.next_x {
-                // 拖选起始点位于当前片段内部
-                if drag_area.0 >= panel_x + piece.x && drag_area.0 + drag_area.2 <= panel_x + piece.next_x {
-                    // 拖选范围在当前片段内部
-                    HorizonPosOfDrag::Inside
-                } else if drag_area.0 < panel_x + piece.x {
-                    // 拖选范围在起始点左侧，与当前片段有交叉
-                    HorizonPosOfDrag::RightInside
-                } else {
-                    // 拖选范围在起始点右侧，与当前片段有交叉
-                    HorizonPosOfDrag::LeftInside
-                }
-            } else {
-                // 拖选起始点位于当前片段右边外侧
-                if drag_area.0 < panel_x + piece.x {
-                    // 拖选范围涵盖当前片段
-                    HorizonPosOfDrag::Cover
-                } else if drag_area.0 < panel_x + piece.next_x {
-                    // 拖选范围在当前片段右侧，有交叉
-                    HorizonPosOfDrag::LeftOutside
-                } else {
-                    HorizonPosOfDrag::Left
-                }
-            }
-        } else {
-            // 右边顶头的片段
-            if drag_area.0 >= panel_x + piece.x {
-                // 拖选范围在当前片段内部，或偏右
-                HorizonPosOfDrag::Inside
-            } else {
-                // 拖选范围在当前片段左侧，有交叉
-                HorizonPosOfDrag::RightInside
-            }
-        }
-    } else {
-        // 拖选起始点位于当前片段左侧外部
-        if drag_area.0 + drag_area.2 > panel_x + piece.x {
-            if piece.next_x > piece.x {
-                // 非右边顶点片段
-                if drag_area.0 + drag_area.2 > panel_x + piece.next_x {
-                    // 拖选范围覆盖片段
-                    HorizonPosOfDrag::Cover
-                } else {
-                    // 拖选范围在当前片段左侧，有交叉
-                    HorizonPosOfDrag::RightOutside
-                }
-            } else {
-                // 右边顶点片段
-                HorizonPosOfDrag::RightOutside
-            }
-
-        } else {
-            HorizonPosOfDrag::Right
-        }
-    }
-}
-
-/// 检查拖选垂直方向。
-///
-/// # Arguments
-///
-/// * `drag_area`: 拖选区域。
-/// * `push_from_y`: 拖选起始点y坐标。
-///
-/// returns: bool 若向下返回true，否则返回false。
-///
-/// # Examples
-///
-/// ```
-///
-/// ```
-fn drag_to_down(drag_area: &Rectangle, push_from_y: i32) -> bool {
-    if drag_area.1 < push_from_y {
-        false
-    } else {
-        true
-    }
-}
-
-///
-///
-/// # Arguments
-///
-/// * `piece`:
+/// * `selected_pieces`:
 ///
 /// returns: ()
 ///
@@ -2397,31 +1860,6 @@ fn drag_to_down(drag_area: &Rectangle, push_from_y: i32) -> bool {
 /// ```
 ///
 /// ```
-fn reverse_to_extend_from_end(piece: &LinePiece) {
-    if let Some((_, old_to)) = piece.selected_range.get() {
-        piece.select_from(old_to - 1);
-    }
-}
-
-/// 从选区起始字符，向右扩选片段内容。
-///
-/// # Arguments
-///
-/// * `piece`:
-///
-/// returns: ()
-///
-/// # Examples
-///
-/// ```
-///
-/// ```
-fn extend_from_end(piece: &LinePiece) {
-    if let Some((old_from, _)) = piece.selected_range.get() {
-        piece.select_from(old_from);
-    }
-}
-
 pub(crate) fn clear_selected_pieces(selected_pieces: Rc<RefCell<Vec<Weak<RefCell<LinePiece>>>>>) {
     for piece in selected_pieces.borrow().iter() {
         if let Some(p) = piece.upgrade() {
@@ -2431,6 +1869,23 @@ pub(crate) fn clear_selected_pieces(selected_pieces: Rc<RefCell<Vec<Weak<RefCell
     selected_pieces.borrow_mut().clear();
 }
 
+/// 向前或向后选择数据片段。
+///
+/// # Arguments
+///
+/// * `rd`:
+/// * `piece_index`:
+/// * `pos`:
+/// * `selected_pieces`:
+/// * `from`:
+///
+/// returns: ()
+///
+/// # Examples
+///
+/// ```
+///
+/// ```
 fn select_piece_from_or_to(rd: &RichData, piece_index: usize, pos: usize, selected_pieces: Rc<RefCell<Vec<Weak<RefCell<LinePiece>>>>>, from: bool) {
     if let Some(last_piece_rc) = rd.line_pieces.get(piece_index) {
         let piece = &*last_piece_rc.borrow();
@@ -2443,19 +1898,35 @@ fn select_piece_from_or_to(rd: &RichData, piece_index: usize, pos: usize, select
     }
 }
 
-pub(crate) fn select_text2(from_point: &ClickPoint, to_point: ClickPoint, data_buffer: Rc<RefCell<Vec<RichData>>>, rd_range: RangeInclusive<usize>, selected_pieces: Rc<RefCell<Vec<Weak<RefCell<LinePiece>>>>>) {
+/// 计算选中文本所在数据片段的选中属性。
+///
+/// # Arguments
+///
+/// * `from_point`: 起始位置。
+/// * `to_point`: 结束位置。
+/// * `data_buffer`: 数据缓存。
+/// * `rd_range`: 选中的数据段索引范围。
+/// * `selected_pieces`: 选中数据片段临时记录容器。
+///
+/// returns: ()
+///
+/// # Examples
+///
+/// ```
+///
+/// ```
+pub(crate) fn select_text(from_point: &ClickPoint, to_point: &ClickPoint, data_buffer: &[RichData], rd_range: RangeInclusive<usize>, selected_pieces: Rc<RefCell<Vec<Weak<RefCell<LinePiece>>>>>) {
     /*
     选择片段的原则：应选择起点右下方的第一行片段，结束点左上方的第一行片段，以及两点之间的中间行片段。
      */
     // debug!("传入的fp: {:?}, tp: {:?}", from_point, to_point);
-    let drag_rect = from_point.to_rect(&to_point);
+    let drag_rect = from_point.to_rect(to_point);
     let (lt, br) = drag_rect.corner_rect();
-    let (mut lt_p, mut br_p) = (from_point, &to_point);
+    let (mut lt_p, mut br_p) = (from_point, to_point);
     if (br.0 == from_point.x && br.1 == from_point.y) || (lt.0 == from_point.x && br.1 == from_point.y) {
         // debug!("对换坐标点");
-        lt_p = &to_point;
+        lt_p = to_point;
         br_p = from_point;
-
     };
     let (f_p_i, t_p_i) = (lt_p.p_i, br_p.p_i);
 
@@ -2468,7 +1939,7 @@ pub(crate) fn select_text2(from_point: &ClickPoint, to_point: ClickPoint, data_b
     if across_rds > 0 {
         // 超过一行
         // debug!("选区超过一个数据段");
-        if let Some(rd) = data_buffer.borrow().get(r_start) {
+        if let Some(rd) = data_buffer.get(r_start) {
             // 选择第一个数据段起点之后的所有分片内容。
             select_piece_from_or_to(rd, f_p_i, lt_p.c_i, selected_pieces.clone(), true);
             for p in rd.line_pieces.iter().skip(f_p_i + 1) {
@@ -2481,7 +1952,7 @@ pub(crate) fn select_text2(from_point: &ClickPoint, to_point: ClickPoint, data_b
         // 如果中间有更多跨行数据段，则全选这些数据段。
         let mut piece_rcs = Vec::new();
         for i in r_start + 1..r_end {
-            if let Some(rd) = data_buffer.borrow().get(i) {
+            if let Some(rd) = data_buffer.get(i) {
                 for p in rd.line_pieces.iter() {
                     let piece = &*p.borrow();
                     piece.select_all();
@@ -2491,7 +1962,7 @@ pub(crate) fn select_text2(from_point: &ClickPoint, to_point: ClickPoint, data_b
         }
         selected_pieces.borrow_mut().append(&mut piece_rcs);
 
-        if let Some(rd) = data_buffer.borrow().get(r_end) {
+        if let Some(rd) = data_buffer.get(r_end) {
             // 选择最后一个数据段终点之前的所有内容。
             for p in rd.line_pieces.iter().take(t_p_i) {
                 let piece = &*p.borrow();
@@ -2503,7 +1974,7 @@ pub(crate) fn select_text2(from_point: &ClickPoint, to_point: ClickPoint, data_b
     } else {
         // 只有一行
         // debug!("选区只有一个数据段");
-        if let Some(rd) = data_buffer.borrow().get(r_start) {
+        if let Some(rd) = data_buffer.get(r_start) {
             let across_pieces = t_p_i - f_p_i;
             if across_pieces > 0 {
                 // 超过一个分片
@@ -2547,11 +2018,27 @@ pub(crate) fn select_text2(from_point: &ClickPoint, to_point: ClickPoint, data_b
     app::copy(selection.as_str());
 }
 
-pub(crate) fn locate_target_rd(point: &mut ClickPoint, drag_rect: &Rectangle, panel_width: i32, data_buffer: Rc<RefCell<Vec<RichData>>>, index_vec: &Vec<usize>) -> Option<usize> {
+/// 检测拖选范围所涵盖的数据段。
+///
+/// # Arguments
+///
+/// * `point`: 起始点。
+/// * `drag_rect`: 拖选矩形范围。
+/// * `panel_width`: 容器面板宽度。
+/// * `data_buffer`: 数据缓存。
+/// * `index_vec`: 容器面板可见范围内数据的顺序位置索引。
+///
+/// returns: Option<usize> 返回拖选结束点的数据段索引。
+///
+/// # Examples
+///
+/// ```
+///
+/// ```
+pub(crate) fn locate_target_rd(point: &mut ClickPoint, drag_rect: Rectangle, panel_width: i32, data_buffer: &[RichData], index_vec: Vec<usize>) -> Option<usize> {
     let point_rect = point.as_rect();
     // debug!("index_vec: {:?}", index_vec);
     if let Ok(idx) = index_vec.binary_search_by({
-        let buffer_rc = data_buffer.clone();
         let point_rect_rc = point_rect.clone();
         let point_rc = point.clone();
         move |row| {
@@ -2562,7 +2049,7 @@ pub(crate) fn locate_target_rd(point: &mut ClickPoint, drag_rect: &Rectangle, pa
             如果没有重叠，则判断其相对位置，并返回大于或小于。
              */
             let mut rd_extend_rect = Rectangle::zero();
-            let rd = &(&*buffer_rc.borrow())[*row];
+            let rd = &data_buffer[*row];
             // debug!("检测行 {row} : {}", rd.text);
             let (rd_top_y, rd_bottom_y, _, _) = rd.v_bounds.get();
             rd_extend_rect.replace(0, rd_top_y, panel_width, rd_bottom_y - rd_top_y);
@@ -2608,7 +2095,7 @@ pub(crate) fn locate_target_rd(point: &mut ClickPoint, drag_rect: &Rectangle, pa
             }
         }
     }) {
-        let rd = &(&*data_buffer.borrow())[index_vec[idx]];
+        let rd = &data_buffer[index_vec[idx]];
         if rd.data_type != DataType::Image {
             // debug!("找到目标点所在数据段： {}", rd.text);
             for (p_i, piece_rc) in rd.line_pieces.iter().enumerate() {
@@ -2636,6 +2123,72 @@ pub(crate) fn locate_target_rd(point: &mut ClickPoint, drag_rect: &Rectangle, pa
     None
 }
 
+/// 更新拖选结束点所在数段的位置属性，用于拖选过程准实时检测结束点位置。
+///
+/// # Arguments
+///
+/// * `push_from_point`: 起始点。
+/// * `select_from_row`: 起始点所在数据段的顺序索引号。
+/// * `current_point`: 当前结束点。
+/// * `data_buffer_slice`: 数据缓存。
+/// * `selected_pieces`: 临时保存选中数据片段的容器。
+/// * `panel`: 当前容器面板。
+///
+/// returns: bool
+///
+/// # Examples
+///
+/// ```
+///
+/// ```
+#[throttle(1, Duration::from_millis(50))]
+pub(crate) fn update_selection_when_drag(
+    push_from_point: ClickPoint,
+    select_from_row: usize,
+    current_point: &mut ClickPoint,
+    data_buffer_slice: &[RichData],
+    selected_pieces: Rc<RefCell<Vec<Weak<RefCell<LinePiece>>>>>,
+    panel: &mut Widget,) -> bool {
+
+    let mut down = true;
+    let index_vec = if current_point.y >= push_from_point.y {
+        // 向下选择
+        (select_from_row..data_buffer_slice.len()).collect::<Vec<usize>>()
+    } else {
+        // 向上选择
+        down = false;
+        (0..=select_from_row).collect::<Vec<usize>>()
+    };
+    // debug!("开始查找结束点所在数据段: {:?}", index_vec);
+    if let Some(select_to_row) = locate_target_rd(current_point, current_point.as_rect(), panel.w(), data_buffer_slice, index_vec) {
+        let rd_range = if down {
+            select_from_row..=(select_from_row + select_to_row)
+        } else {
+            select_to_row..=select_from_row
+        };
+        select_text(&push_from_point, current_point, data_buffer_slice, rd_range, selected_pieces);
+        panel.set_damage(true);
+        true
+    } else {
+        false
+    }
+}
+
+
+/// 测量鼠标点击的片段内容字符索引位置。
+///
+/// # Arguments
+///
+/// * `piece`:
+/// * `point`:
+///
+/// returns: ()
+///
+/// # Examples
+///
+/// ```
+///
+/// ```
 pub(crate) fn search_index_of_piece(piece: &LinePiece, point: &mut ClickPoint) {
     let len = piece.line.chars().count();
     if let Ok(c_i) = (0..len).collect::<Vec<usize>>().binary_search_by({

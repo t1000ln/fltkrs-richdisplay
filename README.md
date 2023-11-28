@@ -1,5 +1,5 @@
 # fltkrs-richdisplay
-![Static Badge](https://img.shields.io/badge/crates-0.2.10-blue) 
+![Static Badge](https://img.shields.io/badge/crates-0.3.0-blue) 
 ![Static Badge](https://img.shields.io/badge/build-passing-green)
 ![Static Badge](https://img.shields.io/badge/Readonly-gray)
 
@@ -17,23 +17,13 @@
 
 目前版本主视图的最小高度为200px(跟随系统缩放比例)。
 
-## 性能参考
-在`win10`环境下快速添加数据时，界面刷新速度依赖于CPU和GPU运算速度及视图尺寸。
-
-| CPU   | GPU       | 数据量 | 最大缓存  | 新增数据间隔 | 起始内存  | 最大内存 | 平均CPU% | 平均GPU% | 视图尺寸     | 处理延迟     |
-|---------|-------------|-------|--------------|------|-------|------|--------|--------|----------|----------|
-| i7 12th | Nvidia 3070 | 1600条 | 1000条 | 30ms  | 3.4Mb | 61Mb | 2.8% | 10%    | 800x400  | &lt;30ms |
-| i7 12th | Nvidia 3070 | 1600条 | 1000条 | 30ms  | 3.4Mb | 67Mb | 9%    | 27%    | 1600x800 | &lt;30ms |
-
-
-
 
 ## 使用方法示例：
 基本依赖：
 ```toml
 [dependencies]
 fltk = "1.4"
-fltkrs-richdisplay = "0.2.0"
+fltkrs-richdisplay = "0.3"
 ```
 
 由于下面的`examples`示例用到`tokio`框架进行异步交互，并且简单输出日志，所以需要额外添加依赖:

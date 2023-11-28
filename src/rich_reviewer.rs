@@ -929,9 +929,9 @@ impl RichReviewer {
 
             if scroll_to_next {
                 if let Some(rd) = self.data_buffer.borrow_mut().get_mut(next_rd_pos) {
-                    rd.search_highlight_pos = Some(0);
                     if let Some(ref pos_vec) = rd.search_result_positions {
                         self.current_highlight_focus.replace((next_rd_pos, pos_vec.len() - 1));
+                        rd.search_highlight_pos = Some(pos_vec.len() - 1);
                     }
                 }
             }
@@ -1039,7 +1039,8 @@ impl RichReviewer {
             let mut piece_idx = 0;
             if let Some(rd) = self.data_buffer.borrow().get(rd_idx) {
                 if let Some(ref s) = self.search_string {
-                    if let Some((pos, _)) = rd.text.rmatch_indices(s).nth(result_idx) {
+                    // debug!("正向定位到第{}个目标", result_idx);
+                    if let Some((pos, _)) =  rd.text.rmatch_indices(s).nth(result_idx) {
                         let mut processed_len = 0usize;
                         for (i, piece_rc) in rd.line_pieces.iter().enumerate() {
                             let piece = &*piece_rc.borrow();

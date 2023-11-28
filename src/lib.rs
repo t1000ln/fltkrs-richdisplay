@@ -1,7 +1,7 @@
 //! 富文本查看器，支持图文混排，支持历史内容回顾。
 //! 由目前的`fltk`基础决定，在`linux`环境下可以正确显示彩色`emoji`符号，而在`windows`环境下无法正确显示符号颜色。
 //! 主视图和历史视图均基于`Frame`基础组件实现。
-//! 注意，若要显示'@'字符需要进行转义即替换为'@@'，例如原字符串"dev@localhost"，需要转义为"dev@@localhost"才能正确显示。
+//!
 //! 组件用法简单示例：
 //! ```rust,no_run
 //! use fltk::{app, window};
@@ -113,12 +113,12 @@ use std::fmt::{Debug, Formatter};
 use std::ops::{RangeInclusive};
 use std::rc::{Rc, Weak};
 use std::slice::Iter;
-use std::time::Duration;
 use fltk::{app, draw};
 use fltk::draw::{descent, draw_image, draw_line, draw_rect_with_color, draw_rectf, draw_text_n, measure, set_draw_color, set_font};
 use fltk::enums::{Color, ColorDepth, Cursor, Font};
 use fltk::prelude::WidgetExt;
 use fltk::widget::Widget;
+use std::time::Duration;
 
 use idgenerator_thin::YitIdHelper;
 use log::{error};

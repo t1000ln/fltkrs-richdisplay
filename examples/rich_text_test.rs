@@ -181,7 +181,7 @@ async fn main() {
                 UserData::new_text(format!("{}由于多线程可以同时运行，所以将计算操作拆分至多个线程可以提高性能。", turn + 13)).set_fg_color(Color::Red).set_bg_color(Some(Color::Green)).set_clickable(true),
                 UserData::new_text(format!("{}由于多线程可以同时运行，💖所以将计算操作拆分至多个线程可以提高性能。", turn + 14)).set_fg_color(Color::Cyan).set_font(Font::Courier, 18).set_clickable(true).set_blink(true),
                 // UserData::new_text(format!("{}由于多线程可以同时运行，💖所以将计算操作拆分至多个线程可以提高性能。", turn + 14)).set_fg_color(Color::Cyan).set_font(Font::Courier, 18).set_clickable(true),
-                UserData::new_text(format!("{}由于多线程可以@同时运行，💖所以将计算操作拆分至多个线程可以提高性能。", turn + 15)),
+                UserData::new_text(format!("{}由于多线程可以~!@#$%^&同时运行，💖所以将计算操作拆分至多个线程可以提高性能。", turn + 15)),
                 UserData::new_image(img2_data.clone(), img2_width, img2_height).set_clickable(true).set_blink(true),
                 // UserData::new_image(img2_data.clone(), img2_width, img2_height).set_clickable(true),
             ]);

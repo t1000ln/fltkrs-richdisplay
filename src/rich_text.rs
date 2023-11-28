@@ -435,7 +435,7 @@ impl RichText {
                                 // debug!("{need_redraw}");
                                 Self::draw_offline(
                                     screen_rc.clone(),
-                                    &ctx,
+                                    ctx,
                                     visible_lines_rc.clone(),
                                     clickable_data_rc.clone(),
                                     bg_rc.get(),

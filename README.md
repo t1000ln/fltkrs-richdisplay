@@ -99,7 +99,7 @@ async fn main() {
     btn12.set_callback({
         let mut rt = rich_text.clone();
         move |_| {
-            rt.search_str(Some("高效".to_string()), true);
+            rt.search_str(Some("程序".to_string()), true);
         }
     });
     btn11.set_callback({

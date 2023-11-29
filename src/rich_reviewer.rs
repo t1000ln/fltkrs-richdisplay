@@ -186,7 +186,7 @@ pub struct RichReviewer {
     /// 查找结果，保存查询到的目标数据段在data_buffer中的索引编号。
     search_results: Vec<usize>,
     current_highlight_focus: Option<(usize, usize)>,
-    blink_flag: Rc<Cell<BlinkState>>,
+    blink_flag: Rc<RefCell<BlinkState>>,
     /// true表示历史记录模式，默认false表示在线回顾模式。
     history_mode: Rc<Cell<bool>>,
     /// 历史模式下，分页数据大小。
@@ -195,6 +195,7 @@ pub struct RichReviewer {
     text_color: Rc<Cell<Color>>,
     text_size: Rc<Cell<i32>>,
     piece_spacing: Rc<Cell<i32>>,
+    enable_blink: Rc<Cell<bool>>,
 }
 widget_extends!(RichReviewer, Scroll, scroller);
 
@@ -235,14 +236,16 @@ impl RichReviewer {
         let history_mode = Rc::new(Cell::new(false));
         let page_size = Rc::new(Cell::new(10));
         let piece_spacing = Rc::new(Cell::new(0));
+        let enable_blink = Rc::new(Cell::new(true));
 
         let search_results = Vec::<usize>::new();
         let search_str = None::<String>;
         let current_highlight_focus = None::<(usize, usize)>;
 
-        let blink_flag = Rc::new(Cell::new(BlinkState::new()));
+        let blink_flag = Rc::new(RefCell::new(BlinkState::new()));
         let blink_handler = {
             let blink_flag_rc = blink_flag.clone();
+            let enable_blink_rc = enable_blink.clone();
 
             #[cfg(target_os = "linux")]
             let scroller_rc = scroller.clone();
@@ -252,18 +255,20 @@ impl RichReviewer {
 
             move |handler| {
                 if !scroller_rc.was_deleted() {
-                    let (should_toggle, bs) = blink_flag_rc.get().toggle_when_on();
-                    if should_toggle {
-                        blink_flag_rc.set(bs);
-                        // debug!("from reviewer blink flag: {:?}", blink_flag_rc.get());
+                    if enable_blink_rc.get() {
+                        let should_toggle = blink_flag_rc.borrow_mut().toggle_when_on();
+                        if should_toggle {
+                            // blink_flag_rc.set(bs);
+                            // debug!("from reviewer blink flag: {:?}", blink_flag_rc.get());
 
-                        #[cfg(target_os = "linux")]
-                        if let Some(mut parent) = scroller_rc.parent() {
-                            parent.set_damage(true);
+                            #[cfg(target_os = "linux")]
+                            if let Some(mut parent) = scroller_rc.parent() {
+                                parent.set_damage(true);
+                            }
+
+                            #[cfg(not(target_os = "linux"))]
+                            scroller_rc.set_damage(true);
                         }
-
-                        #[cfg(not(target_os = "linux"))]
-                        scroller_rc.set_damage(true);
                     }
                     app::repeat_timeout3(BLINK_INTERVAL, handler);
                 } else {
@@ -533,13 +538,26 @@ impl RichReviewer {
             }
         });
 
-        Self { scroller, panel, data_buffer, background_color, visible_lines, clickable_data, reviewer_screen, notifier, page_notifier, search_string: search_str, search_results, current_highlight_focus, blink_flag, history_mode, page_size, text_font, text_color, text_size, piece_spacing }
+        Self { scroller, panel, data_buffer, background_color, visible_lines, clickable_data, reviewer_screen, notifier, page_notifier, search_string: search_str, search_results, current_highlight_focus, blink_flag, history_mode, page_size, text_font, text_color, text_size, piece_spacing, enable_blink }
     }
 
     pub fn set_background_color(&self, color: Color) {
         self.background_color.replace(color);
     }
 
+    /// 设置回顾区数据。
+    ///
+    /// # Arguments
+    ///
+    /// * `data`:
+    ///
+    /// returns: ()
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
     pub(crate) fn set_data(&mut self, mut data: Vec<RichData>) {
         // 更新回看数据
         self.data_buffer.borrow_mut().clear();
@@ -557,21 +575,6 @@ impl RichReviewer {
         self.scroller.scroll_to(0, self.panel.height() - self.scroller.height());
     }
 
-    /// 计算数据内容所需的面板高度。
-    ///
-    /// # Arguments
-    ///
-    /// * `buffer`:
-    /// * `scroller_height`:
-    ///
-    /// returns: i32
-    ///
-    /// # Examples
-    ///
-    /// ```
-    ///
-    /// ```
-
 
     fn draw_offline(
         screen: Rc<RefCell<Offscreen>>,
@@ -580,7 +583,7 @@ impl RichReviewer {
         clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
         data_buffer: Rc<RefCell<Vec<RichData>>>,
         background_color: Color,
-        blink_flag: Rc<Cell<BlinkState>>,
+        blink_flag: Rc<RefCell<BlinkState>>,
         history_mode: bool
         ) {
 
@@ -636,10 +639,11 @@ impl RichReviewer {
                 break;
             }
         }
-
+        // debug!("离线绘制， from_index:{from_index}, to_index:{to_index}");
         let mut need_blink = false;
         for (idx, rich_data) in data[from_index..to_index].iter().enumerate() {
-            rich_data.draw(offset_y, blink_flag.get());
+            // debug!("离线绘制， idx:{idx}, rich_data:{:?}", rich_data.text);
+            rich_data.draw(offset_y, &*blink_flag.borrow());
 
             if !need_blink && (rich_data.blink || rich_data.search_highlight_pos.is_some()) {
                 // debug!("需要闪烁");
@@ -677,15 +681,9 @@ impl RichReviewer {
 
         // 更新闪烁标记
         if need_blink {
-            let bs = blink_flag.get();
-            if !bs.is_on() {
-                blink_flag.set(bs.on());
-            }
+            blink_flag.borrow_mut().on();
         } else {
-            let bs = blink_flag.get();
-            if bs.is_on() {
-                blink_flag.set(bs.off());
-            }
+            blink_flag.borrow_mut().off();
         }
     }
 
@@ -929,9 +927,9 @@ impl RichReviewer {
 
             if scroll_to_next {
                 if let Some(rd) = self.data_buffer.borrow_mut().get_mut(next_rd_pos) {
-                    rd.search_highlight_pos = Some(0);
                     if let Some(ref pos_vec) = rd.search_result_positions {
                         self.current_highlight_focus.replace((next_rd_pos, pos_vec.len() - 1));
+                        rd.search_highlight_pos = Some(pos_vec.len() - 1);
                     }
                 }
             }
@@ -1039,7 +1037,8 @@ impl RichReviewer {
             let mut piece_idx = 0;
             if let Some(rd) = self.data_buffer.borrow().get(rd_idx) {
                 if let Some(ref s) = self.search_string {
-                    if let Some((pos, _)) = rd.text.rmatch_indices(s).nth(result_idx) {
+                    // debug!("正向定位到第{}个目标", result_idx);
+                    if let Some((pos, _)) =  rd.text.rmatch_indices(s).nth(result_idx) {
                         let mut processed_len = 0usize;
                         for (i, piece_rc) in rd.line_pieces.iter().enumerate() {
                             let piece = &*piece_rc.borrow();
@@ -1074,6 +1073,11 @@ impl RichReviewer {
     ///
     /// ```
     fn show_piece(&mut self, rd_idx: usize, piece_idx: usize) {
+        let mut offset_y = 0;
+        if let Some(rd) = self.data_buffer.borrow().first() {
+            offset_y = rd.v_bounds.get().0;
+        }
+
         if let Some(rd) = self.data_buffer.borrow().get(rd_idx) {
             if piece_idx < rd.line_pieces.len() {
                 if let Some(piece_rc) = rd.line_pieces.get(piece_idx) {
@@ -1081,7 +1085,7 @@ impl RichReviewer {
                     // debug!("piece.top_y: {}, panel_height: {}, scroller.yposition: {}, piece.line: {}", piece.top_y, self.panel.h(), self.scroller.yposition(), piece.line);
                     let scroller_y = self.scroller.yposition();
                     if piece.y < scroller_y || piece.y + piece.h >= scroller_y + self.scroller.h() {
-                        let mut scroll_to_y = piece.y - self.scroller.h() + piece.h * 2 + PADDING.top + 3;
+                        let mut scroll_to_y = piece.y - self.scroller.h() + piece.h * 2 + PADDING.top + 3 - offset_y;
                         if scroll_to_y < 0 {
                             scroll_to_y = 0;
                         } else if scroll_to_y > self.panel.h() - self.scroller.h() {
@@ -1456,5 +1460,61 @@ impl RichReviewer {
     /// 可以在app中使用的获取雪花流水号的工具方法。
     pub fn get_next_sn(&self) -> i64 {
         YitIdHelper::next_id()
+    }
+
+    /// 替换闪烁状态对象。
+    ///
+    /// # Arguments
+    ///
+    /// * `state`:
+    ///
+    /// returns: ()
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
+    pub(crate) fn set_blink_state(&mut self, state: BlinkState) {
+        *self.blink_flag.borrow_mut() = state;
+    }
+
+    /// 设置启用或禁用闪烁支持。
+    ///
+    /// # Arguments
+    ///
+    /// * `enable`:
+    ///
+    /// returns: ()
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
+    pub fn set_enable_blink(&mut self, enable: bool) {
+        self.enable_blink.set(enable);
+    }
+
+    pub fn set_search_focus_color(&mut self, color: Color) {
+        self.blink_flag.borrow_mut().focus_boarder_color = color;
+    }
+
+    pub fn set_search_focus_contrast(&mut self, contrast: Color) {
+        self.blink_flag.borrow_mut().focus_boarder_contrast_color = contrast;
+    }
+
+    pub fn set_search_focus_color_and_contrast(&mut self, color: Color, contrast: Color) {
+        let mut bf = self.blink_flag.borrow_mut();
+        bf.focus_boarder_color = color;
+        bf.focus_boarder_contrast_color = contrast;
+    }
+
+    pub fn set_search_focus_width(&mut self, width: u8) {
+        self.blink_flag.borrow_mut().focus_boarder_width = width as i32;
+    }
+
+    pub fn set_search_focus_background(&mut self, background: Color) {
+        self.blink_flag.borrow_mut().focus_background_color = background;
     }
 }

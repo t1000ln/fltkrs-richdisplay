@@ -1,7 +1,5 @@
 //! 富文本查看器，支持图文混排，支持历史内容回顾。
-//! 由目前的`fltk`基础决定，在`linux`环境下可以正确显示彩色`emoji`符号，而在`windows`环境下无法正确显示符号颜色。
-//! 主视图和历史视图均基于`Frame`基础组件实现。
-//! 注意，若要显示'@'字符需要进行转义即替换为'@@'，例如原字符串"dev@localhost"，需要转义为"dev@@localhost"才能正确显示。
+//!
 //! 组件用法简单示例：
 //! ```rust,no_run
 //! use fltk::{app, window};
@@ -114,7 +112,7 @@ use std::ops::{RangeInclusive};
 use std::rc::{Rc, Weak};
 use std::slice::Iter;
 use fltk::{app, draw};
-use fltk::draw::{descent, draw_image, draw_line, draw_rect_with_color, draw_rectf, draw_text_n, measure, set_draw_color, set_font};
+use fltk::draw::{descent, draw_image, draw_line, draw_rectf, draw_rounded_rect, draw_rounded_rectf, draw_text_n, LineStyle, measure, set_draw_color, set_font, set_line_style};
 use fltk::enums::{Color, ColorDepth, Cursor, Font};
 use fltk::prelude::WidgetExt;
 use fltk::widget::Widget;
@@ -148,6 +146,8 @@ pub const HIGHLIGHT_RECT_COLOR: Color = Color::from_rgb(255, 145, 0);
 
 /// 高亮文本焦点边框对比色，目前用于查询目标，当前正在聚焦的目标在闪烁时切换的对比颜色。
 pub const HIGHLIGHT_RECT_CONTRAST_COLOR: Color = Color::from_rgb(0, 110, 255);
+/// 高亮文本焦点边框弧度参数。
+pub const HIGHLIGHT_ROUNDED_RECT_RADIUS: i32 = 3;
 
 /// 最亮的白色。
 pub const WHITE: Color = Color::from_rgb(255, 255, 255);
@@ -277,12 +277,24 @@ pub enum BlinkDegree {
 }
 
 /// 可视区域闪烁开关标记和状态。
-#[derive(Debug, Clone,Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct BlinkState {
     /// 可视区域是否存在闪烁内容。
     on: bool,
     /// 应闪烁内容在下一次刷新显示时的强度。
     next: BlinkDegree,
+
+    /// 焦点目标的边框颜色。
+    focus_boarder_color: Color,
+
+    /// 焦点目标的边框对比色。
+    focus_boarder_contrast_color: Color,
+
+    /// 焦点目标的边框线条宽度。
+    focus_boarder_width: i32,
+
+    /// 焦点目标的背景颜色。
+    focus_background_color: Color,
 }
 
 impl BlinkState {
@@ -290,36 +302,34 @@ impl BlinkState {
         BlinkState {
             on: false,
             next: BlinkDegree::Normal,
+            focus_boarder_color: HIGHLIGHT_RECT_COLOR,
+            focus_boarder_contrast_color: HIGHLIGHT_RECT_CONTRAST_COLOR,
+            focus_boarder_width: 2,
+            focus_background_color: HIGHLIGHT_BACKGROUND_COLOR
         }
     }
 
-    pub fn is_on(&self) -> bool {
-        self.on
-    }
-
-    pub fn off(mut self) -> Self {
+    pub fn off(mut self) {
         self.on = false;
         self.next = BlinkDegree::Normal;
-        self
     }
 
-    pub fn on(mut self) -> Self {
+    pub fn on(&mut self) {
         self.on = true;
-        // self.next = BlinkDegree::Darker;
-        self
     }
 
-    pub fn toggle_when_on(mut self) -> (bool, Self) {
+    pub fn toggle_when_on(&mut self) -> bool {
         if self.on {
             self.next = match self.next {
                 BlinkDegree::Normal => BlinkDegree::Contrast,
                 BlinkDegree::Contrast => BlinkDegree::Normal,
             };
-            (true, self)
+            true
         } else {
-            (false, self)
+            false
         }
     }
+
 }
 
 /// 自定义事件。
@@ -755,11 +765,13 @@ pub(crate) trait LinedData {
     /// ```
     fn set_binary_data(&mut self, binary_data: Vec<u8>);
 
+
     /// 检测是否位于可视窗口范围内。
     ///
     /// # Arguments
     ///
-    /// * `view_bounds`:
+    /// * `top_y`: 面板顶部y轴偏移量。
+    /// * `bottom_y`: 面板底部y轴偏移量。
     ///
     /// returns: bool
     ///
@@ -770,22 +782,39 @@ pub(crate) trait LinedData {
     /// ```
     fn is_visible(&self, top_y: i32, bottom_y: i32) -> bool;
 
+
     /// 绘制内容。
     ///
     /// # Arguments
     ///
-    /// * `suggested`: 建议的绘制参考信息，包括起始x,y位置，行高和行间距。
+    /// * `offset_y`: 面板相对于数据的y轴偏移量。
+    /// * `blink_state`: 面板范围内的闪烁状态。
     ///
-    /// returns: LineCoord 返回给下一个绘制单元的参考信息，包含本次绘制的结束位置x，y坐标和本单元的行高、行间距。
+    /// returns: ()
     ///
     /// # Examples
     ///
     /// ```
     ///
     /// ```
-    fn draw(&self, offset_y: i32, blink_state: BlinkState);
+    fn draw(&self, offset_y: i32, blink_state: &BlinkState);
 
-    fn estimate(&mut self, blow_line: Rc<RefCell<LinePiece>>, max_width: i32) -> Rc<RefCell<LinePiece>>;
+    /// 试算当前内容绘制后所占高度信息。
+    /// 试算功能自动处理文本超宽时截断换行的逻辑。
+    ///
+    /// # Arguments
+    ///
+    /// * `last_piece`: 前一个数据片段，用于计算当前数据段的绘制坐标。每个数据段和数据片段都是按照缓存数据的顺序依次计算得到。
+    /// * `max_width`: 可视区域最大宽度，不含padding宽度。
+    ///
+    /// returns: ()
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
+    fn estimate(&mut self, last_piece: Rc<RefCell<LinePiece>>, max_width: i32) -> Rc<RefCell<LinePiece>>;
 
 }
 
@@ -1361,7 +1390,7 @@ impl LinedData for RichData {
         !(b.1 < top_y || b.0 > bottom_y)
     }
 
-    fn draw(&self, offset_y: i32, blink_state: BlinkState) {
+    fn draw(&self, offset_y: i32, blink_state: &BlinkState) {
         match self.data_type {
             DataType::Text => {
                 let bg_offset = 1;
@@ -1414,9 +1443,9 @@ impl LinedData for RichData {
                     // 绘制查找焦点框
                     if let Some(ref pos_vec) = self.search_result_positions {
                         let rect_color = if blink_state.next == BlinkDegree::Normal {
-                            HIGHLIGHT_RECT_COLOR
+                            blink_state.focus_boarder_color
                         } else {
-                            HIGHLIGHT_RECT_CONTRAST_COLOR
+                            blink_state.focus_boarder_contrast_color
                         };
                         let pl = piece.line.chars().count();
                         let range = processed_search_len..(processed_search_len + pl);
@@ -1426,23 +1455,34 @@ impl LinedData for RichData {
                                 let (skip_width, _) = measure(piece.line.chars().take(start_index_of_piece).collect::<String>().as_str(), false);
                                 let (fill_width, _) = measure(piece.line.chars().skip(start_index_of_piece).take(pos_to - pos_from).collect::<String>().as_str(), false);
 
-                                set_draw_color(HIGHLIGHT_BACKGROUND_COLOR);
-                                #[cfg(target_os = "linux")]
+                                set_draw_color(blink_state.focus_background_color);
+                                #[cfg(not(target_os = "windows"))]
                                 {
-                                    draw_rectf(piece.x + skip_width, y - piece.spacing + 2, fill_width, piece.font_height);
+                                    // draw_rectf(piece.x + skip_width, y - piece.spacing + 2, fill_width, piece.font_height);
+                                    draw_rounded_rectf(piece.x + skip_width, y - piece.spacing + 2, fill_width, piece.font_height, HIGHLIGHT_ROUNDED_RECT_RADIUS);
                                     if let Some(h_i) = self.search_highlight_pos {
                                         if h_i == pos_i {
-                                            draw_rect_with_color(piece.x + skip_width, y - piece.spacing + 2, fill_width, piece.font_height, rect_color);
+                                            // debug!("blink1: {:?}", blink_state);
+                                            set_draw_color(rect_color);
+                                            set_line_style(LineStyle::Solid, blink_state.focus_boarder_width);
+                                            // draw_rect_with_color(piece.x + skip_width, y - piece.spacing + 2, fill_width, piece.font_height, rect_color);
+                                            draw_rounded_rect(piece.x + skip_width, y - piece.spacing + 2, fill_width, piece.font_height, HIGHLIGHT_ROUNDED_RECT_RADIUS);
+                                            set_line_style(LineStyle::Solid, 0);
                                         }
                                     }
                                 }
 
-                                #[cfg(not(target_os = "linux"))]
+                                #[cfg(target_os = "windows")]
                                 {
-                                    draw_rectf(piece.x + skip_width, y - piece.spacing, fill_width, piece.font_height);
+                                    // draw_rectf(piece.x + skip_width, y - piece.spacing, fill_width, piece.font_height);
+                                    draw_rounded_rectf(piece.x + skip_width, y - piece.spacing, fill_width, piece.font_height, HIGHLIGHT_ROUNDED_RECT_RADIUS);
                                     if let Some(h_i) = self.search_highlight_pos {
                                         if h_i == pos_i {
-                                            draw_rect_with_color(piece.x + skip_width, y - piece.spacing, fill_width, piece.font_height, rect_color);
+                                            set_draw_color(rect_color);
+                                            set_line_style(LineStyle::Solid, blink_state.focus_boarder_width);
+                                            // draw_rect_with_color(piece.x + skip_width, y - piece.spacing, fill_width, piece.font_height, rect_color);
+                                            draw_rounded_rect(piece.x + skip_width, y - piece.spacing, fill_width, piece.font_height, HIGHLIGHT_ROUNDED_RECT_RADIUS);
+                                            set_line_style(LineStyle::Solid, 0);
                                         }
                                     }
                                 }
@@ -1450,11 +1490,16 @@ impl LinedData for RichData {
                             } else if range.contains(pos_to) {
                                 let (fill_width, _) = measure(piece.line.chars().take(pos_to - processed_search_len).collect::<String>().as_str(), false);
 
-                                set_draw_color(HIGHLIGHT_BACKGROUND_COLOR);
-                                draw_rectf(piece.x, y - piece.spacing, fill_width, piece.font_height);
+                                set_draw_color(blink_state.focus_background_color);
+                                // draw_rectf(piece.x, y - piece.spacing, fill_width, piece.font_height);
+                                draw_rounded_rectf(piece.x, y - piece.spacing, fill_width, piece.font_height, HIGHLIGHT_ROUNDED_RECT_RADIUS);
                                 if let Some(h_i) = self.search_highlight_pos {
                                     if h_i == pos_i {
-                                        draw_rect_with_color(piece.x, y - piece.spacing, fill_width, piece.font_height, rect_color);
+                                        set_draw_color(rect_color);
+                                        set_line_style(LineStyle::Solid, blink_state.focus_boarder_width);
+                                        // draw_rect_with_color(piece.x, y - piece.spacing, fill_width, piece.font_height, rect_color);
+                                        draw_rounded_rect(piece.x, y - piece.spacing, fill_width, piece.font_height, HIGHLIGHT_ROUNDED_RECT_RADIUS);
+                                        set_line_style(LineStyle::Solid, 0);
                                     }
                                 }
                             }
@@ -1516,7 +1561,7 @@ impl LinedData for RichData {
     ///
     /// # Arguments
     ///
-    /// * `last_line`: 给定一个参考位置。
+    /// * `last_piece`: 前一个数据片段，用于计算当前数据段的绘制坐标。每个数据段和数据片段都是按照缓存数据的顺序依次计算得到。
     /// * `max_width`: 可视区域最大宽度，不含padding宽度。
     ///
     /// returns: ()
@@ -1617,7 +1662,7 @@ impl LinedData for RichData {
                     let y = top_y + last_piece.through_line.borrow().max_h + IMAGE_PADDING_V;
                     let next_x = x + self.image_width + IMAGE_PADDING_H;
                     let next_y = y - IMAGE_PADDING_V;
-                    let piece_top_y = y;
+                    let piece_top_y = y - IMAGE_PADDING_V;
                     let through_line = ThroughLine::new(self.image_height * IMAGE_PADDING_V * 2, true);
                     let new_piece = LinePiece::new("".to_string(), x, y, self.image_width, self.image_height, piece_top_y, last_piece.spacing, next_x, next_y, 1, font, font_size, through_line, self.v_bounds.clone());
                     self.line_pieces.push(new_piece.clone());
@@ -1628,7 +1673,7 @@ impl LinedData for RichData {
                     if last_piece.line.ends_with("\n") {
                         // 定位在行首
                         let y = top_y + IMAGE_PADDING_V;
-                        let piece_top_y = y;
+                        let piece_top_y = y - IMAGE_PADDING_V;
                         let through_line = ThroughLine::new(self.image_height * IMAGE_PADDING_V * 2, true);
                         let new_piece = LinePiece::new("".to_string(), x, y, self.image_width, self.image_height, piece_top_y, last_piece.spacing, next_x, top_y, 1, font, font_size, through_line, self.v_bounds.clone());
                         self.line_pieces.push(new_piece.clone());
@@ -1646,7 +1691,7 @@ impl LinedData for RichData {
                             raw_y += up;
                         }
                         let y = raw_y;
-                        let piece_top_y = y;
+                        let piece_top_y = y - IMAGE_PADDING_V;
                         let through_line = ThroughLine::create_or_update(PADDING.left + IMAGE_PADDING_H, x, self.image_height * IMAGE_PADDING_V * 2, ret, true);
                         let new_piece = LinePiece::new("".to_string(), x, y, self.image_width, self.image_height, piece_top_y, last_piece.spacing, next_x, top_y + IMAGE_PADDING_V, 1, font, font_size, through_line, self.v_bounds.clone());
                         self.line_pieces.push(new_piece.clone());
@@ -1710,20 +1755,23 @@ impl LinedData for RichData {
         }
 
         // let mut pic_y = 0;
-        let mut top_y = top_y;
-        if let Some(first_piece) = self.line_pieces.first() {
+        let v_b_top_y = if let Some(first_piece) = self.line_pieces.first() {
             let fp = &*first_piece.borrow();
-            top_y = fp.top_y;
+            fp.top_y
             // pic_y = fp.y;
-        }
-        let mut bottom_y = top_y;
-        if let Some(last_piece) = self.line_pieces.last() {
+        } else {
+            top_y
+        };
+        let v_b_bottom_y = if let Some(last_piece) = self.line_pieces.last() {
             let lp = &*last_piece.borrow();
-            bottom_y = lp.top_y + lp.through_line.borrow().max_h;
+            let bottom_y = lp.top_y + lp.through_line.borrow().max_h;
             bound_end_x = lp.x + lp.w;
-        }
-        // debug!("estimated pic_y: {pic_y}, top_y: {}, bottom_y: {}, text: {}", top_y, bottom_y, self.text);
-        self.set_v_bounds(top_y, bottom_y, bound_start_x, bound_end_x);
+            bottom_y
+        } else {
+            v_b_top_y
+        };
+        // debug!("estimated v_b_top_y: {v_b_top_y}, v_b_bottom_y: {v_b_bottom_y}, bound_start_x: {bound_start_x}, bound_end_x: {bound_end_x}, text: {}", self.text);
+        self.set_v_bounds(v_b_top_y, v_b_bottom_y, bound_start_x, bound_end_x);
         ret
     }
 }

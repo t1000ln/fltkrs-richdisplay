@@ -3,6 +3,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
 use std::rc::{Rc, Weak};
+use std::time::Duration;
 
 use fltk::draw::{draw_rect_fill, Offscreen};
 use fltk::enums::{Color, Cursor, Event, Font};
@@ -15,12 +16,19 @@ use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_ent
 
 use idgenerator_thin::{IdGeneratorOptions, YitIdHelper};
 use log::{error};
+use throttle_my_fn::throttle;
 use crate::rich_reviewer::RichReviewer;
 use crate::utils::ID_GENERATOR_INIT;
 
 
 pub const MAIN_PANEL_FIX_HEIGHT: i32 = 200;
 pub const PANEL_PADDING: i32 = 8;
+
+#[derive(Debug, Clone)]
+struct ThrottleHolder {
+    pub last_rid: i64,
+    pub current_rid: i64,
+}
 
 /// rich-display主面板结构。
 ///
@@ -37,13 +45,15 @@ pub struct RichText {
     clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
     /// 主面板上可见行片段的集合容器，在每次离线绘制时被清空和填充。
     visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
-    blink_flag: Rc<Cell<BlinkState>>,
+    blink_flag: Rc<RefCell<BlinkState>>,
     /// 默认字体。
     text_font: Rc<Cell<Font>>,
     /// 默认字体颜色。
     text_color: Rc<Cell<Color>>,
     text_size: Rc<Cell<i32>>,
     piece_spacing: Rc<Cell<i32>>,
+    throttle_holder: Rc<RefCell<ThrottleHolder>>,
+    enable_blink: Rc<Cell<bool>>,
 }
 widget_extends!(RichText, Flex, inner);
 
@@ -86,9 +96,11 @@ impl RichText {
         let notifier: Rc<RefCell<Option<Callback>>> = Rc::new(RefCell::new(None));
         let selected = Rc::new(Cell::new(false));
         let should_resize_content = Rc::new(Cell::new(0));
+        let throttle_holder = Rc::new(RefCell::new(ThrottleHolder { last_rid: 0, current_rid: 0 }));
+        let enable_blink = Rc::new(Cell::new(true));
 
-
-        let blink_flag = Rc::new(Cell::new(BlinkState::new()));
+        // 数据段闪烁控制器
+        let blink_flag = Rc::new(RefCell::new(BlinkState::new()));
         let blink_handler = {
             let blink_flag_rc = blink_flag.clone();
             let mut panel_rc = panel.clone();
@@ -97,22 +109,25 @@ impl RichText {
             let clickable_data_rc = clickable_data.clone();
             let bg_rc = background_color.clone();
             let buffer_rc = data_buffer.clone();
+            let enable_blink_rc = enable_blink.clone();
             move |handler| {
                 if !panel_rc.was_deleted() {
-                    let (should_toggle, bs) = blink_flag_rc.get().toggle_when_on();
-                    if should_toggle {
-                        blink_flag_rc.set(bs);
-                        // debug!("from main panel blink flag: {:?}", blink_flag_rc.get());
-                        Self::draw_offline(
-                            screen_rc.clone(),
-                            &panel_rc,
-                            visible_lines_rc.clone(),
-                            clickable_data_rc.clone(),
-                            bg_rc.get(),
-                            buffer_rc.clone(),
-                            blink_flag_rc.clone(),
-                        );
-                        panel_rc.set_damage(true);
+                    if enable_blink_rc.get() {
+                        let should_toggle = blink_flag_rc.borrow_mut().toggle_when_on();
+                        if should_toggle {
+                            // blink_flag_rc.set(bs);
+                            // debug!("from main panel blink flag: {:?}", blink_flag_rc.get());
+                            Self::draw_offline(
+                                screen_rc.clone(),
+                                &mut panel_rc,
+                                visible_lines_rc.clone(),
+                                clickable_data_rc.clone(),
+                                bg_rc.get(),
+                                buffer_rc.clone(),
+                                blink_flag_rc.clone(),
+                            );
+                            panel_rc.set_damage(true);
+                        }
                     }
                     app::repeat_timeout3(BLINK_INTERVAL, handler);
                 } else {
@@ -121,6 +136,46 @@ impl RichText {
             }
         };
         app::add_timeout3(BLINK_INTERVAL, blink_handler);
+
+        // 限流刷新补漏器。限流功能是先执行后限流，导致限流时段内后来的数据不能正确刷新，所以要在这里检测补漏。
+        // 理论上来说使用debounce防抖技术才适应本场景，但是目前没有合适的debounce包可用-_-!
+        let throttle_leak_handler = {
+            let throttle_holder_rc = throttle_holder.clone();
+            let mut panel_rc = panel.clone();
+            let screen_rc = panel_screen.clone();
+            let visible_lines_rc = visible_lines.clone();
+            let clickable_data_rc = clickable_data.clone();
+            let bg_rc = background_color.clone();
+            let buffer_rc = data_buffer.clone();
+            let blink_flag_rc = blink_flag.clone();
+            move |handler| {
+                let last_id = throttle_holder_rc.borrow().last_rid;
+                let current_id = throttle_holder_rc.borrow().current_rid;
+                // debug!("last_id: {:?}, current_id: {:?}", last_id, current_id);
+                if current_id != 0 {
+                    if last_id != current_id {
+                        throttle_holder_rc.borrow_mut().last_rid = current_id;
+                    } else {
+                        // debug!("检测到待刷新的数据");
+                        Self::draw_offline(
+                            screen_rc.clone(),
+                            &mut panel_rc,
+                            visible_lines_rc.clone(),
+                            clickable_data_rc.clone(),
+                            bg_rc.get(),
+                            buffer_rc.clone(),
+                            blink_flag_rc.clone(),
+                        );
+                        panel_rc.set_damage(true);
+                        throttle_holder_rc.borrow_mut().current_rid = 0;
+                        throttle_holder_rc.borrow_mut().last_rid = 0;
+                    }
+                }
+
+                app::repeat_timeout3(0.04f64, handler);
+            }
+        };
+        app::add_timeout3(0.04f64, throttle_leak_handler);
 
         panel.draw({
             let screen_rc = panel_screen.clone();
@@ -163,6 +218,8 @@ impl RichText {
             let notifier_rc = notifier.clone();
             let should_resize = should_resize_content.clone();
             let selected_rc = selected.clone();
+            let enable_blink_rc = enable_blink.clone();
+            let blink_flag_rc = blink_flag.clone();
             move |flex, evt| {
                 if evt == LocalEvent::DROP_REVIEWER_FROM_EXTERNAL.into() {
                     // 隐藏回顾区
@@ -175,6 +232,8 @@ impl RichText {
                     true
                 } else if evt == LocalEvent::OPEN_REVIEWER_FROM_EXTERNAL.into() {
                     let mut reviewer = RichReviewer::new(0, 0, flex.width(), flex.height() - MAIN_PANEL_FIX_HEIGHT, None);
+                    reviewer.set_enable_blink(enable_blink_rc.get());
+                    reviewer.set_blink_state(blink_flag_rc.borrow().clone());
                     reviewer.set_background_color(bg_rc.get());
                     if let Some(notifier_rc) = notifier_rc.borrow().as_ref() {
                         reviewer.set_notifier(notifier_rc.clone());
@@ -220,6 +279,8 @@ impl RichText {
                             if app::event_dy() == MouseWheel::Down && !buffer_rc.borrow().is_empty() && reviewer_rc.borrow().is_none() {
                                 // 显示回顾区
                                 let mut reviewer = RichReviewer::new(0, 0, flex.width(), flex.height() - MAIN_PANEL_FIX_HEIGHT, None);
+                                reviewer.set_enable_blink(enable_blink_rc.get());
+                                reviewer.set_blink_state(blink_flag_rc.borrow().clone());
                                 reviewer.set_background_color(bg_rc.get());
                                 if let Some(notifier_rc_ref) = notifier_rc.borrow_mut().as_mut() {
                                     let cb = notifier_rc_ref.clone();
@@ -335,7 +396,7 @@ impl RichText {
                             clear_selected_pieces(selected_pieces.clone());
                             Self::draw_offline(
                                 screen_rc.clone(),
-                                &ctx,
+                                ctx,
                                 visible_lines_rc.clone(),
                                 clickable_data_rc.clone(),
                                 bg_rc.get(),
@@ -380,7 +441,7 @@ impl RichText {
                                 // debug!("{need_redraw}");
                                 Self::draw_offline(
                                     screen_rc.clone(),
-                                    &ctx,
+                                    ctx,
                                     visible_lines_rc.clone(),
                                     clickable_data_rc.clone(),
                                     bg_rc.get(),
@@ -398,7 +459,7 @@ impl RichText {
             }
         });
 
-        Self { panel, data_buffer, background_color, buffer_max_lines, notifier, inner, reviewer, panel_screen, visible_lines, clickable_data, blink_flag, text_font, text_color, text_size, piece_spacing}
+        Self { panel, data_buffer, background_color, buffer_max_lines, notifier, inner, reviewer, panel_screen, visible_lines, clickable_data, blink_flag, text_font, text_color, text_size, piece_spacing, throttle_holder, enable_blink }
     }
 
     /// 计算当前数据缓存的高度超出目标面板的高度差。
@@ -501,12 +562,26 @@ impl RichText {
             rich_data.estimate(last_piece, drawable_max_width);
         }
 
+        self.throttle_holder.borrow_mut().current_rid = rich_data.id;
+
         self.data_buffer.borrow_mut().push_back(rich_data);
         if self.data_buffer.borrow().len() > self.buffer_max_lines {
             self.data_buffer.borrow_mut().pop_front();
         }
 
-        Self::draw_offline_2(&self);
+
+        if let None = Self::draw_offline_2(
+            self.throttle_holder.clone(),
+            self.panel_screen.clone(),
+            &mut self.panel,
+            self.visible_lines.clone(),
+            self.clickable_data.clone(),
+            self.background_color.get(),
+            self.data_buffer.clone(),
+            self.blink_flag.clone()
+        ) {
+            // debug!("已忽略当前刷新请求");
+        }
 
         // self.panel.redraw();
         self.panel.set_damage(true);
@@ -516,9 +591,20 @@ impl RichText {
 
     /// 删除最后一个数据段。
     pub fn delete_last_data(&mut self) {
-        self.data_buffer.borrow_mut().pop_back();
-        Self::draw_offline_2(&self);
-        self.panel.set_damage(true);
+        if let Some(rich_data) = self.data_buffer.borrow_mut().pop_back() {
+            self.throttle_holder.borrow_mut().current_rid = rich_data.id;
+            Self::draw_offline_2(
+                self.throttle_holder.clone(),
+                self.panel_screen.clone(),
+                &mut self.panel,
+                self.visible_lines.clone(),
+                self.clickable_data.clone(),
+                self.background_color.get(),
+                self.data_buffer.clone(),
+                self.blink_flag.clone()
+            );
+            self.panel.set_damage(true);
+        }
     }
 
 
@@ -563,7 +649,11 @@ impl RichText {
     /// ```
     pub fn search_str(&mut self, search_str: Option<String>, forward: bool) -> bool {
         let mut find_out = false;
-        if let Ok(open_suc) = self.auto_open_reviewer() {
+        if search_str.is_none() {
+            if let Some(rr) = &mut *self.reviewer.borrow_mut() {
+                rr.clear_search_results();
+            }
+        } else if let Ok(open_suc) = self.auto_open_reviewer() {
             if let Some(ref mut rr) = *self.reviewer.borrow_mut() {
                 if let Some(search_str) = search_str {
                     if !search_str.is_empty() {
@@ -589,25 +679,25 @@ impl RichText {
 
     fn new_offline(
         w: i32, h: i32, offscreen: Rc<RefCell<Offscreen>>,
-        panel: &Widget,
+        panel: &mut Widget,
         visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
         clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
         bg_color: Color, data_buffer: Rc<RefCell<VecDeque<RichData>>>,
-        blink_flag: Rc<Cell<BlinkState>>
+        blink_flag: Rc<RefCell<BlinkState>>
         ) {
         if let Some(offs) = Offscreen::new(w, h) {
             offscreen.replace(offs);
-            Self::draw_offline(offscreen.clone(), &panel, visible_lines.clone(), clickable_data, bg_color, data_buffer.clone(), blink_flag);
+            Self::draw_offline(offscreen.clone(), panel, visible_lines.clone(), clickable_data, bg_color, data_buffer.clone(), blink_flag);
         }
     }
 
     fn draw_offline(
         offscreen: Rc<RefCell<Offscreen>>,
-        panel: &Widget,
+        panel: &mut Widget,
         visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
         clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
         bg_color: Color, data_buffer: Rc<RefCell<VecDeque<RichData>>>,
-        blink_flag: Rc<Cell<BlinkState>>) {
+        blink_flag: Rc<RefCell<BlinkState>>) {
 
         offscreen.borrow().begin();
         let (panel_x, panel_y, window_width, window_height) = (panel.x(), panel.y(), panel.width(), panel.height());
@@ -650,7 +740,7 @@ impl RichText {
                 }
             }
 
-            rich_data.draw(offset_y, blink_flag.get());
+            rich_data.draw(offset_y, &*blink_flag.borrow());
 
             if !need_blink && rich_data.blink {
                 need_blink = true;
@@ -664,13 +754,9 @@ impl RichText {
 
         // 更新闪烁标记
         if need_blink {
-            let bs = blink_flag.get();
-            blink_flag.set(bs.on());
+            blink_flag.borrow_mut().on();
         } else {
-            let bs = blink_flag.get();
-            if bs.is_on() {
-                blink_flag.set(bs.off());
-            }
+            blink_flag.borrow_mut().off();
         }
     }
 
@@ -734,15 +820,26 @@ impl RichText {
         self.notifier.replace(Some(callback));
     }
 
-    pub(crate) fn draw_offline_2(&self) {
-        Self::draw_offline(
-            self.panel_screen.clone(),
-            &self.panel,
-            self.visible_lines.clone(),
-            self.clickable_data.clone(),
-            self.background_color.get(),
-            self.data_buffer.clone(),
-            self.blink_flag.clone()
+    #[throttle(1, Duration::from_millis(30))]
+    pub(crate) fn draw_offline_2(
+        throttle_holder: Rc<RefCell<ThrottleHolder>>,
+        offscreen: Rc<RefCell<Offscreen>>,
+        panel: &mut Widget,
+        visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
+        clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
+        bg_color: Color,
+        data_buffer: Rc<RefCell<VecDeque<RichData>>>,
+        blink_flag: Rc<RefCell<BlinkState>>
+    ) {
+        throttle_holder.borrow_mut().current_rid = 0;
+        RichText::draw_offline(
+            offscreen,
+            panel,
+            visible_lines,
+            clickable_data,
+            bg_color,
+            data_buffer,
+            blink_flag
         );
     }
 
@@ -823,7 +920,17 @@ impl RichText {
             if let Some(rd) = self.data_buffer.borrow_mut().get_mut(target_idx) {
                 update_data_properties(options.clone(), rd);
             }
-            self.draw_offline_2();
+            self.throttle_holder.borrow_mut().current_rid = options.id;
+            Self::draw_offline_2(
+                self.throttle_holder.clone(),
+                self.panel_screen.clone(),
+                &mut self.panel,
+                self.visible_lines.clone(),
+                self.clickable_data.clone(),
+                self.background_color.get(),
+                self.data_buffer.clone(),
+                self.blink_flag.clone()
+            );
         }
 
         if let Some(reviewer) = self.reviewer.borrow_mut().as_mut() {
@@ -913,7 +1020,17 @@ impl RichText {
                 disable_data(rd);
             }
 
-            self.draw_offline_2();
+            self.throttle_holder.borrow_mut().current_rid = id;
+            Self::draw_offline_2(
+                self.throttle_holder.clone(),
+                self.panel_screen.clone(),
+                &mut self.panel,
+                self.visible_lines.clone(),
+                self.clickable_data.clone(),
+                self.background_color.get(),
+                self.data_buffer.clone(),
+                self.blink_flag.clone()
+            );
         }
 
         if let Some(reviewer) = self.reviewer.borrow_mut().as_mut() {
@@ -1020,6 +1137,7 @@ impl RichText {
     /// app.run().unwrap();
     /// ```
     pub fn auto_open_reviewer(&self) -> Result<bool, FltkError> {
+
         return if !self.data_buffer.borrow().is_empty() && self.reviewer.borrow().is_none() {
             let handle_result = app::handle_main(LocalEvent::OPEN_REVIEWER_FROM_EXTERNAL);
             match handle_result {
@@ -1145,5 +1263,73 @@ impl RichText {
     /// 可以在app中使用的获取雪花流水号的工具方法。
     pub fn get_next_sn(&self) -> i64 {
         YitIdHelper::next_id()
+    }
+
+    /// 设置启用或禁用闪烁支持。
+    ///
+    /// # Arguments
+    ///
+    /// * `enable`:
+    ///
+    /// returns: ()
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
+    pub fn set_enable_blink(&mut self, enable: bool) {
+        self.enable_blink.set(enable);
+        if let Some(reviewer) = self.reviewer.borrow_mut().as_mut() {
+            reviewer.set_enable_blink(enable);
+        }
+    }
+
+    /// 启用或禁用闪烁，切换状态。
+    pub fn toggle_blink(&mut self) {
+        let toggle = !self.enable_blink.get();
+        self.enable_blink.set(toggle);
+        if let Some(reviewer) = self.reviewer.borrow_mut().as_mut() {
+            reviewer.set_enable_blink(toggle);
+        }
+    }
+
+    pub fn set_search_focus_color(&mut self, color: Color) {
+        self.blink_flag.borrow_mut().focus_boarder_color = color;
+        if let Some(reviewer) = &mut *self.reviewer.borrow_mut() {
+            reviewer.set_search_focus_color(color);
+        }
+    }
+
+    pub fn set_search_focus_contrast(&mut self, contrast: Color) {
+        self.blink_flag.borrow_mut().focus_boarder_contrast_color = contrast;
+        if let Some(reviewer) = &mut *self.reviewer.borrow_mut() {
+            reviewer.set_search_focus_contrast(contrast);
+        }
+    }
+
+    pub fn set_search_focus_color_and_contrast(&mut self, color: Color, contrast: Color) {
+        let mut bf = self.blink_flag.borrow_mut();
+        bf.focus_boarder_color = color;
+        bf.focus_boarder_contrast_color = contrast;
+
+        if let Some(reviewer) = &mut *self.reviewer.borrow_mut() {
+            reviewer.set_search_focus_color(color);
+            reviewer.set_search_focus_contrast(contrast);
+        }
+    }
+
+    pub fn set_search_focus_width(&mut self, width: u8) {
+        self.blink_flag.borrow_mut().focus_boarder_width = width as i32;
+        if let Some(reviewer) = &mut *self.reviewer.borrow_mut() {
+            reviewer.set_search_focus_width(width);
+        }
+    }
+
+    pub fn set_search_focus_background_color(&mut self, background: Color) {
+        self.blink_flag.borrow_mut().focus_background_color = background;
+        if let Some(reviewer) = &mut *self.reviewer.borrow_mut() {
+            reviewer.set_search_focus_background(background);
+        }
     }
 }

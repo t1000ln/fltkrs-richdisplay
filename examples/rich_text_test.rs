@@ -1,6 +1,5 @@
 //! richdisplay包的测试应用。
 
-use std::time::Duration;
 use fltk::{app, window};
 use fltk::button::Button;
 use fltk::enums::{Color, Event, Font, Key};
@@ -37,17 +36,25 @@ async fn main() {
     let mut btn1 = Button::new(200, 0, 100, 30, "反向查找字符串");
     let mut btn11 = Button::new(500, 0, 100, 30, "清除查找目标");
     let mut btn12 = Button::new(350, 0, 100, 30, "正向查找字符串");
+    let mut btn2 = Button::new(650, 0, 100, 30, "切换闪烁支持");
+
 
 
     let _ = Button::new(0, 200, 50, 30, "left");
 
     let mut rich_text = RichText::new(100, 60, 800, 400, None);
+    // let mut rich_text = RichText::new(100, 60, 1600, 800, None);
 
     // 设置默认字体和颜色
     rich_text.set_text_font(Font::Courier);
     rich_text.set_text_color(Color::White);
     rich_text.set_text_size(20);
+    // rich_text.set_enable_blink(false);
+    // rich_text.set_search_focus_width(2);
+    rich_text.set_search_focus_color(Color::White);
+    // rich_text.set_search_focus_contrast(Color::Dark1);
     // rich_text.set_piece_spacing(20);
+    rich_text.set_cache_size(200);
 
     // 应用层消息通道，该通道负责两个方向的消息传递：1将应用层产生的消息向下传递给fltk组件层通道，2将fltk组件层产生的事件消息向上传递给应用层。
     let (action_sender, action_receiver) = tokio::sync::mpsc::channel::<UserData>(100);
@@ -64,11 +71,14 @@ async fn main() {
         }
     };
     rich_text.set_notifier(cb_fn);
-    rich_text.set_cache_size(1000);
+
 
     let mut rich_text2 = RichText::new(980, 60, 800, 400, None);
     let mut rich_text3 = RichText::new(100, 560, 800, 300, None);
     let mut rich_text4 = RichText::new(980, 560, 400, 400, None);
+    rich_text2.set_enable_blink(false);
+    rich_text3.set_enable_blink(false);
+    rich_text4.set_enable_blink(false);
 
     btn1.set_callback({
         let mut rt = rich_text.clone();
@@ -79,13 +89,20 @@ async fn main() {
     btn12.set_callback({
         let mut rt = rich_text.clone();
         move |_| {
-            rt.search_str(Some("高效".to_string()), true);
+            rt.search_str(Some("程序".to_string()), true);
         }
     });
     btn11.set_callback({
         let mut rt = rich_text.clone();
         move |_| {
             rt.search_str(None, false);
+        }
+    });
+
+    btn2.set_callback({
+        let mut rt = rich_text.clone();
+        move |_| {
+            rt.toggle_blink();
         }
     });
 
@@ -144,11 +161,11 @@ async fn main() {
     let (img2_width, img2_height, img2_data) = (img2.width(), img2.height(), img2.to_rgb_data());
     // 异步生成模拟数据，将数据发送给fltk消息通道。
     tokio::spawn(async move {
-        for i in 0..3 {
+        for i in 0..30 {
             let turn = i * 15;
             let mut data: Vec<UserData> = Vec::from([
                 UserData::new_text(format!("{}安全并且高效地处理𝄞并发编程是Rust的另一个主要目标。💖并发编程和并行编程这两种概念随着计算机设备的多核a优化而变得越来越重要。并发编程🐉允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 0)).set_bg_color(Some(Color::DarkCyan)),
-                UserData::new_text(format!("{}安全并且高效地处理𝄞并发编程是Rust的另一个主要目标。💖并发编程和并行编程这两种概念随着计算机设备的多核a优化而变得越来越重要。并发编程🐉允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 1)).set_underline(true).set_font(Font::Helvetica, 38).set_bg_color(Some(Color::DarkYellow)).set_clickable(true),
+                UserData::new_text(format!("{}安全并且高效地处理𝄞并发编程是Rust的另一个主要目标。程序。💖并发编程和并行编程这两种概念随着计算机设备的多核a优化而变得越来越重要。并发编程🐉允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 1)).set_underline(true).set_font(Font::Helvetica, 38).set_bg_color(Some(Color::DarkYellow)).set_clickable(true),
                 UserData::new_text(format!("{}在大部分现在操作系统中，执行程序的代码会运行在进程中，操作系统会同时管理多个进程。类似地，程序内部也可以拥有多个同时运行的独立部分，用来运行这些独立部分的就叫做线程。", turn + 2)).set_font(Font::HelveticaItalic, 18).set_bg_color(Some(Color::Green)),
                 UserData::new_image(img1_data.clone(), img1_width, img1_height),
                 UserData::new_text(format!("{}由于多线程可以同时运行，🐉所以将计算操作拆分至多个线程可以提高性能。a但是这也增加了程序的复杂度，因为不同线程的执行顺序是无法确定的。\r\n", turn + 3)).set_fg_color(Color::Red).set_bg_color(Some(Color::Green)).set_underline(true),
@@ -166,18 +183,20 @@ async fn main() {
                 UserData::new_text(format!("{}由于多线程可以同时运行，所以将计算操作拆分至多个线程可以提高性能。", turn + 13)).set_fg_color(Color::Red).set_bg_color(Some(Color::Green)).set_clickable(true),
                 UserData::new_text(format!("{}由于多线程可以同时运行，💖所以将计算操作拆分至多个线程可以提高性能。", turn + 14)).set_fg_color(Color::Cyan).set_font(Font::Courier, 18).set_clickable(true).set_blink(true),
                 // UserData::new_text(format!("{}由于多线程可以同时运行，💖所以将计算操作拆分至多个线程可以提高性能。", turn + 14)).set_fg_color(Color::Cyan).set_font(Font::Courier, 18).set_clickable(true),
-                UserData::new_text(format!("{}由于多线程可以@同时运行，💖所以将计算操作拆分至多个线程可以提高性能。", turn + 15)),
+                UserData::new_text(format!("{}由于多线程可以~!@#$%^&同时运行，💖所以将计算操作拆分至多个线程可以提高性能。", turn + 15)),
                 UserData::new_image(img2_data.clone(), img2_width, img2_height).set_clickable(true).set_blink(true),
                 // UserData::new_image(img2_data.clone(), img2_width, img2_height).set_clickable(true),
             ]);
             data.reverse();
             while let Some(data_unit) = data.pop() {
                 global_sender.send(GlobalMessage::ContentData(data_unit));
-                tokio::time::sleep(Duration::from_millis(2)).await;
+
+                // 若系统硬件配置不高，这里可适当增加消息发送间隔。
+                // tokio::time::sleep(Duration::from_millis(2)).await;
             }
         }
 
-        debug!("Sender closed");
+        debug!("Sender closed.");
     });
 
     let mut r = thread_rng();
@@ -188,7 +207,7 @@ async fn main() {
         if let Some(msg) = global_receiver.recv() {
             match msg {
                 GlobalMessage::ContentData(data) => {
-                    // 新增数据段
+                    // 新增数据段，按近似比例发布到不同的窗口
                     if r.gen_bool(0.45f64) {
                         rich_text2.append(data.clone());
                     }

@@ -14,6 +14,7 @@
 - 主视图内容是单向流水式显示，回顾区视图为历史数据提供静态查看能力。
 - 支持内容闪烁，图片灰度变换。
 - 支持大数据量懒加载模式，按需加载/卸载分页化的数据。
+- 兼容`fluid`设计器自动生成的代码。
 
 目前版本主视图的最小高度为200px(跟随系统缩放比例)。
 
@@ -26,13 +27,40 @@ fltk = "1.4"
 fltkrs-richdisplay = "0.3"
 ```
 
-由于下面的`examples`示例用到`tokio`框架进行异步交互，并且简单输出日志，所以需要额外添加依赖:
+创建组件示例：
+```rust
+use fltk::{app, window};
+use fltk::button::Button;
+use fltk::enums::{Color, Event, Font, Key};
+use fltk::group::Group;
+use fltk::image::SharedImage;
+use fltk::prelude::{GroupExt, ImageExt, WidgetBase, WidgetExt, WindowExt};
+
+#[tokio::main]
+async fn main() {
+    simple_logger::init_with_level(log::Level::Debug).unwrap();
+    let app = app::App::default();
+    let mut win = window::Window::default()
+        .with_size(1000, 600)
+        .with_label("rich-display example")
+        .center_screen();
+    win.make_resizable(true);
+
+    let mut rich_text = RichText::new(100, 120, 800, 400, None);
+    
+    win.end();
+    win.show();
+    
+    app.run().unwrap();
+}
+```
+
+另一个略微复制的演示代码，需要添加额外的依赖：
 ```toml
 [dev-dependencies]
 simple_logger = "4.2"
 tokio = { version = "1.32", features = ["full"] }
 ```
-
 示例代码：
 ```rust
 use std::time::Duration;
@@ -252,7 +280,7 @@ pub fn handle_action(mut action_receiver: tokio::sync::mpsc::Receiver<UserData>,
     });
 }
 ```
-示例代码中使用`tokio`发送异步消息，目的是演示组件的互动能力，但`richdisplay`包本身并不依赖`tokio`。
+*源码仓库的`examples`目录中有更详细的示例代码。*
 
 下图是目前已实现的图文混排效果预览图：
 

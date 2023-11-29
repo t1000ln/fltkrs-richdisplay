@@ -1,6 +1,27 @@
-//! 富文本查看器，支持图文混排，支持历史内容回顾。
+//! 富文本查看器，支持图文混排，支持历史内容回顾。支持`fluid`设计器。
 //!
-//! 组件用法简单示例：
+//! 创建组件示例：
+//! ```rust,no_run
+//! use fltk::{app, window};
+//! use fltk::enums::{Event, Key};
+//! use fltk::prelude::{GroupExt, WidgetBase, WidgetExt, WindowExt};
+//! use log::error;
+//! use fltkrs_richdisplay::rich_text::RichText;
+//! use fltkrs_richdisplay::{RichDataOptions, UserData};
+//!
+//! #[tokio::main]
+//! async fn main() {
+//!    let app = app::App::default();
+//!    let mut win = window::Window::default().with_size(1000, 600).center_screen();
+//!    let mut rich_text = RichText::new(100, 120, 800, 400, None);
+//!    rich_text.set_cache_size(200);
+//!    win.end();
+//!    win.show();
+//!    app.run().unwrap();
+//! }
+//! ```
+//!
+//! 另一个支持互动的复杂示例：
 //! ```rust,no_run
 //! use fltk::{app, window};
 //! use fltk::enums::{Event, Key};
@@ -127,7 +148,7 @@ pub mod rich_reviewer;
 mod utils;
 
 /// 默认内容边界到窗口之间的空白距离。
-pub const PADDING: Padding = Padding { left: 5, top: 5, right: 5, bottom: 5 };
+pub(crate) const PADDING: Padding = Padding { left: 5, top: 5, right: 5, bottom: 5 };
 
 /// 图片与其他内容之间的垂直间距。
 pub const IMAGE_PADDING_H: i32 = 2;
@@ -135,16 +156,16 @@ pub const IMAGE_PADDING_H: i32 = 2;
 /// 图片与其他内容之间的水平间距。
 pub const IMAGE_PADDING_V: i32 = 2;
 
-/// 闪烁强度切换间隔事件，目前使用固定频率。
+/// 闪烁强度切换间隔时间，目前使用固定频率。
 pub const BLINK_INTERVAL: f64 = 0.5;
 
-/// 高亮文本背景色。目前用于查询目标的背景色。
+/// 高亮文本背景色，查询目标时所有匹配目标的背景色。
 pub const HIGHLIGHT_BACKGROUND_COLOR: Color = Color::from_rgb(0, 0, 255);
 
-/// 高亮文本焦点边框颜色。目前用于查询目标，当前正在聚焦的目标。
+/// 高亮文本焦点边框颜色，查询目标时当前正在聚焦的目标。
 pub const HIGHLIGHT_RECT_COLOR: Color = Color::from_rgb(255, 145, 0);
 
-/// 高亮文本焦点边框对比色，目前用于查询目标，当前正在聚焦的目标在闪烁时切换的对比颜色。
+/// 高亮文本焦点边框对比色，当查询目标时当前正在聚焦的目标在闪烁时切换的对比颜色。
 pub const HIGHLIGHT_RECT_CONTRAST_COLOR: Color = Color::from_rgb(0, 110, 255);
 /// 高亮文本焦点边框弧度参数。
 pub const HIGHLIGHT_ROUNDED_RECT_RADIUS: i32 = 3;
@@ -269,7 +290,7 @@ impl CallPage {
 
 /// 闪烁强度状态。
 #[derive(Debug, Clone,Copy, PartialEq, Eq)]
-pub enum BlinkDegree {
+pub(crate) enum BlinkDegree {
     /// 正常，原色显示。
     Normal,
     /// 对比色或不显示。
@@ -568,7 +589,7 @@ impl ThroughLine {
 
 /// 可视内容在面板容器中的边界空白。
 #[derive(Debug, Clone, Default)]
-pub struct Padding {
+pub(crate) struct Padding {
     pub left: i32,
     pub top: i32,
     pub right: i32,

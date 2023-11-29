@@ -1,6 +1,5 @@
 //! richdisplay包的测试应用。
 
-use std::time::{Duration, Instant};
 use fltk::{app, window};
 use fltk::button::Button;
 use fltk::enums::{Color, Event, Font, Key};
@@ -43,8 +42,8 @@ async fn main() {
 
     let _ = Button::new(0, 200, 50, 30, "left");
 
-    // let mut rich_text = RichText::new(100, 60, 800, 400, None);
-    let mut rich_text = RichText::new(100, 60, 1600, 800, None);
+    let mut rich_text = RichText::new(100, 60, 800, 400, None);
+    // let mut rich_text = RichText::new(100, 60, 1600, 800, None);
 
     // 设置默认字体和颜色
     rich_text.set_text_font(Font::Courier);
@@ -74,12 +73,12 @@ async fn main() {
     rich_text.set_notifier(cb_fn);
 
 
-    // let mut rich_text2 = RichText::new(980, 60, 800, 400, None);
-    // let mut rich_text3 = RichText::new(100, 560, 800, 300, None);
-    // let mut rich_text4 = RichText::new(980, 560, 400, 400, None);
-    // rich_text2.set_enable_blink(false);
-    // rich_text3.set_enable_blink(false);
-    // rich_text4.set_enable_blink(false);
+    let mut rich_text2 = RichText::new(980, 60, 800, 400, None);
+    let mut rich_text3 = RichText::new(100, 560, 800, 300, None);
+    let mut rich_text4 = RichText::new(980, 560, 400, 400, None);
+    rich_text2.set_enable_blink(false);
+    rich_text3.set_enable_blink(false);
+    rich_text4.set_enable_blink(false);
 
     btn1.set_callback({
         let mut rt = rich_text.clone();
@@ -162,7 +161,6 @@ async fn main() {
     let (img2_width, img2_height, img2_data) = (img2.width(), img2.height(), img2.to_rgb_data());
     // 异步生成模拟数据，将数据发送给fltk消息通道。
     tokio::spawn(async move {
-        let now = Instant::now();
         for i in 0..30 {
             let turn = i * 15;
             let mut data: Vec<UserData> = Vec::from([
@@ -192,11 +190,13 @@ async fn main() {
             data.reverse();
             while let Some(data_unit) = data.pop() {
                 global_sender.send(GlobalMessage::ContentData(data_unit));
-                tokio::time::sleep(Duration::from_millis(2)).await;
+
+                // 若系统硬件配置不高，这里可适当增加消息发送间隔。
+                // tokio::time::sleep(Duration::from_millis(2)).await;
             }
         }
 
-        debug!("Sender closed. Elapsed time: {:?}", now.elapsed());
+        debug!("Sender closed.");
     });
 
     let mut r = thread_rng();
@@ -208,15 +208,15 @@ async fn main() {
             match msg {
                 GlobalMessage::ContentData(data) => {
                     // 新增数据段，按近似比例发布到不同的窗口
-                    // if r.gen_bool(0.45f64) {
-                    //     rich_text2.append(data.clone());
-                    // }
-                    // if r.gen_bool(0.1f64) {
-                    //     rich_text3.append(data.clone());
-                    // }
-                    // if r.gen_bool(0.01f64) {
-                    //     rich_text4.append(data.clone());
-                    // }
+                    if r.gen_bool(0.45f64) {
+                        rich_text2.append(data.clone());
+                    }
+                    if r.gen_bool(0.1f64) {
+                        rich_text3.append(data.clone());
+                    }
+                    if r.gen_bool(0.01f64) {
+                        rich_text4.append(data.clone());
+                    }
                     has_recent_message = true;
                     rich_text.append(data);
                     // debug!("新增消息");

@@ -186,7 +186,7 @@ pub struct RichReviewer {
     /// 查找结果，保存查询到的目标数据段在data_buffer中的索引编号。
     search_results: Vec<usize>,
     current_highlight_focus: Option<(usize, usize)>,
-    blink_flag: Rc<Cell<BlinkState>>,
+    blink_flag: Rc<RefCell<BlinkState>>,
     /// true表示历史记录模式，默认false表示在线回顾模式。
     history_mode: Rc<Cell<bool>>,
     /// 历史模式下，分页数据大小。
@@ -195,6 +195,7 @@ pub struct RichReviewer {
     text_color: Rc<Cell<Color>>,
     text_size: Rc<Cell<i32>>,
     piece_spacing: Rc<Cell<i32>>,
+    enable_blink: Rc<Cell<bool>>,
 }
 widget_extends!(RichReviewer, Scroll, scroller);
 
@@ -235,14 +236,16 @@ impl RichReviewer {
         let history_mode = Rc::new(Cell::new(false));
         let page_size = Rc::new(Cell::new(10));
         let piece_spacing = Rc::new(Cell::new(0));
+        let enable_blink = Rc::new(Cell::new(true));
 
         let search_results = Vec::<usize>::new();
         let search_str = None::<String>;
         let current_highlight_focus = None::<(usize, usize)>;
 
-        let blink_flag = Rc::new(Cell::new(BlinkState::new()));
+        let blink_flag = Rc::new(RefCell::new(BlinkState::new()));
         let blink_handler = {
             let blink_flag_rc = blink_flag.clone();
+            let enable_blink_rc = enable_blink.clone();
 
             #[cfg(target_os = "linux")]
             let scroller_rc = scroller.clone();
@@ -252,18 +255,20 @@ impl RichReviewer {
 
             move |handler| {
                 if !scroller_rc.was_deleted() {
-                    let (should_toggle, bs) = blink_flag_rc.get().toggle_when_on();
-                    if should_toggle {
-                        blink_flag_rc.set(bs);
-                        // debug!("from reviewer blink flag: {:?}", blink_flag_rc.get());
+                    if enable_blink_rc.get() {
+                        let should_toggle = blink_flag_rc.borrow_mut().toggle_when_on();
+                        if should_toggle {
+                            // blink_flag_rc.set(bs);
+                            // debug!("from reviewer blink flag: {:?}", blink_flag_rc.get());
 
-                        #[cfg(target_os = "linux")]
-                        if let Some(mut parent) = scroller_rc.parent() {
-                            parent.set_damage(true);
+                            #[cfg(target_os = "linux")]
+                            if let Some(mut parent) = scroller_rc.parent() {
+                                parent.set_damage(true);
+                            }
+
+                            #[cfg(not(target_os = "linux"))]
+                            scroller_rc.set_damage(true);
                         }
-
-                        #[cfg(not(target_os = "linux"))]
-                        scroller_rc.set_damage(true);
                     }
                     app::repeat_timeout3(BLINK_INTERVAL, handler);
                 } else {
@@ -533,7 +538,7 @@ impl RichReviewer {
             }
         });
 
-        Self { scroller, panel, data_buffer, background_color, visible_lines, clickable_data, reviewer_screen, notifier, page_notifier, search_string: search_str, search_results, current_highlight_focus, blink_flag, history_mode, page_size, text_font, text_color, text_size, piece_spacing }
+        Self { scroller, panel, data_buffer, background_color, visible_lines, clickable_data, reviewer_screen, notifier, page_notifier, search_string: search_str, search_results, current_highlight_focus, blink_flag, history_mode, page_size, text_font, text_color, text_size, piece_spacing, enable_blink }
     }
 
     pub fn set_background_color(&self, color: Color) {
@@ -580,7 +585,7 @@ impl RichReviewer {
         clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
         data_buffer: Rc<RefCell<Vec<RichData>>>,
         background_color: Color,
-        blink_flag: Rc<Cell<BlinkState>>,
+        blink_flag: Rc<RefCell<BlinkState>>,
         history_mode: bool
         ) {
 
@@ -639,7 +644,7 @@ impl RichReviewer {
 
         let mut need_blink = false;
         for (idx, rich_data) in data[from_index..to_index].iter().enumerate() {
-            rich_data.draw(offset_y, blink_flag.get());
+            rich_data.draw(offset_y, &*blink_flag.borrow());
 
             if !need_blink && (rich_data.blink || rich_data.search_highlight_pos.is_some()) {
                 // debug!("需要闪烁");
@@ -677,15 +682,9 @@ impl RichReviewer {
 
         // 更新闪烁标记
         if need_blink {
-            let bs = blink_flag.get();
-            if !bs.is_on() {
-                blink_flag.set(bs.on());
-            }
+            blink_flag.borrow_mut().on();
         } else {
-            let bs = blink_flag.get();
-            if bs.is_on() {
-                blink_flag.set(bs.off());
-            }
+            blink_flag.borrow_mut().off();
         }
     }
 
@@ -1457,5 +1456,61 @@ impl RichReviewer {
     /// 可以在app中使用的获取雪花流水号的工具方法。
     pub fn get_next_sn(&self) -> i64 {
         YitIdHelper::next_id()
+    }
+
+    /// 替换闪烁状态对象。
+    ///
+    /// # Arguments
+    ///
+    /// * `state`:
+    ///
+    /// returns: ()
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
+    pub(crate) fn set_blink_state(&mut self, state: BlinkState) {
+        *self.blink_flag.borrow_mut() = state;
+    }
+
+    /// 设置启用或禁用闪烁支持。
+    ///
+    /// # Arguments
+    ///
+    /// * `enable`:
+    ///
+    /// returns: ()
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
+    pub fn set_enable_blink(&mut self, enable: bool) {
+        self.enable_blink.set(enable);
+    }
+
+    pub fn set_search_focus_color(&mut self, color: Color) {
+        self.blink_flag.borrow_mut().focus_boarder_color = color;
+    }
+
+    pub fn set_search_focus_contrast(&mut self, contrast: Color) {
+        self.blink_flag.borrow_mut().focus_boarder_contrast_color = contrast;
+    }
+
+    pub fn set_search_focus_color_and_contrast(&mut self, color: Color, contrast: Color) {
+        let mut bf = self.blink_flag.borrow_mut();
+        bf.focus_boarder_color = color;
+        bf.focus_boarder_contrast_color = contrast;
+    }
+
+    pub fn set_search_focus_width(&mut self, width: u8) {
+        self.blink_flag.borrow_mut().focus_boarder_width = width as i32;
+    }
+
+    pub fn set_search_focus_background(&mut self, background: Color) {
+        self.blink_flag.borrow_mut().focus_background_color = background;
     }
 }

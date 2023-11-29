@@ -45,7 +45,7 @@ pub struct RichText {
     clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
     /// 主面板上可见行片段的集合容器，在每次离线绘制时被清空和填充。
     visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
-    blink_flag: Rc<Cell<BlinkState>>,
+    blink_flag: Rc<RefCell<BlinkState>>,
     /// 默认字体。
     text_font: Rc<Cell<Font>>,
     /// 默认字体颜色。
@@ -100,9 +100,9 @@ impl RichText {
         let enable_blink = Rc::new(Cell::new(true));
 
         // 数据段闪烁控制器
-        let blink_flag = Rc::new(Cell::new(BlinkState::new()));
+        let blink_flag = Rc::new(RefCell::new(BlinkState::new()));
         let blink_handler = {
-            let blink_flag_rc = blink_flag.clone();
+            let mut blink_flag_rc = blink_flag.clone();
             let mut panel_rc = panel.clone();
             let screen_rc = panel_screen.clone();
             let visible_lines_rc = visible_lines.clone();
@@ -113,9 +113,9 @@ impl RichText {
             move |handler| {
                 if !panel_rc.was_deleted() {
                     if enable_blink_rc.get() {
-                        let (should_toggle, bs) = blink_flag_rc.get().toggle_when_on();
+                        let should_toggle = blink_flag_rc.borrow_mut().toggle_when_on();
                         if should_toggle {
-                            blink_flag_rc.set(bs);
+                            // blink_flag_rc.set(bs);
                             // debug!("from main panel blink flag: {:?}", blink_flag_rc.get());
                             Self::draw_offline(
                                 screen_rc.clone(),
@@ -218,6 +218,8 @@ impl RichText {
             let notifier_rc = notifier.clone();
             let should_resize = should_resize_content.clone();
             let selected_rc = selected.clone();
+            let enable_blink_rc = enable_blink.clone();
+            let blink_flag_rc = blink_flag.clone();
             move |flex, evt| {
                 if evt == LocalEvent::DROP_REVIEWER_FROM_EXTERNAL.into() {
                     // 隐藏回顾区
@@ -230,6 +232,8 @@ impl RichText {
                     true
                 } else if evt == LocalEvent::OPEN_REVIEWER_FROM_EXTERNAL.into() {
                     let mut reviewer = RichReviewer::new(0, 0, flex.width(), flex.height() - MAIN_PANEL_FIX_HEIGHT, None);
+                    reviewer.set_enable_blink(enable_blink_rc.get());
+                    reviewer.set_blink_state(blink_flag_rc.borrow().clone());
                     reviewer.set_background_color(bg_rc.get());
                     if let Some(notifier_rc) = notifier_rc.borrow().as_ref() {
                         reviewer.set_notifier(notifier_rc.clone());
@@ -275,6 +279,8 @@ impl RichText {
                             if app::event_dy() == MouseWheel::Down && !buffer_rc.borrow().is_empty() && reviewer_rc.borrow().is_none() {
                                 // 显示回顾区
                                 let mut reviewer = RichReviewer::new(0, 0, flex.width(), flex.height() - MAIN_PANEL_FIX_HEIGHT, None);
+                                reviewer.set_enable_blink(enable_blink_rc.get());
+                                reviewer.set_blink_state(blink_flag_rc.borrow().clone());
                                 reviewer.set_background_color(bg_rc.get());
                                 if let Some(notifier_rc_ref) = notifier_rc.borrow_mut().as_mut() {
                                     let cb = notifier_rc_ref.clone();
@@ -673,7 +679,7 @@ impl RichText {
         visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
         clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
         bg_color: Color, data_buffer: Rc<RefCell<VecDeque<RichData>>>,
-        blink_flag: Rc<Cell<BlinkState>>
+        blink_flag: Rc<RefCell<BlinkState>>
         ) {
         if let Some(offs) = Offscreen::new(w, h) {
             offscreen.replace(offs);
@@ -687,7 +693,7 @@ impl RichText {
         visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
         clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
         bg_color: Color, data_buffer: Rc<RefCell<VecDeque<RichData>>>,
-        blink_flag: Rc<Cell<BlinkState>>) {
+        blink_flag: Rc<RefCell<BlinkState>>) {
 
         offscreen.borrow().begin();
         let (panel_x, panel_y, window_width, window_height) = (panel.x(), panel.y(), panel.width(), panel.height());
@@ -730,7 +736,7 @@ impl RichText {
                 }
             }
 
-            rich_data.draw(offset_y, blink_flag.get());
+            rich_data.draw(offset_y, &*blink_flag.borrow());
 
             if !need_blink && rich_data.blink {
                 need_blink = true;
@@ -744,13 +750,9 @@ impl RichText {
 
         // 更新闪烁标记
         if need_blink {
-            let bs = blink_flag.get();
-            blink_flag.set(bs.on());
+            blink_flag.borrow_mut().on();
         } else {
-            let bs = blink_flag.get();
-            if bs.is_on() {
-                blink_flag.set(bs.off());
-            }
+            blink_flag.borrow_mut().off();
         }
     }
 
@@ -823,7 +825,7 @@ impl RichText {
         clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
         bg_color: Color,
         data_buffer: Rc<RefCell<VecDeque<RichData>>>,
-        blink_flag: Rc<Cell<BlinkState>>
+        blink_flag: Rc<RefCell<BlinkState>>
     ) {
         throttle_holder.borrow_mut().current_rid = 0;
         RichText::draw_offline(
@@ -1131,6 +1133,7 @@ impl RichText {
     /// app.run().unwrap();
     /// ```
     pub fn auto_open_reviewer(&self) -> Result<bool, FltkError> {
+
         return if !self.data_buffer.borrow().is_empty() && self.reviewer.borrow().is_none() {
             let handle_result = app::handle_main(LocalEvent::OPEN_REVIEWER_FROM_EXTERNAL);
             match handle_result {
@@ -1273,10 +1276,56 @@ impl RichText {
     /// ```
     pub fn set_enable_blink(&mut self, enable: bool) {
         self.enable_blink.set(enable);
+        if let Some(reviewer) = self.reviewer.borrow_mut().as_mut() {
+            reviewer.set_enable_blink(enable);
+        }
     }
 
     /// 启用或禁用闪烁，切换状态。
     pub fn toggle_blink(&mut self) {
-        self.enable_blink.set(self.enable_blink.get() ^ true);
+        let toggle = !self.enable_blink.get();
+        self.enable_blink.set(toggle);
+        if let Some(reviewer) = self.reviewer.borrow_mut().as_mut() {
+            reviewer.set_enable_blink(toggle);
+        }
+    }
+
+    pub fn set_search_focus_color(&mut self, color: Color) {
+        self.blink_flag.borrow_mut().focus_boarder_color = color;
+        if let Some(reviewer) = &mut *self.reviewer.borrow_mut() {
+            reviewer.set_search_focus_color(color);
+        }
+    }
+
+    pub fn set_search_focus_contrast(&mut self, contrast: Color) {
+        self.blink_flag.borrow_mut().focus_boarder_contrast_color = contrast;
+        if let Some(reviewer) = &mut *self.reviewer.borrow_mut() {
+            reviewer.set_search_focus_contrast(contrast);
+        }
+    }
+
+    pub fn set_search_focus_color_and_contrast(&mut self, color: Color, contrast: Color) {
+        let mut bf = self.blink_flag.borrow_mut();
+        bf.focus_boarder_color = color;
+        bf.focus_boarder_contrast_color = contrast;
+
+        if let Some(reviewer) = &mut *self.reviewer.borrow_mut() {
+            reviewer.set_search_focus_color(color);
+            reviewer.set_search_focus_contrast(contrast);
+        }
+    }
+
+    pub fn set_search_focus_width(&mut self, width: u8) {
+        self.blink_flag.borrow_mut().focus_boarder_width = width as i32;
+        if let Some(reviewer) = &mut *self.reviewer.borrow_mut() {
+            reviewer.set_search_focus_width(width);
+        }
+    }
+
+    pub fn set_search_focus_background_color(&mut self, background: Color) {
+        self.blink_flag.borrow_mut().focus_background_color = background;
+        if let Some(reviewer) = &mut *self.reviewer.borrow_mut() {
+            reviewer.set_search_focus_background(background);
+        }
     }
 }

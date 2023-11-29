@@ -112,14 +112,14 @@ use std::ops::{RangeInclusive};
 use std::rc::{Rc, Weak};
 use std::slice::Iter;
 use fltk::{app, draw};
-use fltk::draw::{descent, draw_image, draw_line, draw_rect_with_color, draw_rectf, draw_text_n, measure, set_draw_color, set_font};
+use fltk::draw::{descent, draw_image, draw_line, draw_rect_with_color, draw_rectf, draw_rounded_rect, draw_rounded_rectf, draw_text_n, LineStyle, measure, set_draw_color, set_font, set_line_style};
 use fltk::enums::{Color, ColorDepth, Cursor, Font};
 use fltk::prelude::WidgetExt;
 use fltk::widget::Widget;
 use std::time::Duration;
 
 use idgenerator_thin::YitIdHelper;
-use log::{error};
+use log::{debug, error};
 use throttle_my_fn::throttle;
 
 pub mod rich_text;
@@ -146,6 +146,8 @@ pub const HIGHLIGHT_RECT_COLOR: Color = Color::from_rgb(255, 145, 0);
 
 /// 高亮文本焦点边框对比色，目前用于查询目标，当前正在聚焦的目标在闪烁时切换的对比颜色。
 pub const HIGHLIGHT_RECT_CONTRAST_COLOR: Color = Color::from_rgb(0, 110, 255);
+/// 高亮文本焦点边框弧度参数。
+pub const HIGHLIGHT_ROUNDED_RECT_RADIUS: i32 = 3;
 
 /// 最亮的白色。
 pub const WHITE: Color = Color::from_rgb(255, 255, 255);
@@ -275,12 +277,24 @@ pub enum BlinkDegree {
 }
 
 /// 可视区域闪烁开关标记和状态。
-#[derive(Debug, Clone,Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct BlinkState {
     /// 可视区域是否存在闪烁内容。
     on: bool,
     /// 应闪烁内容在下一次刷新显示时的强度。
     next: BlinkDegree,
+
+    /// 焦点目标的边框颜色。
+    focus_boarder_color: Color,
+
+    /// 焦点目标的边框对比色。
+    focus_boarder_contrast_color: Color,
+
+    /// 焦点目标的边框线条宽度。
+    focus_boarder_width: i32,
+
+    /// 焦点目标的背景颜色。
+    focus_background_color: Color,
 }
 
 impl BlinkState {
@@ -288,6 +302,10 @@ impl BlinkState {
         BlinkState {
             on: false,
             next: BlinkDegree::Normal,
+            focus_boarder_color: HIGHLIGHT_RECT_COLOR,
+            focus_boarder_contrast_color: HIGHLIGHT_RECT_CONTRAST_COLOR,
+            focus_boarder_width: 2,
+            focus_background_color: HIGHLIGHT_BACKGROUND_COLOR
         }
     }
 
@@ -295,28 +313,46 @@ impl BlinkState {
         self.on
     }
 
-    pub fn off(mut self) -> Self {
+    pub fn off(mut self) {
         self.on = false;
         self.next = BlinkDegree::Normal;
-        self
     }
 
-    pub fn on(mut self) -> Self {
+    pub fn on(&mut self) {
         self.on = true;
-        // self.next = BlinkDegree::Darker;
-        self
     }
 
-    pub fn toggle_when_on(mut self) -> (bool, Self) {
+    pub fn toggle_when_on(&mut self) -> bool {
         if self.on {
             self.next = match self.next {
                 BlinkDegree::Normal => BlinkDegree::Contrast,
                 BlinkDegree::Contrast => BlinkDegree::Normal,
             };
-            (true, self)
+            true
         } else {
-            (false, self)
+            false
         }
+    }
+
+    pub fn set_focus_boarder_color(&mut self, color: Color) {
+        self.focus_boarder_color = color;
+    }
+
+    pub fn set_focus_boarder_contrast_color(&mut self, color: Color) {
+        self.focus_boarder_contrast_color = color;
+    }
+
+    pub fn set_focus_boarder_color_and_contrast(&mut self, color: Color, contrast: Color) {
+        self.focus_boarder_color = color;
+        self.focus_boarder_contrast_color = contrast;
+    }
+
+    pub fn set_focus_boarder_width(&mut self, width: u8) {
+        self.focus_boarder_width = width as i32;
+    }
+
+    pub fn set_focus_background_color(&mut self, color: Color) {
+        self.focus_background_color = color;
     }
 }
 
@@ -781,7 +817,7 @@ pub(crate) trait LinedData {
     /// ```
     ///
     /// ```
-    fn draw(&self, offset_y: i32, blink_state: BlinkState);
+    fn draw(&self, offset_y: i32, blink_state: &BlinkState);
 
     fn estimate(&mut self, blow_line: Rc<RefCell<LinePiece>>, max_width: i32) -> Rc<RefCell<LinePiece>>;
 
@@ -1359,7 +1395,7 @@ impl LinedData for RichData {
         !(b.1 < top_y || b.0 > bottom_y)
     }
 
-    fn draw(&self, offset_y: i32, blink_state: BlinkState) {
+    fn draw(&self, offset_y: i32, blink_state: &BlinkState) {
         match self.data_type {
             DataType::Text => {
                 let bg_offset = 1;
@@ -1412,9 +1448,9 @@ impl LinedData for RichData {
                     // 绘制查找焦点框
                     if let Some(ref pos_vec) = self.search_result_positions {
                         let rect_color = if blink_state.next == BlinkDegree::Normal {
-                            HIGHLIGHT_RECT_COLOR
+                            blink_state.focus_boarder_color
                         } else {
-                            HIGHLIGHT_RECT_CONTRAST_COLOR
+                            blink_state.focus_boarder_contrast_color
                         };
                         let pl = piece.line.chars().count();
                         let range = processed_search_len..(processed_search_len + pl);
@@ -1424,13 +1460,19 @@ impl LinedData for RichData {
                                 let (skip_width, _) = measure(piece.line.chars().take(start_index_of_piece).collect::<String>().as_str(), false);
                                 let (fill_width, _) = measure(piece.line.chars().skip(start_index_of_piece).take(pos_to - pos_from).collect::<String>().as_str(), false);
 
-                                set_draw_color(HIGHLIGHT_BACKGROUND_COLOR);
+                                set_draw_color(blink_state.focus_background_color);
                                 #[cfg(target_os = "linux")]
                                 {
-                                    draw_rectf(piece.x + skip_width, y - piece.spacing + 2, fill_width, piece.font_height);
+                                    // draw_rectf(piece.x + skip_width, y - piece.spacing + 2, fill_width, piece.font_height);
+                                    draw_rounded_rectf(piece.x + skip_width, y - piece.spacing + 2, fill_width, piece.font_height, HIGHLIGHT_ROUNDED_RECT_RADIUS);
                                     if let Some(h_i) = self.search_highlight_pos {
                                         if h_i == pos_i {
-                                            draw_rect_with_color(piece.x + skip_width, y - piece.spacing + 2, fill_width, piece.font_height, rect_color);
+                                            // debug!("blink1: {:?}", blink_state);
+                                            set_draw_color(rect_color);
+                                            set_line_style(LineStyle::Solid, blink_state.focus_boarder_width);
+                                            // draw_rect_with_color(piece.x + skip_width, y - piece.spacing + 2, fill_width, piece.font_height, rect_color);
+                                            draw_rounded_rect(piece.x + skip_width, y - piece.spacing + 2, fill_width, piece.font_height, HIGHLIGHT_ROUNDED_RECT_RADIUS);
+                                            set_line_style(LineStyle::Solid, 0);
                                         }
                                     }
                                 }
@@ -1438,9 +1480,14 @@ impl LinedData for RichData {
                                 #[cfg(not(target_os = "linux"))]
                                 {
                                     draw_rectf(piece.x + skip_width, y - piece.spacing, fill_width, piece.font_height);
+                                    draw_rounded_rectf(piece.x + skip_width, y - piece.spacing, fill_width, piece.font_height, HIGHLIGHT_ROUNDED_RECT_RADIUS);
                                     if let Some(h_i) = self.search_highlight_pos {
                                         if h_i == pos_i {
-                                            draw_rect_with_color(piece.x + skip_width, y - piece.spacing, fill_width, piece.font_height, rect_color);
+                                            set_draw_color(rect_color);
+                                            set_line_style(LineStyle::Solid, blink_state.focus_boarder_width);
+                                            // draw_rect_with_color(piece.x + skip_width, y - piece.spacing, fill_width, piece.font_height, rect_color);
+                                            draw_rounded_rect(piece.x + skip_width, y - piece.spacing, fill_width, piece.font_height, HIGHLIGHT_ROUNDED_RECT_RADIUS);
+                                            set_line_style(LineStyle::Solid, 0);
                                         }
                                     }
                                 }
@@ -1448,11 +1495,16 @@ impl LinedData for RichData {
                             } else if range.contains(pos_to) {
                                 let (fill_width, _) = measure(piece.line.chars().take(pos_to - processed_search_len).collect::<String>().as_str(), false);
 
-                                set_draw_color(HIGHLIGHT_BACKGROUND_COLOR);
-                                draw_rectf(piece.x, y - piece.spacing, fill_width, piece.font_height);
+                                set_draw_color(blink_state.focus_background_color);
+                                // draw_rectf(piece.x, y - piece.spacing, fill_width, piece.font_height);
+                                draw_rounded_rectf(piece.x, y - piece.spacing, fill_width, piece.font_height, HIGHLIGHT_ROUNDED_RECT_RADIUS);
                                 if let Some(h_i) = self.search_highlight_pos {
                                     if h_i == pos_i {
-                                        draw_rect_with_color(piece.x, y - piece.spacing, fill_width, piece.font_height, rect_color);
+                                        set_draw_color(rect_color);
+                                        set_line_style(LineStyle::Solid, blink_state.focus_boarder_width);
+                                        // draw_rect_with_color(piece.x, y - piece.spacing, fill_width, piece.font_height, rect_color);
+                                        draw_rounded_rect(piece.x, y - piece.spacing, fill_width, piece.font_height, HIGHLIGHT_ROUNDED_RECT_RADIUS);
+                                        set_line_style(LineStyle::Solid, 0);
                                     }
                                 }
                             }

@@ -102,7 +102,7 @@ impl RichText {
         // 数据段闪烁控制器
         let blink_flag = Rc::new(RefCell::new(BlinkState::new()));
         let blink_handler = {
-            let mut blink_flag_rc = blink_flag.clone();
+            let blink_flag_rc = blink_flag.clone();
             let mut panel_rc = panel.clone();
             let screen_rc = panel_screen.clone();
             let visible_lines_rc = visible_lines.clone();
@@ -649,7 +649,13 @@ impl RichText {
     /// ```
     pub fn search_str(&mut self, search_str: Option<String>, forward: bool) -> bool {
         let mut find_out = false;
-        if let Ok(open_suc) = self.auto_open_reviewer() {
+        if search_str.is_none() {
+            if let Some(ref mut rr) = *self.reviewer.borrow_mut() {
+                rr.clear_search_results();
+                #[cfg(target_os = "linux")]
+                self.set_damage(true);
+            }
+        } else if let Ok(open_suc) = self.auto_open_reviewer() {
             if let Some(ref mut rr) = *self.reviewer.borrow_mut() {
                 if let Some(search_str) = search_str {
                     if !search_str.is_empty() {
@@ -664,11 +670,10 @@ impl RichText {
                 } else {
                     rr.clear_search_results();
                 }
+                #[cfg(target_os = "linux")]
+                self.set_damage(true);
             }
         }
-
-        #[cfg(target_os = "linux")]
-        self.set_damage(true);
 
         find_out
     }

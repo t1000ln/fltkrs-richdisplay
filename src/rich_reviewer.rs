@@ -545,6 +545,19 @@ impl RichReviewer {
         self.background_color.replace(color);
     }
 
+    /// 设置回顾区数据。
+    ///
+    /// # Arguments
+    ///
+    /// * `data`:
+    ///
+    /// returns: ()
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
     pub(crate) fn set_data(&mut self, mut data: Vec<RichData>) {
         // 更新回看数据
         self.data_buffer.borrow_mut().clear();
@@ -561,21 +574,6 @@ impl RichReviewer {
     pub fn scroll_to_bottom(&mut self) {
         self.scroller.scroll_to(0, self.panel.height() - self.scroller.height());
     }
-
-    /// 计算数据内容所需的面板高度。
-    ///
-    /// # Arguments
-    ///
-    /// * `buffer`:
-    /// * `scroller_height`:
-    ///
-    /// returns: i32
-    ///
-    /// # Examples
-    ///
-    /// ```
-    ///
-    /// ```
 
 
     fn draw_offline(
@@ -641,9 +639,10 @@ impl RichReviewer {
                 break;
             }
         }
-
+        // debug!("离线绘制， from_index:{from_index}, to_index:{to_index}");
         let mut need_blink = false;
         for (idx, rich_data) in data[from_index..to_index].iter().enumerate() {
+            // debug!("离线绘制， idx:{idx}, rich_data:{:?}", rich_data.text);
             rich_data.draw(offset_y, &*blink_flag.borrow());
 
             if !need_blink && (rich_data.blink || rich_data.search_highlight_pos.is_some()) {
@@ -1074,6 +1073,11 @@ impl RichReviewer {
     ///
     /// ```
     fn show_piece(&mut self, rd_idx: usize, piece_idx: usize) {
+        let mut offset_y = 0;
+        if let Some(rd) = self.data_buffer.borrow().first() {
+            offset_y = rd.v_bounds.get().0;
+        }
+
         if let Some(rd) = self.data_buffer.borrow().get(rd_idx) {
             if piece_idx < rd.line_pieces.len() {
                 if let Some(piece_rc) = rd.line_pieces.get(piece_idx) {
@@ -1081,7 +1085,7 @@ impl RichReviewer {
                     // debug!("piece.top_y: {}, panel_height: {}, scroller.yposition: {}, piece.line: {}", piece.top_y, self.panel.h(), self.scroller.yposition(), piece.line);
                     let scroller_y = self.scroller.yposition();
                     if piece.y < scroller_y || piece.y + piece.h >= scroller_y + self.scroller.h() {
-                        let mut scroll_to_y = piece.y - self.scroller.h() + piece.h * 2 + PADDING.top + 3;
+                        let mut scroll_to_y = piece.y - self.scroller.h() + piece.h * 2 + PADDING.top + 3 - offset_y;
                         if scroll_to_y < 0 {
                             scroll_to_y = 0;
                         } else if scroll_to_y > self.panel.h() - self.scroller.h() {

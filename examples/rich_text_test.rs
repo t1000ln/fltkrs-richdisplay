@@ -43,8 +43,8 @@ async fn main() {
 
     let _ = Button::new(0, 200, 50, 30, "left");
 
-    // let mut rich_text = RichText::new(100, 60, 800, 400, None);
-    let mut rich_text = RichText::new(100, 60, 1600, 800, None);
+    let mut rich_text = RichText::new(100, 60, 800, 400, None);
+    // let mut rich_text = RichText::new(100, 60, 1600, 800, None);
 
     // 设置默认字体和颜色
     rich_text.set_text_font(Font::Courier);
@@ -55,6 +55,7 @@ async fn main() {
     rich_text.set_search_focus_color(Color::White);
     // rich_text.set_search_focus_contrast(Color::Dark1);
     // rich_text.set_piece_spacing(20);
+    rich_text.set_cache_size(200);
 
     // 应用层消息通道，该通道负责两个方向的消息传递：1将应用层产生的消息向下传递给fltk组件层通道，2将fltk组件层产生的事件消息向上传递给应用层。
     let (action_sender, action_receiver) = tokio::sync::mpsc::channel::<UserData>(100);
@@ -71,14 +72,14 @@ async fn main() {
         }
     };
     rich_text.set_notifier(cb_fn);
-    rich_text.set_cache_size(1000);
 
-    // let mut rich_text2 = RichText::new(980, 60, 800, 400, None);
-    // let mut rich_text3 = RichText::new(100, 560, 800, 300, None);
-    // let mut rich_text4 = RichText::new(980, 560, 400, 400, None);
-    // rich_text2.set_enable_blink(false);
-    // rich_text3.set_enable_blink(false);
-    // rich_text4.set_enable_blink(false);
+
+    let mut rich_text2 = RichText::new(980, 60, 800, 400, None);
+    let mut rich_text3 = RichText::new(100, 560, 800, 300, None);
+    let mut rich_text4 = RichText::new(980, 560, 400, 400, None);
+    rich_text2.set_enable_blink(false);
+    rich_text3.set_enable_blink(false);
+    rich_text4.set_enable_blink(false);
 
     btn1.set_callback({
         let mut rt = rich_text.clone();
@@ -161,7 +162,7 @@ async fn main() {
     let (img2_width, img2_height, img2_data) = (img2.width(), img2.height(), img2.to_rgb_data());
     // 异步生成模拟数据，将数据发送给fltk消息通道。
     tokio::spawn(async move {
-        for i in 0..100 {
+        for i in 0..30 {
             let turn = i * 15;
             let mut data: Vec<UserData> = Vec::from([
                 UserData::new_text(format!("{}安全并且高效地处理𝄞并发编程是Rust的另一个主要目标。💖并发编程和并行编程这两种概念随着计算机设备的多核a优化而变得越来越重要。并发编程🐉允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 0)).set_bg_color(Some(Color::DarkCyan)),
@@ -206,15 +207,15 @@ async fn main() {
             match msg {
                 GlobalMessage::ContentData(data) => {
                     // 新增数据段，按近似比例发布到不同的窗口
-                    // if r.gen_bool(0.45f64) {
-                    //     rich_text2.append(data.clone());
-                    // }
-                    // if r.gen_bool(0.1f64) {
-                    //     rich_text3.append(data.clone());
-                    // }
-                    // if r.gen_bool(0.01f64) {
-                    //     rich_text4.append(data.clone());
-                    // }
+                    if r.gen_bool(0.45f64) {
+                        rich_text2.append(data.clone());
+                    }
+                    if r.gen_bool(0.1f64) {
+                        rich_text3.append(data.clone());
+                    }
+                    if r.gen_bool(0.01f64) {
+                        rich_text4.append(data.clone());
+                    }
                     has_recent_message = true;
                     rich_text.append(data);
                     // debug!("新增消息");

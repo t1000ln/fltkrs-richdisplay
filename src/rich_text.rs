@@ -650,10 +650,8 @@ impl RichText {
     pub fn search_str(&mut self, search_str: Option<String>, forward: bool) -> bool {
         let mut find_out = false;
         if search_str.is_none() {
-            if let Some(ref mut rr) = *self.reviewer.borrow_mut() {
+            if let Some(rr) = &mut *self.reviewer.borrow_mut() {
                 rr.clear_search_results();
-                #[cfg(target_os = "linux")]
-                self.set_damage(true);
             }
         } else if let Ok(open_suc) = self.auto_open_reviewer() {
             if let Some(ref mut rr) = *self.reviewer.borrow_mut() {
@@ -670,10 +668,11 @@ impl RichText {
                 } else {
                     rr.clear_search_results();
                 }
-                #[cfg(target_os = "linux")]
-                self.set_damage(true);
             }
         }
+
+        #[cfg(target_os = "linux")]
+        self.set_damage(true);
 
         find_out
     }

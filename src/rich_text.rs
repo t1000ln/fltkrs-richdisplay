@@ -20,7 +20,7 @@ use crate::{
     update_selection_when_drag, CallbackData, ShapeData, LINE_HEIGHT_FACTOR};
 
 use idgenerator_thin::{IdGeneratorOptions, YitIdHelper};
-use log::{debug, error};
+use log::{error};
 use throttle_my_fn::throttle;
 use crate::rich_reviewer::RichReviewer;
 use crate::utils::ID_GENERATOR_INIT;
@@ -274,7 +274,6 @@ impl RichText {
                                         flex.fixed(&rv.scroller, current_height - panel_height);
                                     }
                                 }
-                                debug!("flex window size changed to: {},{}", current_width, current_height);
                                 // flex.recalc();
                             }
                         }
@@ -351,7 +350,7 @@ impl RichText {
             let text_size_rc = text_size.clone();
             move |mut ctx, evt| {
                 match evt {
-                    Event::Resize | Event::Show => {
+                    Event::Resize => {
                         // 缩放窗口后重新计算分片绘制信息。
                         let (current_width, current_height) = (ctx.width(), ctx.height());
                         let (last_width, last_height) = last_window_size.get();
@@ -369,13 +368,11 @@ impl RichText {
 
                             if current_width > 0 || current_height > 0 {
                                 if let Some(cb) = notifier_rc.borrow_mut().as_mut() {
-                                    debug!("panel send resize event to notifier");
                                     draw::set_font(text_font_rc.get(), text_size_rc.get());
                                     let (char_width, _) = draw::measure("中", false);
                                     let new_cols = ((current_width - PADDING.left - PADDING.right) as f32 / char_width as f32).floor() as i32;
                                     let new_rows = ((current_height - PADDING.top - PADDING.bottom) as f32 / (text_size_rc.get() as f32 * LINE_HEIGHT_FACTOR).ceil()).floor() as i32;
                                     cb.notify(CallbackData::Shape(ShapeData::new(last_width, last_height, current_width, current_height, new_cols, new_rows)));
-                                    debug!("panel window size changed to: {},{}", current_width, current_height);
                                 }
                             }
 
@@ -1351,5 +1348,14 @@ impl RichText {
         if let Some(reviewer) = &mut *self.reviewer.borrow_mut() {
             reviewer.set_search_focus_background(background);
         }
+    }
+
+    /// 计算当前主视图以默认字体大小可以完整显示的行、列数。实际可见的行数可能大于计算返回的行数。
+    pub fn calc_default_window_size(&self) -> (i32, i32) {
+        draw::set_font(self.text_font.get(), self.text_size.get());
+        let (char_width, _) = draw::measure("中", false);
+        let new_cols = ((self.panel.w() - PADDING.left - PADDING.right) as f32 / char_width as f32).floor() as i32;
+        let new_rows = ((self.panel.h() - PADDING.top - PADDING.bottom) as f32 / (self.text_size.get() as f32 * LINE_HEIGHT_FACTOR).ceil()).floor() as i32;
+        (new_cols, new_rows)
     }
 }

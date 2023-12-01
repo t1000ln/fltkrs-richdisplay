@@ -55,6 +55,7 @@ async fn main() {
     // rich_text.set_search_focus_contrast(Color::Dark1);
     // rich_text.set_piece_spacing(20);
     rich_text.set_cache_size(200);
+    rich_text.set_basic_char('A');
 
     // 应用层消息通道，该通道负责两个方向的消息传递：1将应用层产生的消息向下传递给fltk组件层通道，2将fltk组件层产生的事件消息向上传递给应用层。
     let (action_sender, action_receiver) = tokio::sync::mpsc::channel::<CallbackData>(100);

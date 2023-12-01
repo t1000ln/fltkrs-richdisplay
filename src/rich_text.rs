@@ -13,11 +13,7 @@ use fltk::{app, draw, widget_extends};
 use fltk::app::{MouseWheel};
 use fltk::group::{Flex};
 use fltk::widget::Widget;
-use crate::{
-    Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, 
-    RichData, RichDataOptions, update_data_properties, UserData, BLINK_INTERVAL, BlinkState, 
-    Callback, DEFAULT_FONT_SIZE, WHITE, clear_selected_pieces, ClickPoint, locate_target_rd, 
-    update_selection_when_drag, CallbackData, ShapeData, LINE_HEIGHT_FACTOR};
+use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData, BLINK_INTERVAL, BlinkState, Callback, DEFAULT_FONT_SIZE, WHITE, clear_selected_pieces, ClickPoint, locate_target_rd, update_selection_when_drag, CallbackData, ShapeData, LINE_HEIGHT_FACTOR, BASIC_UNIT_CHAR};
 
 use idgenerator_thin::{IdGeneratorOptions, YitIdHelper};
 use log::{error};
@@ -59,6 +55,7 @@ pub struct RichText {
     piece_spacing: Rc<Cell<i32>>,
     throttle_holder: Rc<RefCell<ThrottleHolder>>,
     enable_blink: Rc<Cell<bool>>,
+    basic_char: Rc<Cell<char>>,
 }
 widget_extends!(RichText, Flex, inner);
 
@@ -103,6 +100,7 @@ impl RichText {
         let should_resize_content = Rc::new(Cell::new(0));
         let throttle_holder = Rc::new(RefCell::new(ThrottleHolder { last_rid: 0, current_rid: 0 }));
         let enable_blink = Rc::new(Cell::new(true));
+        let basic_char = Rc::new(Cell::new(BASIC_UNIT_CHAR));
 
         // 数据段闪烁控制器
         let blink_flag = Rc::new(RefCell::new(BlinkState::new()));
@@ -348,6 +346,7 @@ impl RichText {
             let blink_flag_rc = blink_flag.clone();
             let text_font_rc = text_font.clone();
             let text_size_rc = text_size.clone();
+            let basic_char_rc = basic_char.clone();
             move |mut ctx, evt| {
                 match evt {
                     Event::Resize => {
@@ -369,7 +368,7 @@ impl RichText {
                             if current_width > 0 || current_height > 0 {
                                 if let Some(cb) = notifier_rc.borrow_mut().as_mut() {
                                     draw::set_font(text_font_rc.get(), text_size_rc.get());
-                                    let (char_width, _) = draw::measure("中", false);
+                                    let (char_width, _) = draw::measure(&basic_char_rc.get().to_string(), false);
                                     let new_cols = ((current_width - PADDING.left - PADDING.right) as f32 / char_width as f32).floor() as i32;
                                     let new_rows = ((current_height - PADDING.top - PADDING.bottom) as f32 / (text_size_rc.get() as f32 * LINE_HEIGHT_FACTOR).ceil()).floor() as i32;
                                     cb.notify(CallbackData::Shape(ShapeData::new(last_width, last_height, current_width, current_height, new_cols, new_rows)));
@@ -476,7 +475,7 @@ impl RichText {
             }
         });
 
-        Self { panel, data_buffer, background_color, buffer_max_lines, notifier, inner, reviewer, panel_screen, visible_lines, clickable_data, blink_flag, text_font, text_color, text_size, piece_spacing, throttle_holder, enable_blink }
+        Self { panel, data_buffer, background_color, buffer_max_lines, notifier, inner, reviewer, panel_screen, visible_lines, clickable_data, blink_flag, text_font, text_color, text_size, piece_spacing, throttle_holder, enable_blink, basic_char }
     }
 
     /// 计算当前数据缓存的高度超出目标面板的高度差。
@@ -1351,11 +1350,31 @@ impl RichText {
     }
 
     /// 计算当前主视图以默认字体大小可以完整显示的行、列数。实际可见的行数可能大于计算返回的行数。
+    /// 若应用对窗口尺寸敏感，则建议使用等宽字体作为默认字体。`fltk`中`Font::Screen`代表等宽字体。
     pub fn calc_default_window_size(&self) -> (i32, i32) {
         draw::set_font(self.text_font.get(), self.text_size.get());
-        let (char_width, _) = draw::measure("中", false);
+        let (char_width, _) = draw::measure(&self.basic_char.get().to_string(), false);
         let new_cols = ((self.panel.w() - PADDING.left - PADDING.right) as f32 / char_width as f32).floor() as i32;
         let new_rows = ((self.panel.h() - PADDING.top - PADDING.bottom) as f32 / (self.text_size.get() as f32 * LINE_HEIGHT_FACTOR).ceil()).floor() as i32;
         (new_cols, new_rows)
+    }
+
+    /// 设置用于衡量窗口尺寸的基本字符。对于非ASCII字符，可能计算出的尺寸要小于ASCII字符的，因为非ASCII字符可能需要占用更多的空间。
+    /// 例如以非等宽字体作为默认字体时，将`'a'`当作基本衡量单位计算出来的窗口尺寸，就要大于以`'中'`为基本衡量单位计算的结果。
+    /// 若应用对窗口尺寸敏感，则建议使用等宽字体作为默认字体。`fltk`中`Font::Screen`代表等宽字体。
+    ///
+    /// # Arguments
+    ///
+    /// * `basic_char`:
+    ///
+    /// returns: ()
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
+    pub fn set_basic_char(&mut self, basic_char: char) {
+        self.basic_char.set(basic_char);
     }
 }

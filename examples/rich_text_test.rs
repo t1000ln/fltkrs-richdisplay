@@ -147,6 +147,8 @@ async fn main() {
     win.end();
     win.show();
 
+    debug!("当前主视图的默认窗口尺寸：{:?}", rich_text.calc_default_window_size());
+
     // fltk组件层消息通道，该通道负责传递组件所需数据。
     let (global_sender, global_receiver) = app::channel::<GlobalMessage>();
 

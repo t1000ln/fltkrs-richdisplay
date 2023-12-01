@@ -1349,4 +1349,13 @@ impl RichText {
             reviewer.set_search_focus_background(background);
         }
     }
+
+    /// 计算当前主视图以默认字体大小可以完整显示的行、列数。实际可见的行数可能大于计算返回的行数。
+    pub fn calc_default_window_size(&self) -> (i32, i32) {
+        draw::set_font(self.text_font.get(), self.text_size.get());
+        let (char_width, _) = draw::measure("中", false);
+        let new_cols = ((self.panel.w() - PADDING.left - PADDING.right) as f32 / char_width as f32).floor() as i32;
+        let new_rows = ((self.panel.h() - PADDING.top - PADDING.bottom) as f32 / (self.text_size.get() as f32 * LINE_HEIGHT_FACTOR).ceil()).floor() as i32;
+        (new_cols, new_rows)
+    }
 }

@@ -1,5 +1,5 @@
 # fltkrs-richdisplay
-![Static Badge](https://img.shields.io/badge/crates-0.3.1-blue) 
+![Static Badge](https://img.shields.io/badge/crates-0.3.3-blue) 
 ![Static Badge](https://img.shields.io/badge/build-passing-green)
 ![Static Badge](https://img.shields.io/badge/Readonly-gray)
 
@@ -280,7 +280,7 @@ pub fn handle_action(mut action_receiver: tokio::sync::mpsc::Receiver<UserData>,
     });
 }
 ```
-*源码仓库的`examples`目录中有更详细的示例代码。*
+*在`examples`目录中有更详细的示例代码。*
 
 下图是目前已实现的图文混排效果预览图：
 

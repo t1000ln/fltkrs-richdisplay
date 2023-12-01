@@ -179,6 +179,9 @@ pub const DEFAULT_FONT_SIZE: i32 = 14;
 /// 从字体高度计算行高度使用的放大系数。
 pub const LINE_HEIGHT_FACTOR: f32 = 1.4;
 
+/// 用于衡量窗口尺寸的基本字符。若应用对窗口尺寸敏感，则建议使用等宽字体作为默认字体。`fltk`中`Font::Screen`代表等宽字体。
+pub const BASIC_UNIT_CHAR: char = 'A';
+
 /// 回调函数的参数类型，用于区分来源事件。
 #[derive(Debug)]
 pub enum CallbackData {

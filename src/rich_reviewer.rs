@@ -163,10 +163,7 @@ use fltk::widget::Widget;
 use idgenerator_thin::{IdGeneratorOptions, YitIdHelper};
 use log::{error};
 use throttle_my_fn::throttle;
-use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING,
-            RichData, RichDataOptions, update_data_properties, UserData, ClickPoint,
-            clear_selected_pieces, BlinkState, BLINK_INTERVAL, Callback, CallPage, PageOptions,
-            DEFAULT_FONT_SIZE, WHITE, locate_target_rd, update_selection_when_drag};
+use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData, ClickPoint, clear_selected_pieces, BlinkState, BLINK_INTERVAL, Callback, CallPage, PageOptions, DEFAULT_FONT_SIZE, WHITE, locate_target_rd, update_selection_when_drag, CallbackData};
 use crate::rich_text::{PANEL_PADDING};
 use crate::utils::ID_GENERATOR_INIT;
 
@@ -412,7 +409,7 @@ impl RichReviewer {
                                 if let Some(rd) = buffer_rc.borrow().get(*idx) {
                                     let sd: UserData = rd.into();
                                     if let Some(cb) = &mut *notifier_rc.borrow_mut() {
-                                        cb.notify(sd);
+                                        cb.notify(CallbackData::Data(sd));
                                     }
                                 }
                                 break;

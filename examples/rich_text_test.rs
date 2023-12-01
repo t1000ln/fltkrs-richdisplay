@@ -9,7 +9,7 @@ use fltk::prelude::{GroupExt, ImageExt, WidgetBase, WidgetExt, WindowExt};
 use log::{debug, error};
 use rand::{Rng, thread_rng};
 use fltkrs_richdisplay::rich_text::{RichText};
-use fltkrs_richdisplay::{DataType, RichDataOptions, UserData};
+use fltkrs_richdisplay::{CallbackData, DataType, RichDataOptions, UserData};
 
 pub enum GlobalMessage {
     ContentData(UserData),
@@ -57,14 +57,14 @@ async fn main() {
     rich_text.set_cache_size(200);
 
     // 应用层消息通道，该通道负责两个方向的消息传递：1将应用层产生的消息向下传递给fltk组件层通道，2将fltk组件层产生的事件消息向上传递给应用层。
-    let (action_sender, action_receiver) = tokio::sync::mpsc::channel::<UserData>(100);
+    let (action_sender, action_receiver) = tokio::sync::mpsc::channel::<CallbackData>(100);
     // 自定义回调函数，当用户鼠标点击可互动的数据段时，组件会调用回调函数。
     let cb_fn = {
         let sender_rc = action_sender.clone();
-        move |user_data| {
+        move |cb_data| {
             let sender = sender_rc.clone();
             tokio::spawn(async move {
-                if let Err(e) = sender.send(user_data).await {
+                if let Err(e) = sender.send(cb_data).await {
                     error!("发送用户操作失败: {:?}", e);
                 }
             });
@@ -187,6 +187,24 @@ async fn main() {
                 UserData::new_image(img2_data.clone(), img2_width, img2_height).set_clickable(true).set_blink(true),
                 // UserData::new_image(img2_data.clone(), img2_width, img2_height).set_clickable(true),
             ]);
+            // 用于测试行、列数计算的模拟数据。
+            // let mut data: Vec<UserData> = Vec::from([
+            //     UserData::new_text(format!("{}安全并且高效地处理并发编程是Rust的另一个主要目标。💖并发编程和并行编程这两种概念随着计算机设备的多核a优化而变得越来越重要。并发编程🐉允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 0)).set_bg_color(Some(Color::DarkCyan)),
+            //     UserData::new_text(format!("{}安全并且高效地处理并发编程是Rust的另一个主要目标。💖并发编程和并行编程这两种概念随着计算机设备的多核a优化而变得越来越重要。并发编程🐉允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 1)).set_bg_color(Some(Color::DarkCyan)),
+            //     UserData::new_text(format!("{}安全并且高效地处理并发编程是Rust的另一个主要目标。💖并发编程和并行编程这两种概念随着计算机设备的多核a优化而变得越来越重要。并发编程🐉允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 2)).set_bg_color(Some(Color::DarkCyan)),
+            //     UserData::new_text(format!("{}安全并且高效地处理并发编程是Rust的另一个主要目标。💖并发编程和并行编程这两种概念随着计算机设备的多核a优化而变得越来越重要。并发编程🐉允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 3)).set_bg_color(Some(Color::DarkCyan)),
+            //     UserData::new_text(format!("{}安全并且高效地处理并发编程是Rust的另一个主要目标。💖并发编程和并行编程这两种概念随着计算机设备的多核a优化而变得越来越重要。并发编程🐉允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 4)).set_bg_color(Some(Color::DarkCyan)),
+            //     UserData::new_text(format!("{}安全并且高效地处理并发编程是Rust的另一个主要目标。💖并发编程和并行编程这两种概念随着计算机设备的多核a优化而变得越来越重要。并发编程🐉允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 5)).set_bg_color(Some(Color::DarkCyan)),
+            //     UserData::new_text(format!("{}安全并且高效地处理并发编程是Rust的另一个主要目标。💖并发编程和并行编程这两种概念随着计算机设备的多核a优化而变得越来越重要。并发编程🐉允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 6)).set_bg_color(Some(Color::DarkCyan)),
+            //     UserData::new_text(format!("{}安全并且高效地处理并发编程是Rust的另一个主要目标。💖并发编程和并行编程这两种概念随着计算机设备的多核a优化而变得越来越重要。并发编程🐉允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 7)).set_bg_color(Some(Color::DarkCyan)),
+            //     UserData::new_text(format!("{}安全并且高效地处理并发编程是Rust的另一个主要目标。💖并发编程和并行编程这两种概念随着计算机设备的多核a优化而变得越来越重要。并发编程🐉允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 8)).set_bg_color(Some(Color::DarkCyan)),
+            //     UserData::new_text(format!("{}安全并且高效地处理并发编程是Rust的另一个主要目标。💖并发编程和并行编程这两种概念随着计算机设备的多核a优化而变得越来越重要。并发编程🐉允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 9)).set_bg_color(Some(Color::DarkCyan)),
+            //     UserData::new_text(format!("{}安全并且高效地处理并发编程是Rust的另一个主要目标。💖并发编程和并行编程这两种概念随着计算机设备的多核a优化而变得越来越重要。并发编程🐉允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 10)).set_bg_color(Some(Color::DarkCyan)),
+            //     UserData::new_text(format!("{}安全并且高效地处理并发编程是Rust的另一个主要目标。💖并发编程和并行编程这两种概念随着计算机设备的多核a优化而变得越来越重要。并发编程🐉允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 11)).set_bg_color(Some(Color::DarkCyan)),
+            //     UserData::new_text(format!("{}安全并且高效地处理并发编程是Rust的另一个主要目标。💖并发编程和并行编程这两种概念随着计算机设备的多核a优化而变得越来越重要。并发编程🐉允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 12)).set_bg_color(Some(Color::DarkCyan)),
+            //     UserData::new_text(format!("{}安全并且高效地处理并发编程是Rust的另一个主要目标。💖并发编程和并行编程这两种概念随着计算机设备的多核a优化而变得越来越重要。并发编程🐉允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 13)).set_bg_color(Some(Color::DarkCyan)),
+            //     UserData::new_text(format!("{}安全并且高效地处理并发编程是Rust的另一个主要目标。💖并发编程和并行编程这两种概念随着计算机设备的多核a优化而变得越来越重要。并发编程🐉允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 14)).set_bg_color(Some(Color::DarkCyan)),
+            // ]);
             data.reverse();
             while let Some(data_unit) = data.pop() {
                 global_sender.send(GlobalMessage::ContentData(data_unit));
@@ -253,36 +271,45 @@ async fn main() {
     }
 }
 
-pub fn handle_action(mut action_receiver: tokio::sync::mpsc::Receiver<UserData>, global_sender_rc: app::Sender<GlobalMessage>) {
+pub fn handle_action(mut action_receiver: tokio::sync::mpsc::Receiver<CallbackData>, global_sender_rc: app::Sender<GlobalMessage>) {
     tokio::spawn(async move {
         while let Some(data) = action_receiver.recv().await {
-            if data.text.starts_with("10") {
-                let toggle = !data.blink;
-                let update_options = RichDataOptions::new(data.id).blink(toggle);
-                global_sender_rc.send(GlobalMessage::UpdateData(update_options));
-            } else if data.text.starts_with("13") {
-                let toggle = !data.blink;
-                let update_options = RichDataOptions::new(data.id).blink(toggle);
-                global_sender_rc.send(GlobalMessage::UpdateData(update_options));
-            } else if data.text.starts_with("14") {
-                let toggle = !data.underline;
-                let update_options = RichDataOptions::new(data.id).underline(toggle);
-                global_sender_rc.send(GlobalMessage::UpdateData(update_options));
-            } else if data.text.starts_with("22") {
-                global_sender_rc.send(GlobalMessage::DisableData(data.id));
-            } else if data.text.starts_with("23") {
-                let toggle = !data.strike_through;
-                let update_options = RichDataOptions::new(data.id).strike_through(toggle);
-                global_sender_rc.send(GlobalMessage::UpdateData(update_options));
-            } else if data.text.starts_with("25") {
-                let update_options = RichDataOptions::new(data.id).clickable(false).expired(true).bg_color(Color::DarkGreen);
-                global_sender_rc.send(GlobalMessage::UpdateData(update_options));
-            } else if data.data_type == DataType::Image {
-                let toggle = !data.disabled;
-                // let update_options = RichDataOptions::new(data.id).blink(toggle);
-                let update_options = RichDataOptions::new(data.id).disabled(toggle);
-                global_sender_rc.send(GlobalMessage::UpdateData(update_options));
+            match data {
+                CallbackData::Data(data) => {
+                    debug!("用户点击数据：{:?}", data);
+                    if data.text.starts_with("10") {
+                        let toggle = !data.blink;
+                        let update_options = RichDataOptions::new(data.id).blink(toggle);
+                        global_sender_rc.send(GlobalMessage::UpdateData(update_options));
+                    } else if data.text.starts_with("13") {
+                        let toggle = !data.blink;
+                        let update_options = RichDataOptions::new(data.id).blink(toggle);
+                        global_sender_rc.send(GlobalMessage::UpdateData(update_options));
+                    } else if data.text.starts_with("14") {
+                        let toggle = !data.underline;
+                        let update_options = RichDataOptions::new(data.id).underline(toggle);
+                        global_sender_rc.send(GlobalMessage::UpdateData(update_options));
+                    } else if data.text.starts_with("22") {
+                        global_sender_rc.send(GlobalMessage::DisableData(data.id));
+                    } else if data.text.starts_with("23") {
+                        let toggle = !data.strike_through;
+                        let update_options = RichDataOptions::new(data.id).strike_through(toggle);
+                        global_sender_rc.send(GlobalMessage::UpdateData(update_options));
+                    } else if data.text.starts_with("25") {
+                        let update_options = RichDataOptions::new(data.id).clickable(false).expired(true).bg_color(Color::DarkGreen);
+                        global_sender_rc.send(GlobalMessage::UpdateData(update_options));
+                    } else if data.data_type == DataType::Image {
+                        let toggle = !data.disabled;
+                        // let update_options = RichDataOptions::new(data.id).blink(toggle);
+                        let update_options = RichDataOptions::new(data.id).disabled(toggle);
+                        global_sender_rc.send(GlobalMessage::UpdateData(update_options));
+                    }
+                }
+                CallbackData::Shape(data) => {
+                    debug!("窗口尺寸发生变化，新：{},{},{},{}，旧：{},{}", data.new_width, data.new_height, data.new_cols, data.new_rows, data.old_width, data.old_height);
+                }
             }
+
         }
     });
 }

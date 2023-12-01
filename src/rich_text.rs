@@ -20,7 +20,7 @@ use crate::{
     update_selection_when_drag, CallbackData, ShapeData, LINE_HEIGHT_FACTOR};
 
 use idgenerator_thin::{IdGeneratorOptions, YitIdHelper};
-use log::{error};
+use log::{debug, error};
 use throttle_my_fn::throttle;
 use crate::rich_reviewer::RichReviewer;
 use crate::utils::ID_GENERATOR_INIT;
@@ -274,6 +274,7 @@ impl RichText {
                                         flex.fixed(&rv.scroller, current_height - panel_height);
                                     }
                                 }
+                                debug!("flex window size changed to: {},{}", current_width, current_height);
                                 // flex.recalc();
                             }
                         }
@@ -350,7 +351,7 @@ impl RichText {
             let text_size_rc = text_size.clone();
             move |mut ctx, evt| {
                 match evt {
-                    Event::Resize => {
+                    Event::Resize | Event::Show => {
                         // 缩放窗口后重新计算分片绘制信息。
                         let (current_width, current_height) = (ctx.width(), ctx.height());
                         let (last_width, last_height) = last_window_size.get();
@@ -368,11 +369,13 @@ impl RichText {
 
                             if current_width > 0 || current_height > 0 {
                                 if let Some(cb) = notifier_rc.borrow_mut().as_mut() {
+                                    debug!("panel send resize event to notifier");
                                     draw::set_font(text_font_rc.get(), text_size_rc.get());
                                     let (char_width, _) = draw::measure("中", false);
                                     let new_cols = ((current_width - PADDING.left - PADDING.right) as f32 / char_width as f32).floor() as i32;
                                     let new_rows = ((current_height - PADDING.top - PADDING.bottom) as f32 / (text_size_rc.get() as f32 * LINE_HEIGHT_FACTOR).ceil()).floor() as i32;
                                     cb.notify(CallbackData::Shape(ShapeData::new(last_width, last_height, current_width, current_height, new_cols, new_rows)));
+                                    debug!("panel window size changed to: {},{}", current_width, current_height);
                                 }
                             }
 

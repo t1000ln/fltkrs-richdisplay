@@ -176,6 +176,18 @@ pub const WHITE: Color = Color::from_rgb(255, 255, 255);
 /// 默认字体尺寸。
 pub const DEFAULT_FONT_SIZE: i32 = 14;
 
+/// 从字体高度计算行高度使用的放大系数。
+pub const LINE_HEIGHT_FACTOR: f32 = 1.4;
+
+/// 回调函数的参数类型，用于区分来源事件。
+#[derive(Debug)]
+pub enum CallbackData {
+    /// 数据互动事件产生的回调参数。
+    Data(UserData),
+    /// 主视图缩放时产生的回调参数。
+    Shape(ShapeData)
+}
+
 
 /// 回调函数载体。
 /// 当用户使用鼠标点击主视图或回顾区视图上的可互动数据段时，会执行该回调函数，并将点击目标处的数据作为参数传入回调函数。
@@ -183,7 +195,7 @@ pub const DEFAULT_FONT_SIZE: i32 = 14;
 #[derive(Clone)]
 pub struct Callback {
     /// 回调函数。
-    notifier: Rc<RefCell<Box<dyn FnMut(UserData)>>>,
+    notifier: Rc<RefCell<Box<dyn FnMut(CallbackData)>>>,
 }
 
 impl Callback {
@@ -222,7 +234,7 @@ impl Callback {
     /// let cb = Callback::new(Rc::new(RefCell::new(Box::new(cb_fn))));
     /// rich_text.set_notifier(cb);
     /// ```
-    pub fn new(notifier: Rc<RefCell<Box<dyn FnMut(UserData)>>>) -> Callback {
+    pub fn new(notifier: Rc<RefCell<Box<dyn FnMut(CallbackData)>>>) -> Callback {
         Callback { notifier }
     }
 
@@ -239,15 +251,15 @@ impl Callback {
     /// ```
     ///
     /// ```
-    fn notify(&mut self, data: UserData) {
+    fn notify(&mut self, data: CallbackData) {
         let notify = &mut* self.notifier.borrow_mut();
         notify(data);
     }
 }
 
-impl Debug for Callback {
+impl Debug for Callback{
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Callback count: {}", Rc::<RefCell<Box<(dyn FnMut(UserData) + 'static)>>>::strong_count(&self.notifier))
+        write!(f, "Callback count: {}", Rc::<RefCell<Box<(dyn FnMut(CallbackData) + 'static)>>>::strong_count(&self.notifier))
     }
 }
 
@@ -274,6 +286,38 @@ impl Debug for CallPage {
         write!(f, "CallPage count: {}", Rc::<RefCell<Box<(dyn FnMut(PageOptions) + 'static)>>>::strong_count(&self.notifier))
     }
 }
+
+/// 用于表示窗口尺寸变化前后差异的数据结构。
+#[derive(Debug, Clone, Copy)]
+pub struct ShapeData {
+    /// 旧的宽度。
+    pub old_width: i32,
+    /// 旧的高度。
+    pub old_height: i32,
+    /// 新的宽度。
+    pub new_width: i32,
+    /// 新的高度。
+    pub new_height: i32,
+    /// 按照默认字体设置计算出单行的列数。
+    pub new_cols: i32,
+    /// 按照默认字体设置计算出可有效显示的行数。
+    /// 在全部内容均保持默认字体的情况下，由于视图上可以显示被裁剪的行内容，因此视图中可见的行数可能大于这个数值。
+    pub new_rows: i32,
+}
+
+impl ShapeData {
+    pub fn new(old_width: i32, old_height: i32, new_width: i32, new_height: i32, new_cols: i32, new_rows: i32) -> Self {
+        Self {
+            old_width,
+            old_height,
+            new_width,
+            new_height,
+            new_cols,
+            new_rows,
+        }
+    }
+}
+
 
 impl CallPage {
     /// 构建新的分页回调结构体实例。
@@ -611,7 +655,8 @@ pub(crate) struct LinePiece {
     pub h: i32,
     /// 虚拟行高顶部y坐标
     pub top_y: i32,
-    /// 额外的行间距
+    /// 额外的行间距。
+    /// 目前默认值为0，未产生实际影响。
     pub spacing: i32,
     /// 建议下一个数据分片绘制起点x坐标
     pub next_x: i32,
@@ -1603,7 +1648,7 @@ impl LinedData for RichData {
                 set_font(self.font, self.font_size);
 
                 // 字体渲染高度，小于等于行高度。
-                let ref_font_height = (self.font_size as f32 * 1.4).ceil() as i32;
+                let ref_font_height = (self.font_size as f32 * LINE_HEIGHT_FACTOR).ceil() as i32;
 
                 let current_line_spacing = min(last_piece.spacing, descent());
 

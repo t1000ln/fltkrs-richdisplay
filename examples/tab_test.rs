@@ -4,7 +4,8 @@ use fltk::prelude::{GroupExt, WidgetExt, WindowExt};
 use fltkrs_richdisplay::rich_text::RichText;
 use fltkrs_richdisplay::UserData;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     simple_logger::init_with_level(log::Level::Debug).unwrap();
     let app = app::App::default().load_system_fonts();
     let mut win = window::Window::default()
@@ -29,32 +30,13 @@ fn main() {
     //     UserData::new_text("Software developer Graydon Hoare created Rust as a personal project while working at Mozilla Research in 2006.".to_string())
     // ];
     let data = vec![
+        UserData::new_text("dev@DESKTOP-PCL7MBI:\t~$ ls\r\n".to_string()),
+        UserData::new_text("dev@DESKTOP-PCL7MBI:\t~$ ls\r\n".to_string()),
+        UserData::new_text("dev@DESKTOP-PCL7MBII:\t~$ ls\r\n".to_string()),
+        UserData::new_text("dev@DESKTOP-PCL7MBI:\t~$ ls\r\n".to_string()),
         UserData::new_text("dev@DESKTOP-PCL7MBI:~$ ls\r\n".to_string()),
-        UserData::new_text("你好".to_string()),
-        UserData::new_text("     ".to_string()),
-        UserData::new_text("Documents".to_string()),
-        UserData::new_text("  ".to_string()),
-        UserData::new_text("fltkrs-richdisplay".to_string()),
-        UserData::new_text("  ".to_string()),
-        UserData::new_text("Music".to_string()),
-        UserData::new_text("     ".to_string()),
-        UserData::new_text("Public".to_string()),
-        UserData::new_text("  ".to_string()),
-        UserData::new_text("Templates".to_string()),
-        UserData::new_text("  ".to_string()),
-        UserData::new_text("workspace\r\n".to_string()),
-        UserData::new_text("Desktop".to_string()),
-        UserData::new_text("  ".to_string()),
-        UserData::new_text("Downloads".to_string()),
-        UserData::new_text("  ".to_string()),
-        UserData::new_text("hello".to_string()),
-        UserData::new_text("               ".to_string()),
-        UserData::new_text("Pictures".to_string()),
-        UserData::new_text("  ".to_string()),
-        UserData::new_text("snap".to_string()),
-        UserData::new_text("    ".to_string()),
-        UserData::new_text("Videos\r\n".to_string()),
-        UserData::new_text("dev@DESKTOP-PCL7MBI:~$ ".to_string()),
+        UserData::new_text("dev@DESKTOP-PCL7MBI:\t~$ ls\r\n".to_string()),
+        UserData::new_text("dev@DESKTOP-PCL7MBI:\t~$ ls\r\n".to_string()),
     ];
 
     for ud in data {

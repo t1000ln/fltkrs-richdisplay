@@ -11,7 +11,6 @@
 //! use fltk::image::SharedImage;
 //! use fltk::prelude::{GroupExt, ImageExt, WidgetBase, WidgetExt, WindowExt};
 //! use log::{LevelFilter, warn};
-//! use simple_logger::SimpleLogger;
 //! use time::macros::format_description;
 //! use fltkrs_richdisplay::rich_reviewer::RichReviewer;
 //! use fltkrs_richdisplay::{PageOptions, UserData};
@@ -60,29 +59,29 @@
 //!
 //!     let data_buffer = Rc::new(RefCell::new(Vec::<UserData>::new()));
 //!
-//!     let img1 = SharedImage::load("res/1.jpg").unwrap();
-//!     let (img1_width, img1_height, img1_data) = (img1.width(), img1.height(), img1.to_rgb_data());
-//!     let img2 = SharedImage::load("res/2.jpg").unwrap();
-//!     let (img2_width, img2_height, img2_data) = (img2.width(), img2.height(), img2.to_rgb_data());
+//!     let img1 = SharedImage::load("res/1.jpg").unwrap().to_rgb().unwrap();
+//!     let (img1_width, img1_height) = (img1.width(), img1.height());
+//!     let img2 = SharedImage::load("res/2.jpg").unwrap().to_rgb().unwrap();
+//!     let (img2_width, img2_height) = (img2.width(), img2.height());
 //!     for i in 0..100 {
 //!         let turn = i * 13;
 //!         let mut data: Vec<UserData> = Vec::from([
-//!             UserData::new_text(format!("{}安全并且高效地处理𝄞并发编程是Rust的另一个主要目标。💖并发编程和并行编程这两种概念随着计算机设备的多核a优化而变得越来越重要。并发编程🐉允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 1)).set_underline(true).set_font(Font::Helvetica, 38).set_bg_color(Some(Color::DarkYellow)).set_clickable(true),
-//!             UserData::new_text(format!("{}在大部分现在操作系统中，执行程序的代码会运行在进程中，操作系统会同时管理多个进程。类似地，程序内部也可以拥有多个同时运行的独立部分，用来运行这些独立部分的就叫做线程。", turn + 2)).set_font(Font::HelveticaItalic, 18).set_bg_color(Some(Color::Green)),
-//!             UserData::new_image(img1_data.clone(), img1_width, img1_height),
+//!             UserData::new_text(format!("{}安全并且高效地处理𝄞并发编程是Rust的另一个主要目标。💖并发编程和并行编程这两种概念随着计算机设备的多核a优化而变得越来越重要。并发编程🐉允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 1)).set_underline(true).set_font_and_size(Font::Helvetica, 38).set_bg_color(Some(Color::DarkYellow)).set_clickable(true),
+//!             UserData::new_text(format!("{}在大部分现在操作系统中，执行程序的代码会运行在进程中，操作系统会同时管理多个进程。类似地，程序内部也可以拥有多个同时运行的独立部分，用来运行这些独立部分的就叫做线程。", turn + 2)).set_font_and_size(Font::HelveticaItalic, 18).set_bg_color(Some(Color::Green)),
+//!             UserData::new_image(img1.copy(), img1_width, img1_height, img1_width, img1_height, Some("res/1.jpg".to_string())),
 //!             UserData::new_text(format!("{}由于多线程可以同时运行，🐉所以将计算操作拆分至多个线程可以提高性能。a但是这也增加了程序的复杂度，因为不同线程的执行顺序是无法确定的。\r\n", turn + 3)).set_fg_color(Color::Red).set_bg_color(Some(Color::Green)).set_underline(true),
 //!             UserData::new_text(format!("{}由于多线程可以同时运行，所以将计算操作拆分至多个线程可以提高性能。但是这也增加了程序的复杂度，因为不同线程的执行顺序是无法确定的。\r\n", turn + 4)).set_fg_color(Color::Red).set_bg_color(Some(Color::Green)),
-//!             UserData::new_text(format!("{}安全并且高效地处理并发编程是Rust的另一个主要目标。并发编程和并行编程这两种概念随着计算机设备的多核优化而变得越来越重要。并发编程允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。\r\n", turn + 5)).set_font(Font::Helvetica, 9).set_underline(true).set_blink(true),
-//!             UserData::new_text(format!("{}在大部分现在操作系统中，执行程序的代码会运行在进程中，操作系统会同时管理多个进程b。类似地，𝄞程序内部也可以拥有多个同时运行的独立部分，用来运行这些独立部分的就叫做线程。\r\n", turn + 6)).set_font(Font::Helvetica, 32),
+//!             UserData::new_text(format!("{}安全并且高效地处理并发编程是Rust的另一个主要目标。并发编程和并行编程这两种概念随着计算机设备的多核优化而变得越来越重要。并发编程允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。\r\n", turn + 5)).set_font_and_size(Font::Helvetica, 9).set_underline(true).set_blink(true),
+//!             UserData::new_text(format!("{}在大部分现在操作系统中，执行程序的代码会运行在进程中，操作系统会同时管理多个进程b。类似地，𝄞程序内部也可以拥有多个同时运行的独立部分，用来运行这些独立部分的就叫做线程。\r\n", turn + 6)).set_font_and_size(Font::Helvetica, 32),
 //!             UserData::new_text(format!("{}由于多线程可以同时运行，所以将计算操作拆分至多个线程可以提高性能。a但是这也增加了程序的复杂度，因为不同线程的执行顺序是无法确定的。\r\n", turn + 7)).set_fg_color(Color::Red).set_bg_color(Some(Color::Green)),
 //!             UserData::new_text(format!("{}由于多线程可以同时运行，所以将计算操作拆分至多个线程可以提高性能。a但是这也增加了程序的复杂度，因为不同线程的执行顺序是无法确定的。\r\n", turn + 8)).set_fg_color(Color::Red).set_bg_color(Some(Color::Green)),
-//!             UserData::new_image(img1_data.clone(), img1_width, img1_height).set_clickable(true),
+//!             UserData::new_image(img1.copy(), img1_width, img1_height, img1_width, img1_height, Some("res/1.jpg".to_string())).set_clickable(true),
 //!             UserData::new_text(format!("{}安全并且高效地处理并发编程是Rust的另一个主要目标。并发编程和并行编程这两种概念随着计算机设备的多核优化而变得越来越重要。并发编程允许程序中的不同部分相互独立地运行；并行编程则允许程序中不同部分同时执行。", turn + 9)).set_fg_color(Color::Yellow).set_bg_color(Some(Color::DarkBlue)),
-//!             UserData::new_text(format!("{}在大部分现在操作系统中，执行程序的代码会运行在进程中，操作系统会同时管理多个进程。类似地，程序内部也可以拥有多个同时运行的独立部分，用来运行这些独立部分的就叫做线程。\r\n", turn + 10)).set_font(Font::HelveticaBold, 32).set_bg_color(Some(Color::Magenta)).set_clickable(true),
+//!             UserData::new_text(format!("{}在大部分现在操作系统中，执行程序的代码会运行在进程中，操作系统会同时管理多个进程。类似地，程序内部也可以拥有多个同时运行的独立部分，用来运行这些独立部分的就叫做线程。\r\n", turn + 10)).set_font_and_size(Font::HelveticaBold, 32).set_bg_color(Some(Color::Magenta)).set_clickable(true),
 //!             UserData::new_text(format!("{}由于多线程可以同时运行，所以将计算操作拆分至多个线程可以提高性能。a但是这也增加了程序的复杂度，因为不同线程的执行顺序是无法确定的。\r\n", turn + 11)).set_fg_color(Color::Red).set_bg_color(Some(Color::Green)),
 //!             UserData::new_text(format!("{}由于多线程可以同时运行，所以将计算操作拆分至多个线程可以提高性能。", turn + 12)).set_fg_color(Color::Red).set_bg_color(Some(Color::Green)).set_clickable(true),
-//!             UserData::new_text(format!("{}由于多线程可以同时运行，💖所以将计算操作拆分至多个线程可以提高性能。", turn + 13)).set_fg_color(Color::Cyan).set_font(Font::Courier, 18).set_clickable(true).set_blink(true),
-//!             UserData::new_image(img2_data.clone(), img2_width, img2_height).set_clickable(true).set_blink(true),
+//!             UserData::new_text(format!("{}由于多线程可以同时运行，💖所以将计算操作拆分至多个线程可以提高性能。", turn + 13)).set_fg_color(Color::Cyan).set_font_and_size(Font::Courier, 18).set_clickable(true).set_blink(true),
+//!             UserData::new_image(img2.copy(), img2_width, img2_height, img2_width, img2_height, Some("res/2.jpg".to_string())).set_clickable(true).set_blink(true),
 //!         ]);
 //!         data.reverse();
 //!         while let Some(data_unit) = data.pop() {
@@ -151,31 +150,34 @@
 use std::cell::{Cell, RefCell};
 use std::cmp::{max, min, Ordering};
 use std::collections::{HashMap};
-use std::rc::{Rc, Weak};
+use std::rc::{Rc};
+use std::sync::{Arc, OnceLock, Weak};
 use std::time::{Duration};
+use debounce_fltk::throttle_check;
 use fltk::draw::{draw_rect_fill, draw_xyline, LineStyle, Offscreen, set_draw_color, set_line_style};
 use fltk::enums::{Align, Color, Cursor, Event, Font};
 use fltk::group::{Scroll, ScrollType};
-use fltk::prelude::{GroupExt, WidgetBase, WidgetExt};
+use fltk::prelude::{GroupExt, MenuExt, WidgetBase, WidgetExt};
 use fltk::{app, draw, widget_extends};
-use fltk::app::{awake_callback, MouseWheel};
+use fltk::app::{awake_callback, MouseButton, MouseWheel};
+use fltk::menu::{MenuButton, MenuButtonType};
 use fltk::widget::Widget;
-use idgenerator_thin::{IdGeneratorOptions, YitIdHelper};
+use idgenerator_thin::YitIdHelper;
 use log::{error};
-use throttle_my_fn::throttle;
-use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData, ClickPoint, clear_selected_pieces, BlinkState, BLINK_INTERVAL, Callback, CallPage, PageOptions, DEFAULT_FONT_SIZE, WHITE, locate_target_rd, update_selection_when_drag, CallbackData};
+use parking_lot::RwLock;
+use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData, ClickPoint, clear_selected_pieces, BlinkState, BLINK_INTERVAL, Callback, CallPage, PageOptions, DEFAULT_FONT_SIZE, WHITE, locate_target_rd, update_selection_when_drag, CallbackData, BASIC_UNIT_CHAR, DataType, ImageEventData, IMAGE_PADDING_V, expire_data};
 use crate::rich_text::{PANEL_PADDING};
-use crate::utils::ID_GENERATOR_INIT;
 
+static LOAD_PAGE_TASK_ID: OnceLock<i64> = OnceLock::new();
 
 #[derive(Clone, Debug)]
 pub struct RichReviewer {
     pub(crate) scroller: Scroll,
     pub(crate) panel: Widget,
-    pub(crate) data_buffer: Rc<RefCell<Vec<RichData>>>,
+    pub(crate) data_buffer: Arc<RwLock<Vec<RichData>>>,
     background_color: Rc<Cell<Color>>,
     visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
-    clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
+    clickable_data: Arc<RwLock<HashMap<Rectangle, usize>>>,
     reviewer_screen: Rc<RefCell<Offscreen>>,
     notifier: Rc<RefCell<Option<Callback>>>,
     page_notifier: Rc<RefCell<Option<CallPage>>>,
@@ -193,6 +195,7 @@ pub struct RichReviewer {
     text_size: Rc<Cell<i32>>,
     piece_spacing: Rc<Cell<i32>>,
     enable_blink: Rc<Cell<bool>>,
+    basic_char: Rc<Cell<char>>,
 }
 widget_extends!(RichReviewer, Scroll, scroller);
 
@@ -202,12 +205,7 @@ impl RichReviewer {
 
     pub fn new<T>(x: i32, y: i32, w: i32, h: i32, title: T) -> Self
         where T: Into<Option<&'static str>> + Clone {
-        let _ = ID_GENERATOR_INIT.get_or_init(|| {
-            // 初始化ID生成器。
-            let options = IdGeneratorOptions::new(1);
-            YitIdHelper::set_id_generator(options);
-            0
-        });
+
         let mut scroller = Scroll::new(x, y, w, h, title);
         scroller.set_type(ScrollType::Vertical);
         scroller.set_scrollbar_size(Self::SCROLL_BAR_WIDTH);
@@ -221,10 +219,10 @@ impl RichReviewer {
         let mut panel = Widget::new(x, y, w, h, None);
         scroller.add_resizable(&panel);
 
-        let data_buffer: Rc<RefCell<Vec<RichData>>> = Rc::new(RefCell::new(vec![]));
+        let data_buffer: Arc<RwLock<Vec<RichData>>> = Arc::new(RwLock::new(vec![]));
         let background_color = Rc::new(Cell::new(Color::Black));
         let visible_lines = Rc::new(RefCell::new(HashMap::<Rectangle, LinePiece>::new()));
-        let clickable_data = Rc::new(RefCell::new(HashMap::<Rectangle, usize>::new()));
+        let clickable_data = Arc::new(RwLock::new(HashMap::<Rectangle, usize>::new()));
         let notifier: Rc<RefCell<Option<Callback>>> = Rc::new(RefCell::new(None));
         let page_notifier: Rc<RefCell<Option<CallPage>>> = Rc::new(RefCell::new(None));
         let reviewer_screen = Rc::new(RefCell::new(Offscreen::new(w, h).unwrap()));
@@ -238,6 +236,7 @@ impl RichReviewer {
         let search_results = Vec::<usize>::new();
         let search_str = None::<String>;
         let current_highlight_focus = None::<(usize, usize)>;
+        let basic_char = Rc::new(Cell::new(BASIC_UNIT_CHAR));
 
         let blink_flag = Rc::new(RefCell::new(BlinkState::new()));
         let blink_handler = {
@@ -333,7 +332,9 @@ impl RichReviewer {
             let mut selected = false;
             let mut push_from_point = ClickPoint::new(0, 0);
             let mut select_from_row = 0;
-            let selected_pieces = Rc::new(RefCell::new(Vec::<Weak<RefCell<LinePiece>>>::new()));
+            let selected_pieces = Arc::new(RwLock::new(Vec::<Weak<RwLock<LinePiece>>>::new()));
+            let basic_char_rc = basic_char.clone();
+            let text_size_rc = text_size.clone();
             move |scroller, evt| {
                 match evt {
                     // Event::Close => {
@@ -353,10 +354,10 @@ impl RichReviewer {
                             if last_width != current_width {
                                 // 当窗口宽度发生变化时，需要重新计算数据分片坐标信息。
                                 let drawable_max_width = current_width - PADDING.left - PADDING.right;
-                                let mut last_piece = LinePiece::init_piece();
-                                for rich_data in buffer_rc.borrow_mut().iter_mut() {
+                                let mut last_piece = LinePiece::init_piece(text_size_rc.get());
+                                for rich_data in buffer_rc.write().iter_mut() {
                                     rich_data.line_pieces.clear();
-                                    last_piece = rich_data.estimate(last_piece, drawable_max_width);
+                                    last_piece = rich_data.estimate(last_piece, drawable_max_width, basic_char_rc.get());
                                 }
 
                                 new_panel_height = Self::calc_panel_height(buffer_rc.clone(), current_height);
@@ -392,7 +393,8 @@ impl RichReviewer {
                     }
                     Event::Move => {
                         // 检测鼠标进入可互动区域，改变鼠标样式
-                        if mouse_enter(clickable_data_rc.clone()) {
+                        let (entered, _idx) = mouse_enter(clickable_data_rc.clone());
+                        if entered {
                             draw::set_cursor(Cursor::Hand);
                         } else {
                             draw::set_cursor(Cursor::Default);
@@ -403,16 +405,149 @@ impl RichReviewer {
                     }
                     Event::Released => {
                         // 检测鼠标点击可互动区域，执行用户自定义操作
-                        for (area, idx) in clickable_data_rc.borrow().iter() {
+                        let mut target_opt: Option<UserData> = None;
+                        let mut target_rd_v_bounds: Option<(i32, i32, i32, i32)> = None;
+                        for (area, idx) in clickable_data_rc.read().iter() {
                             let (x, y, w, h) = area.tup();
                             if app::event_inside(x, y, w, h) {
-                                if let Some(rd) = buffer_rc.borrow().get(*idx) {
+                                if let Some(rd) = buffer_rc.read().get(*idx) {
+                                    target_rd_v_bounds.replace(*rd.v_bounds.read());
                                     let sd: UserData = rd.into();
-                                    if let Some(cb) = &mut *notifier_rc.borrow_mut() {
-                                        cb.notify(CallbackData::Data(sd));
-                                    }
+                                    target_opt.replace(sd);
+                                    // if let Some(cb) = &mut *notifier_rc.borrow_mut() {
+                                    //     cb.notify(CallbackData::Data(sd));
+                                    // }
                                 }
                                 break;
+                            }
+                        }
+                        if app::event_mouse_button() == MouseButton::Right {
+                            if let Some(ud) = target_opt {
+                                if ud.action.is_some() {
+                                    // 右键弹出互动菜单
+                                    let ud_rc = Rc::new(ud);
+                                    if let Some(action) = &ud_rc.action {
+                                        let mut popup_menu_rc = MenuButton::new(0, 0, 0, 0, None);
+                                        // popup_menu_rc.clear();
+                                        popup_menu_rc.set_type(MenuButtonType::Popup1);
+                                        popup_menu_rc.set_color(Color::by_index(214));
+                                        popup_menu_rc.set_label_font(Font::Screen);
+                                        if !action.title.trim().is_empty() {
+                                            // 处理提示信息，添加换行，避免单行过宽。
+                                            let new_hint = action.title.chars().fold("".to_string(), |mut s, c| {
+                                                s.push(c);
+                                                if s.ends_with(". ")
+                                                    || s.ends_with("。")
+                                                    || s.ends_with("?")
+                                                    || s.ends_with("？")
+                                                    || s.ends_with("!")
+                                                    || s.ends_with("！") {
+                                                    s.push('\n');
+                                                }
+                                                s
+                                            });
+                                            popup_menu_rc.set_label(new_hint.as_str());
+                                        }
+
+                                        for item in action.items.iter() {
+                                            popup_menu_rc.add_choice(item.desc.as_str());
+                                        }
+                                        // 用户选中的菜单项后将其附带到目标数据段中回传到上层应用。
+                                        if ud_rc.data_type == DataType::Text {
+                                            // 文字类型
+                                            popup_menu_rc.set_callback({
+                                                let ud_rc_2 = ud_rc.clone();
+                                                let notifier_rc = notifier_rc.clone();
+                                                move |menu| {
+                                                    let selected_idx = menu.value();
+                                                    if selected_idx >= 0 {
+                                                        let mut ud = ud_rc_2.as_ref().clone();
+                                                        if let Some(action) = &mut ud.action {
+                                                            if let Some(item) = action.items.get(selected_idx as usize) {
+                                                                if let Some(cb) = notifier_rc.borrow_mut().as_mut() {
+                                                                    action.active.replace(item.cmd.clone());
+                                                                    cb.notify(CallbackData::Data(ud));
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            });
+                                        } else {
+                                            // 图片类型
+                                            let click_point = if let Some(v_bounds) = target_rd_v_bounds {
+                                                let (app_x, app_y) = app::event_coords();
+                                                // debug!("rd v_bounds: {:?}, app_coords: {}, {}", v_bounds, app_x, app_y);
+                                                let mut offset_y = scroller.yposition() - PANEL_PADDING;
+                                                // 处理数据相对位移
+                                                if let Some(first) = buffer_rc.read().first() {
+                                                    offset_y += first.v_bounds.read().0;
+                                                }
+                                                if offset_y < 0 {offset_y = 0;}
+                                                let click_at_x = app_x - scroller.x() - v_bounds.2;
+                                                let click_at_y = app_y - scroller.y() + offset_y - v_bounds.0 + IMAGE_PADDING_V;
+                                                // debug!("click_at_x: {}, click_at_y: {}", click_at_x, click_at_y);
+                                                (click_at_x, click_at_y)
+                                            } else {
+                                                (0, 0)
+                                            };
+
+                                            popup_menu_rc.set_callback({
+                                                let ud_rc_2 = ud_rc.clone();
+                                                let notifier_rc = notifier_rc.clone();
+                                                move |menu| {
+                                                    let selected_idx = menu.value();
+                                                    if selected_idx >= 0 {
+                                                        let mut ud = ud_rc_2.as_ref().clone();
+                                                        if let Some(action) = &mut ud.action {
+                                                            if let Some(item) = action.items.get(selected_idx as usize) {
+                                                                if let Some(cb) = notifier_rc.borrow_mut().as_mut() {
+                                                                    cb.notify(CallbackData::Image(ImageEventData::new(click_point, ud.image_src_url, ud.id, item.cmd.clone(), ud.image_file_path.clone(), (ud.image_target_width, ud.image_target_height))));
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            });
+                                        }
+
+                                        popup_menu_rc.popup();
+                                    }
+                                } else if let Some(cb) = notifier_rc.borrow_mut().as_mut() {
+                                    // 直接返回当前目标数据
+                                    cb.notify(CallbackData::Data(ud));
+                                }
+                            }
+                        } else if app::event_mouse_button() == MouseButton::Left {
+                            // 左键弹出提示信息
+                            if let Some(ud) = target_opt {
+                                // debug!("左键点击：{:?}", ud);
+                                if let Some(action) = &ud.action {
+                                    let mut popup_menu_rc = MenuButton::new(0, 0, 0, 0, None);
+                                    popup_menu_rc.set_type(MenuButtonType::Popup1);
+                                    if !action.items.is_empty() {
+                                        popup_menu_rc.set_label("右键列出可选操作");
+                                    }
+                                    popup_menu_rc.set_color(Color::by_index(215));
+                                    if !action.title.is_empty() {
+                                        let new_hint = action.title.chars().fold("".to_string(), |mut s, c| {
+                                            s.push(c);
+                                            if s.ends_with(". ")
+                                                || s.ends_with("。")
+                                                || s.ends_with("?")
+                                                || s.ends_with("？")
+                                                || s.ends_with("!")
+                                                || s.ends_with("！") {
+                                                s.push('\n');
+                                            }
+                                            s
+                                        });
+                                        popup_menu_rc.add_choice(new_hint.as_str());
+                                    } else {
+                                        popup_menu_rc.add_choice("暂无描述");
+                                    }
+                                    popup_menu_rc.popup();
+                                }
                             }
                         }
                     }
@@ -429,16 +564,16 @@ impl RichReviewer {
                         let (p_offset_x, p_offset_y) = (scroller.x(), scroller.y());
                         let mut offset_y = scroller.yposition() - PANEL_PADDING;
                         // 处理数据相对位移
-                        if let Some(first) = buffer_rc.borrow().first() {
-                            offset_y += first.v_bounds.get().0;
+                        if let Some(first) = buffer_rc.read().first() {
+                            offset_y += first.v_bounds.read().0;
                         }
                         push_from_point.x = push_from_x - p_offset_x;
                         push_from_point.y = push_from_y + offset_y - p_offset_y + PADDING.top;
 
                         // 尝试检测起始点击位置是否位于某个数据段内，可减少后续划选过程中的检测目标范围
-                        let index_vec = (0..buffer_rc.borrow().len()).collect::<Vec<usize>>();
+                        let index_vec = (0..buffer_rc.read().len()).collect::<Vec<usize>>();
                         let rect = push_from_point.as_rect();
-                        if let Some(row) = locate_target_rd(&mut push_from_point, rect, scroller.w(), buffer_rc.borrow().as_slice(), index_vec) {
+                        if let Some(row) = locate_target_rd(&mut push_from_point, rect, scroller.w(), buffer_rc.read().as_slice(), index_vec) {
                             select_from_row = row;
                         }
 
@@ -465,32 +600,30 @@ impl RichReviewer {
                         let (p_offset_x, p_offset_y) = (scroller.x(), scroller.y());
                         let mut offset_y = scroller.yposition() - PANEL_PADDING;
                         // 处理数据相对位移
-                        if let Some(first) = buffer_rc.borrow().first() {
-                            offset_y += first.v_bounds.get().0;
+                        if let Some(first) = buffer_rc.read().first() {
+                            offset_y += first.v_bounds.read().0;
                         }
                         if offset_y < 0 {offset_y = 0;}
-                        let data_buffer_ref = buffer_rc.borrow();
+                        let data_buffer_ref = buffer_rc.read();
                         let data_buffer_slice = data_buffer_ref.as_slice();
                         let mut current_point = ClickPoint::new(
                             current_x - p_offset_x,
                             current_y + offset_y - p_offset_y + PADDING.top
                         );
-                        if let Some(_) = update_selection_when_drag(
+                        update_selection_when_drag(
                             push_from_point,
                             select_from_row,
                             &mut current_point,
                             data_buffer_slice,
                             selected_pieces.clone(),
                             &mut scroller.as_base_widget(),
-                        ) {
-                            selected = !selected_pieces.borrow().is_empty();
-                            // debug!("拖选结果：{selected}");
-                            #[cfg(target_os = "linux")]
-                            if let Some(mut parent) = scroller.parent() {
-                                parent.set_damage(true);
-                            }
+                        );
+                        selected = !selected_pieces.read().is_empty();
+                        // debug!("拖选结果：{selected}");
+                        #[cfg(target_os = "linux")]
+                        if let Some(mut parent) = scroller.parent() {
+                            parent.set_damage(true);
                         }
-
                         return true;
                     }
                     Event::MouseWheel => {
@@ -500,7 +633,7 @@ impl RichReviewer {
                             if scroller.yposition() < (scroller.h() / 4) {
                                 // debug!("请求前一页");
                                 // 获取id与执行回调之间分开处理，避免buffer_rc的嵌套借用出现问题
-                                if let Some(rd) = buffer_rc.borrow().first() {
+                                if let Some(rd) = buffer_rc.read().first() {
                                     id = rd.id;
                                 }
 
@@ -516,7 +649,7 @@ impl RichReviewer {
                             if scroller.yposition() > panel_rc.height() - scroller.h() - (scroller.h() / 4) {
                                 // debug!("请求后一页");
                                 // 获取id与执行回调之间分开处理，避免buffer_rc的嵌套借用出现问题
-                                if let Some(rd) = buffer_rc.borrow().last() {
+                                if let Some(rd) = buffer_rc.read().last() {
                                     id = rd.id;
                                 }
 
@@ -535,7 +668,11 @@ impl RichReviewer {
             }
         });
 
-        Self { scroller, panel, data_buffer, background_color, visible_lines, clickable_data, reviewer_screen, notifier, page_notifier, search_string: search_str, search_results, current_highlight_focus, blink_flag, history_mode, page_size, text_font, text_color, text_size, piece_spacing, enable_blink }
+        Self {
+            scroller, panel, data_buffer, background_color, visible_lines, clickable_data,
+            reviewer_screen, notifier, page_notifier, search_string: search_str, search_results,
+            current_highlight_focus, blink_flag, history_mode, page_size, text_font, text_color,
+            text_size, piece_spacing, enable_blink, basic_char }
     }
 
     pub fn set_background_color(&self, color: Color) {
@@ -557,8 +694,8 @@ impl RichReviewer {
     /// ```
     pub(crate) fn set_data(&mut self, mut data: Vec<RichData>) {
         // 更新回看数据
-        self.data_buffer.borrow_mut().clear();
-        self.data_buffer.borrow_mut().append(&mut data);
+        self.data_buffer.write().clear();
+        self.data_buffer.write().append(&mut data);
 
         let (scroller_width, scroller_height) = (self.panel.width(), self.scroller.height());
 
@@ -577,8 +714,8 @@ impl RichReviewer {
         screen: Rc<RefCell<Offscreen>>,
         scroller: &Scroll,
         visible_lines: Rc<RefCell<HashMap<Rectangle, LinePiece>>>,
-        clickable_data: Rc<RefCell<HashMap<Rectangle, usize>>>,
-        data_buffer: Rc<RefCell<Vec<RichData>>>,
+        clickable_data: Arc<RwLock<HashMap<Rectangle, usize>>>,
+        data_buffer: Arc<RwLock<Vec<RichData>>>,
         background_color: Color,
         blink_flag: Rc<RefCell<BlinkState>>,
         history_mode: bool
@@ -589,7 +726,7 @@ impl RichReviewer {
         let drawable_height = window_height - PANEL_PADDING;
 
         let mut vl = visible_lines.borrow_mut();
-        let mut cd = clickable_data.borrow_mut();
+        let mut cd = clickable_data.write();
         vl.clear();
         cd.clear();
 
@@ -602,8 +739,8 @@ impl RichReviewer {
         let (mut top_y, mut bottom_y) = (base_y, base_y + drawable_height);
 
         // 处理数据相对位移
-        if let Some(first) = data_buffer.borrow().first() {
-            let y = first.v_bounds.get().0;
+        if let Some(first) = data_buffer.read().first() {
+            let y = first.v_bounds.read().0;
             top_y += y;
             bottom_y += y;
         }
@@ -613,7 +750,7 @@ impl RichReviewer {
         // 填充背景色
         draw_rect_fill(0, 0, window_width, window_height, background_color);
 
-        let data = &*data_buffer.borrow();
+        let data = &*data_buffer.read();
 
         /*
         先试算出可显示的行，再真正绘制可显示的行。
@@ -639,7 +776,7 @@ impl RichReviewer {
         // debug!("离线绘制， from_index:{from_index}, to_index:{to_index}");
         let mut need_blink = false;
         for (idx, rich_data) in data[from_index..to_index].iter().enumerate() {
-            // debug!("离线绘制， idx:{idx}, rich_data:{:?}", rich_data.text);
+            // debug!("回顾区离线绘制， idx:{idx}, type: {:?}, rich_data:{:?}", rich_data.data_type, rich_data.text);
             rich_data.draw(offset_y, &*blink_flag.borrow());
 
             if !need_blink && (rich_data.blink || rich_data.search_highlight_pos.is_some()) {
@@ -648,7 +785,7 @@ impl RichReviewer {
             }
 
             for piece in rich_data.line_pieces.iter() {
-                let piece = &*piece.borrow();
+                let piece = &*piece.read();
                 let x = piece.x + scroller_x;
                 let y = piece.y - offset_y + scroller_y;
                 vl.insert(Rectangle::new(x, y, piece.w, piece.h), piece.clone());
@@ -758,13 +895,13 @@ impl RichReviewer {
 
         let mut find_out = false;
         let mut target_idx = 0;
-        if let Ok(idx) = self.data_buffer.borrow().binary_search_by_key(&options.id, |rd| rd.id) {
+        if let Ok(idx) = self.data_buffer.read().binary_search_by_key(&options.id, |rd| rd.id) {
             target_idx = idx;
             find_out = true;
         }
 
         if find_out {
-            if let Some(rd) = self.data_buffer.borrow_mut().get_mut(target_idx) {
+            if let Some(rd) = self.data_buffer.write().get_mut(target_idx) {
                 update_data_properties(options, rd);
             }
             self.draw_offline2();
@@ -778,13 +915,13 @@ impl RichReviewer {
 
         let mut find_out = false;
         let mut target_idx = 0;
-        if let Ok(idx) = self.data_buffer.borrow().binary_search_by_key(&id, |rd| rd.id) {
+        if let Ok(idx) = self.data_buffer.read().binary_search_by_key(&id, |rd| rd.id) {
             target_idx = idx;
             find_out = true;
         }
 
         if find_out {
-            if let Some(rd) = self.data_buffer.borrow_mut().get_mut(target_idx) {
+            if let Some(rd) = self.data_buffer.write().get_mut(target_idx) {
                 disable_data(rd);
             }
 
@@ -836,7 +973,7 @@ impl RichReviewer {
         if let Some((old_rd_idx, old_result_idx)) = self.current_highlight_focus {
             // debug!("上一次定位的数据段索引：{}，目标编号：{}", old_rd_idx, old_result_idx);
             let (mut scroll_to_next, mut next_rd_pos) = (false, 0);
-            if let Some(rd) = self.data_buffer.borrow_mut().get_mut(old_rd_idx) {
+            if let Some(rd) = self.data_buffer.write().get_mut(old_rd_idx) {
                 if let Some(ref result_pos_vec) = rd.search_result_positions {
                     let next_result_idx = old_result_idx + 1;
                     if result_pos_vec.get(next_result_idx).is_some() {
@@ -871,13 +1008,13 @@ impl RichReviewer {
 
             if scroll_to_next {
                 self.current_highlight_focus.replace((next_rd_pos, 0));
-                if let Some(rd) = self.data_buffer.borrow_mut().get_mut(next_rd_pos) {
+                if let Some(rd) = self.data_buffer.write().get_mut(next_rd_pos) {
                     rd.search_highlight_pos = Some(0);
                 }
             }
         } else {
             if let Some(rd_idx) = self.search_results.first() {
-                if let Some(rd) = self.data_buffer.borrow_mut().get_mut(*rd_idx) {
+                if let Some(rd) = self.data_buffer.write().get_mut(*rd_idx) {
                     if rd.search_result_positions.is_some() {
                         // debug!("首次定位到第一个目标");
                         self.current_highlight_focus = Some((*rd_idx, 0));
@@ -893,7 +1030,7 @@ impl RichReviewer {
         if let Some((old_rd_idx, old_result_idx)) = self.current_highlight_focus {
             // debug!("上一次定位的数据段索引：{}，目标编号：{}", old_rd_idx, old_result_idx);
             let (mut scroll_to_next, mut next_rd_pos) = (false, 0);
-            if let Some(rd) = self.data_buffer.borrow_mut().get_mut(old_rd_idx) {
+            if let Some(rd) = self.data_buffer.write().get_mut(old_rd_idx) {
                 if old_result_idx >= 1 {
                     // 在当前数据段中定位到下一个目标位置
                     self.current_highlight_focus.replace((old_rd_idx, old_result_idx - 1));
@@ -923,7 +1060,7 @@ impl RichReviewer {
             }
 
             if scroll_to_next {
-                if let Some(rd) = self.data_buffer.borrow_mut().get_mut(next_rd_pos) {
+                if let Some(rd) = self.data_buffer.write().get_mut(next_rd_pos) {
                     if let Some(ref pos_vec) = rd.search_result_positions {
                         self.current_highlight_focus.replace((next_rd_pos, pos_vec.len() - 1));
                         rd.search_highlight_pos = Some(pos_vec.len() - 1);
@@ -933,7 +1070,7 @@ impl RichReviewer {
 
         } else {
             if let Some(rd_idx) = self.search_results.last() {
-                if let Some(rd) = self.data_buffer.borrow_mut().get_mut(*rd_idx) {
+                if let Some(rd) = self.data_buffer.write().get_mut(*rd_idx) {
                     if let Some(ref srp) = rd.search_result_positions {
                         let len = srp.len();
                         // debug!("首次定位到第一个目标");
@@ -989,7 +1126,7 @@ impl RichReviewer {
         let s = self.search_string.insert(search_str).as_str();
 
         let len = s.chars().count();
-        for (idx, rd) in self.data_buffer.borrow_mut().iter_mut().enumerate() {
+        for (idx, rd) in self.data_buffer.write().iter_mut().enumerate() {
             if rd.text.contains(s) {
                 find_out = true;
                 self.search_results.push(idx);
@@ -1012,7 +1149,7 @@ impl RichReviewer {
     /// 清除上一次查询的缓存记录。
     fn _clear_search_results(&mut self) {
         self.search_results.iter().for_each(|idx| {
-            if let Some(rd) = self.data_buffer.borrow_mut().get_mut(*idx) {
+            if let Some(rd) = self.data_buffer.write().get_mut(*idx) {
                 rd.search_result_positions = None;
                 rd.search_highlight_pos = None;
             }
@@ -1032,13 +1169,13 @@ impl RichReviewer {
     fn show_search_results(&mut self) {
         if let Some((rd_idx, result_idx)) = self.current_highlight_focus {
             let mut piece_idx = 0;
-            if let Some(rd) = self.data_buffer.borrow().get(rd_idx) {
+            if let Some(rd) = self.data_buffer.read().get(rd_idx) {
                 if let Some(ref s) = self.search_string {
                     // debug!("正向定位到第{}个目标", result_idx);
                     if let Some((pos, _)) =  rd.text.rmatch_indices(s).nth(result_idx) {
                         let mut processed_len = 0usize;
                         for (i, piece_rc) in rd.line_pieces.iter().enumerate() {
-                            let piece = &*piece_rc.borrow();
+                            let piece = &*piece_rc.read();
                             let pl = piece.line.len();
                             if pos >= processed_len && pos < processed_len + pl {
                                 piece_idx = i;
@@ -1071,14 +1208,14 @@ impl RichReviewer {
     /// ```
     fn show_piece(&mut self, rd_idx: usize, piece_idx: usize) {
         let mut offset_y = 0;
-        if let Some(rd) = self.data_buffer.borrow().first() {
-            offset_y = rd.v_bounds.get().0;
+        if let Some(rd) = self.data_buffer.read().first() {
+            offset_y = rd.v_bounds.read().0;
         }
 
-        if let Some(rd) = self.data_buffer.borrow().get(rd_idx) {
+        if let Some(rd) = self.data_buffer.read().get(rd_idx) {
             if piece_idx < rd.line_pieces.len() {
                 if let Some(piece_rc) = rd.line_pieces.get(piece_idx) {
-                    let piece = &*piece_rc.borrow();
+                    let piece = &*piece_rc.read();
                     // debug!("piece.top_y: {}, panel_height: {}, scroller.yposition: {}, piece.line: {}", piece.top_y, self.panel.h(), self.scroller.yposition(), piece.line);
                     let scroller_y = self.scroller.yposition();
                     if piece.y < scroller_y || piece.y + piece.h >= scroller_y + self.scroller.h() {
@@ -1153,10 +1290,10 @@ impl RichReviewer {
         // 在尾部或头部添加页数据
         match direction {
             PageOptions::NextPage(_) => {
-                self.data_buffer.borrow_mut().append(&mut page_buffer);
+                self.data_buffer.write().append(&mut page_buffer);
             }
             PageOptions::PrevPage(_) => {
-                let mut buffer = self.data_buffer.borrow_mut();
+                let mut buffer = self.data_buffer.write();
                 buffer.reverse();
                 page_buffer.reverse();
                 buffer.append(&mut page_buffer);
@@ -1166,7 +1303,13 @@ impl RichReviewer {
         // debug!("缓存数据已变化");
 
         // 重新计算数据绘制坐标，并检测是否需要继续补充页数据。
-        let (need_more, panel_height) = Self::recalculate_data_buffer_position(self.data_buffer.clone(), drawable_max_width, self.panel.clone(), self.scroller.clone());
+        let (need_more, panel_height) = Self::recalculate_data_buffer_position(
+            self.data_buffer.clone(),
+            drawable_max_width,
+            &mut self.panel,
+            self.scroller.clone(),
+            self.basic_char.clone(),
+            self.text_size.clone());
         if need_more {
             // debug!("需要更多数据");
             let load_more_fn = {
@@ -1175,7 +1318,7 @@ impl RichReviewer {
                 let dir = direction.clone();
                 move || {
                     let mut id = 0i64;
-                    if let Some(rd) = buffer_rc.borrow().last() {
+                    if let Some(rd) = buffer_rc.read().last() {
                         id = rd.id;
                     }
                     if id != 0 {
@@ -1207,20 +1350,22 @@ impl RichReviewer {
                             let page_size = self.page_size.get();
                             let scroll_rc = self.scroller.clone();
                             let mut panel_rc = self.panel.clone();
+                            let basic_char_rc = self.basic_char.clone();
+                            let text_size_rc = self.text_size.clone();
                             move || {
                                 let mut last_height = 0;
                                 {
-                                    let len = buffer_rc.borrow().len();
-                                    let mut buffer = buffer_rc.borrow_mut();
+                                    let len = buffer_rc.read().len();
+                                    let mut buffer = buffer_rc.write();
                                     if let Some(rd) = buffer.get(page_size - 1) {
-                                        last_height = rd.v_bounds.get().1
+                                        last_height = rd.v_bounds.read().1
                                     }
                                     buffer.reverse();
                                     buffer.truncate(len - page_size);
                                     buffer.reverse();
                                 }
 
-                                Self::recalculate_data_buffer_position(buffer_rc.clone(), drawable_max_width, panel_rc.clone(), scroll_rc.clone());
+                                Self::recalculate_data_buffer_position(buffer_rc.clone(), drawable_max_width, &mut panel_rc, scroll_rc.clone(), basic_char_rc.clone(), text_size_rc.clone());
                                 panel_rc.set_damage(true);
                                 // debug!("清除远端数据完成！");
 
@@ -1240,20 +1385,22 @@ impl RichReviewer {
                             let page_size = self.page_size.get();
                             let scroll_rc = self.scroller.clone();
                             let mut panel_rc = self.panel.clone();
+                            let basic_char_rc = self.basic_char.clone();
+                            let text_size_rc = self.text_size.clone();
                             move || {
                                 let mut last_height = 0;
                                 {
-                                    let len = buffer_rc.borrow().len();
-                                    let mut buffer = buffer_rc.borrow_mut();
+                                    let len = buffer_rc.read().len();
+                                    let mut buffer = buffer_rc.write();
                                     if let Some(rd) = buffer.get(page_size - 1) {
-                                        last_height = rd.v_bounds.get().1
+                                        last_height = rd.v_bounds.read().1
                                     }
                                     // buffer.reverse();
                                     buffer.truncate(len - page_size);
                                     // buffer.reverse();
                                 }
 
-                                Self::recalculate_data_buffer_position(buffer_rc.clone(), drawable_max_width, panel_rc.clone(), scroll_rc.clone());
+                                Self::recalculate_data_buffer_position(buffer_rc.clone(), drawable_max_width, &mut panel_rc, scroll_rc.clone(), basic_char_rc.clone(), text_size_rc.clone());
                                 panel_rc.set_damage(true);
                                 // debug!("清除远端数据完成！");
 
@@ -1272,7 +1419,7 @@ impl RichReviewer {
 
 
     pub fn clear(&mut self) {
-        self.data_buffer.borrow_mut().clear();
+        self.data_buffer.write().clear();
         self.panel.resize(self.scroller.x(), self.scroller.y(), self.panel.w(), self.scroller.h());
         self.scroller.set_damage(true);
     }
@@ -1295,26 +1442,35 @@ impl RichReviewer {
     }
 
 
-    #[throttle(1, Duration::from_millis(500))]
     fn load_page(callpage: &mut CallPage, opt: PageOptions) {
+        let task_id = LOAD_PAGE_TASK_ID.get_or_init(|| YitIdHelper::next_id());
+        if !throttle_check(*task_id, Duration::from_millis(500)) {
+            return;
+        }
         callpage.notify(opt);
     }
 
-    fn recalculate_data_buffer_position(data_buffer: Rc<RefCell<Vec<RichData>>>, drawable_max_width: i32, mut panel: Widget, scroller: Scroll) -> (bool, i32) {
+    fn recalculate_data_buffer_position(
+        data_buffer: Arc<RwLock<Vec<RichData>>>,
+        drawable_max_width: i32,
+        panel: &mut Widget,
+        scroller: Scroll,
+        basic_char: Rc<Cell<char>>,
+        text_size: Rc<Cell<i32>>) -> (bool, i32) {
         let _empty = RichData::empty();
         let mut last_rd = &_empty;
         let mut is_first_data = true;
 
         {
-            let mut buffer = data_buffer.borrow_mut();
+            let mut buffer = data_buffer.write();
             for rd in buffer.iter_mut() {
                 let last_piece = if is_first_data {
                     is_first_data = false;
-                    LinePiece::init_piece()
+                    LinePiece::init_piece(text_size.get())
                 } else {
                     last_rd.line_pieces.last().unwrap().clone()
                 };
-                rd.estimate(last_piece, drawable_max_width);
+                rd.estimate(last_piece, drawable_max_width, basic_char.get());
                 // debug!("rd.text: {}, rd.v_bounds: {:?}", rd.text, rd.v_bounds);
                 last_rd = rd;
             }
@@ -1325,22 +1481,22 @@ impl RichReviewer {
         let panel_height = Self::calc_panel_height(data_buffer.clone(), scroller_height);
         panel.resize(panel.x(), panel.y(), scroller_width, panel_height);
         // debug!("panel_height: {}, scroller_height: {}", panel_height, scroller_height);
-        if let Some(rd) = data_buffer.borrow().last() {
+        if let Some(rd) = data_buffer.read().last() {
             // debug!("panel_height: {}, data bottom y: {}, scroller_height: {}", panel_height, rd.v_bounds.get().1, scroller_height);
-            (rd.v_bounds.get().1 <= scroller_height, panel_height)
+            (rd.v_bounds.read().1 <= scroller_height, panel_height)
         } else {
             (false, 0)
         }
     }
 
-    fn calc_panel_height(buffer_rc: Rc<RefCell<Vec<RichData>>>, scroller_height: i32) -> i32 {
-        let buffer = &*buffer_rc.borrow();
+    fn calc_panel_height(buffer_rc: Arc<RwLock<Vec<RichData>>>, scroller_height: i32) -> i32 {
+        let buffer = &*buffer_rc.read();
         let (mut top, mut bottom) = (0, 0);
         if let Some(first) = buffer.first() {
-            top = first.v_bounds.get().0;
+            top = first.v_bounds.read().0;
         }
         if let Some(last) = buffer.last() {
-            bottom = last.v_bounds.get().1;
+            bottom = last.v_bounds.read().1;
         }
         let content_height = bottom - top + PADDING.bottom + PADDING.top;
         if content_height > scroller_height {
@@ -1454,10 +1610,6 @@ impl RichReviewer {
         self.piece_spacing.set(spacing);
     }
 
-    /// 可以在app中使用的获取雪花流水号的工具方法。
-    pub fn get_next_sn(&self) -> i64 {
-        YitIdHelper::next_id()
-    }
 
     /// 替换闪烁状态对象。
     ///
@@ -1513,5 +1665,40 @@ impl RichReviewer {
 
     pub fn set_search_focus_background(&mut self, background: Color) {
         self.blink_flag.borrow_mut().focus_background_color = background;
+    }
+
+    /// 设置用于计算字符宽度的标准字符。
+    ///
+    /// # Arguments
+    ///
+    /// * `basic_char`:
+    ///
+    /// returns: ()
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
+    pub fn set_basic_char(&mut self, basic_char: char) {
+        self.basic_char.set(basic_char);
+    }
+
+    /// 使符合过滤条件的目标数据段过期、禁用。
+    ///
+    /// # Arguments
+    ///
+    /// * `target`:
+    ///
+    /// returns: ()
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
+    pub(crate) fn expire_review_data(&mut self, target: &String) {
+        expire_data(self.data_buffer.clone(), target);
+        self.panel.set_damage(true);
     }
 }

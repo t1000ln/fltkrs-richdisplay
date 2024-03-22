@@ -1,16 +1,30 @@
+use fast_log::filter::ModuleFilter;
 use fltk::{app, window};
-use fltk::app::{get_font_names, set_fonts};
 use fltk::button::Button;
 use fltk::draw::show_colormap;
 use fltk::enums::{Color, Font};
 use fltk::prelude::{GroupExt, WidgetBase, WidgetExt, WindowExt};
-use log::debug;
+use log::{debug, LevelFilter};
 use fltkrs_richdisplay::rich_text::RichText;
-use fltkrs_richdisplay::{DocEditType, UserData, Action, ActionItem};
+use fltkrs_richdisplay::{DocEditType, UserData, Action};
+
+fn init_log() {
+    let filter = ModuleFilter::new();
+    // filter.modules.push("mobc".to_string());
+    // filter.modules.push("reqwest".to_string());
+
+    fast_log::init(fast_log::Config::new()
+        .console()
+        .chan_len(Some(100000))
+        .level(LevelFilter::Debug)
+        .add_filter(filter)
+    ).unwrap();
+}
 
 #[tokio::main]
 async fn main() {
-    simple_logger::init_with_level(log::Level::Debug).unwrap();
+    init_log();
+
     let app = app::App::default().load_system_fonts();
     let mut win = window::Window::default()
         .with_size(1620, 820)
@@ -38,7 +52,7 @@ async fn main() {
     rich_text.set_cache_size(1000);
 
     let mut btn = Button::new(1450, 10, 100, 30, "色彩");
-    btn.set_callback(|ctx| {
+    btn.set_callback(|_ctx| {
         let ret_color = show_colormap(Color::DarkCyan);
 
         debug!("ret_color: {:?}, bits: {}", ret_color, ret_color.bits());
@@ -52,7 +66,7 @@ async fn main() {
 
     let mut action = Action::default();
     action.title = "小河".to_string();
-    let mut data = vec![
+    let data = vec![
         // // UserData::new_text("∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷∷".to_string()).set_bg_color(Some(Color::from_rgb(0, 0, 205))).set_font(Font::by_name("B宋体"), 14),
         UserData::new_text("连接 mud.pkuxkx.net:8081 ...".to_string()),
         UserData::new_text(" ".to_string()),

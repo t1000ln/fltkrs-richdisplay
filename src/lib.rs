@@ -964,7 +964,7 @@ impl LinePiece {
 
     pub fn copy_selection(&self, selection: &mut String) {
         if let Some((from, to)) = *self.selected_range.read() {
-            self.line.chars().skip(from).take(to - from).for_each(|c| {
+            self.line.chars().skip(from).take(max(to, from) - from).for_each(|c| {
                 selection.push(c);
             });
         }
@@ -2243,7 +2243,8 @@ impl LinedData for RichData {
                         };
                         set_draw_color(sel_color);
                         let (skip_width, _) = measure(piece.line.chars().take(from).collect::<String>().as_str(), false);
-                        let (fill_width, _) = measure(piece.line.chars().skip(from).take(to - from).collect::<String>().as_str(), false);
+                        // let (fill_width, _) = measure(piece.line.chars().skip(from).take(to - from).collect::<String>().as_str(), false);
+                        let (fill_width, _) = measure(piece.line.chars().skip(from).take(max(to, from) - from).collect::<String>().as_str(), false);
 
                         #[cfg(target_os = "linux")]
                         draw_rectf(piece.x + skip_width, y - piece.spacing + 2, fill_width, piece.font_height);

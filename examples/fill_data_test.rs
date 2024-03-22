@@ -1,11 +1,12 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use fast_log::filter::ModuleFilter;
 use fltk::{app, window};
 use fltk::button::Button;
 use fltk::enums::{Color, Font};
 use fltk::image::SharedImage;
 use fltk::prelude::{GroupExt, ImageExt, WidgetBase, WidgetExt, WindowExt};
-use log::{warn};
+use log::{LevelFilter, warn};
 use fltkrs_richdisplay::rich_reviewer::RichReviewer;
 use fltkrs_richdisplay::{PageOptions, UserData};
 
@@ -14,9 +15,22 @@ pub enum GlobalMessage {
     AfterClear
 }
 
+fn init_log() {
+    let filter = ModuleFilter::new();
+    // filter.modules.push("mobc".to_string());
+    // filter.modules.push("reqwest".to_string());
+
+    fast_log::init(fast_log::Config::new()
+        .console()
+        .chan_len(Some(100000))
+        .level(LevelFilter::Debug)
+        .add_filter(filter)
+    ).unwrap();
+}
+
 #[tokio::main]
 async fn main() {
-    simple_logger::init_with_level(log::Level::Debug).unwrap();
+    init_log();
 
     let app = app::App::default();
     let mut win = window::Window::default()

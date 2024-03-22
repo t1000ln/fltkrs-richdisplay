@@ -1,10 +1,7 @@
 //! richdisplay包的测试应用。
 
 use std::time::Duration;
-use fast_log::consts::LogSize;
 use fast_log::filter::ModuleFilter;
-use fast_log::plugin::file_split::RollingType;
-use fast_log::plugin::packer::LogPacker;
 use fltk::{app, window};
 use fltk::button::Button;
 use fltk::enums::{Color, Event, Font, Key};
@@ -37,7 +34,6 @@ fn init_log() {
         .chan_len(Some(100000))
         .level(LevelFilter::Debug)
         .add_filter(filter)
-        .file_split("logs/test.log", LogSize::MB(10), RollingType::All, LogPacker {})
     ).unwrap();
 }
 

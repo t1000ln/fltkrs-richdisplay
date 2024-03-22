@@ -627,37 +627,41 @@ impl RichReviewer {
                         return true;
                     }
                     Event::MouseWheel => {
-                        let mut id = 0i64;
-                        if app::event_dy() == MouseWheel::Down {
-                            // 向上滚动
-                            if scroller.yposition() < (scroller.h() / 4) {
-                                // debug!("请求前一页");
-                                // 获取id与执行回调之间分开处理，避免buffer_rc的嵌套借用出现问题
-                                if let Some(rd) = buffer_rc.read().first() {
-                                    id = rd.id;
-                                }
+                        if app::event_inside_widget(scroller) {
+                            let mut id = 0i64;
+                            if app::event_dy() == MouseWheel::Down {
+                                // 向上滚动
+                                if scroller.yposition() < (scroller.h() / 4) {
+                                    // debug!("请求前一页");
+                                    // 获取id与执行回调之间分开处理，避免buffer_rc的嵌套借用出现问题
+                                    if let Some(rd) = buffer_rc.read().first() {
+                                        id = rd.id;
+                                    }
 
-                                if id != 0 {
-                                    if let Some(cb) = &mut *page_notifier_rc.borrow_mut() {
-                                        // cb.notify(PageOptions::PrevPage(id));
-                                        Self::load_page(cb, PageOptions::PrevPage(id));
+                                    if id != 0 {
+                                        if let Some(cb) = &mut *page_notifier_rc.borrow_mut() {
+                                            // cb.notify(PageOptions::PrevPage(id));
+                                            Self::load_page(cb, PageOptions::PrevPage(id));
+                                        };
                                     };
-                                };
-                            }
-                        } else if app::event_dy() == MouseWheel::Up {
-                            // 向下滚动
-                            if scroller.yposition() > panel_rc.height() - scroller.h() - (scroller.h() / 4) {
-                                // debug!("请求后一页");
-                                // 获取id与执行回调之间分开处理，避免buffer_rc的嵌套借用出现问题
-                                if let Some(rd) = buffer_rc.read().last() {
-                                    id = rd.id;
                                 }
+                            } else if app::event_dy() == MouseWheel::Up {
+                                // 向下滚动
+                                if !Self::should_hide(scroller, &panel_rc) {
+                                    if scroller.yposition() > panel_rc.height() - scroller.h() - (scroller.h() / 4) {
+                                        // debug!("请求后一页");
+                                        // 获取id与执行回调之间分开处理，避免buffer_rc的嵌套借用出现问题
+                                        if let Some(rd) = buffer_rc.read().last() {
+                                            id = rd.id;
+                                        }
 
-                                if id != 0 {
-                                    if let Some(cb) = &mut *page_notifier_rc.borrow_mut() {
-                                        // cb.notify(PageOptions::NextPage(id, false));
-                                        Self::load_page(cb, PageOptions::NextPage(id));
-                                    };
+                                        if id != 0 {
+                                            if let Some(cb) = &mut *page_notifier_rc.borrow_mut() {
+                                                // cb.notify(PageOptions::NextPage(id, false));
+                                                Self::load_page(cb, PageOptions::NextPage(id));
+                                            };
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -673,6 +677,10 @@ impl RichReviewer {
             reviewer_screen, notifier, page_notifier, search_string: search_str, search_results,
             current_highlight_focus, blink_flag, history_mode, page_size, text_font, text_color,
             text_size, piece_spacing, enable_blink, basic_char }
+    }
+
+    fn should_hide(scroller: &Scroll, panel: &Widget) -> bool {
+        scroller.yposition() == panel.height() - scroller.height()
     }
 
     pub fn set_background_color(&self, color: Color) {

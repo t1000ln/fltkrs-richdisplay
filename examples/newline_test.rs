@@ -1,11 +1,27 @@
+use fast_log::filter::ModuleFilter;
 use fltk::{app, window};
 use fltk::enums::Font;
 use fltk::prelude::{GroupExt, WidgetExt, WindowExt};
+use log::LevelFilter;
 use fltkrs_richdisplay::rich_text::RichText;
 use fltkrs_richdisplay::UserData;
 
-fn main() {
-    simple_logger::init_with_level(log::Level::Debug).unwrap();
+fn init_log() {
+    let filter = ModuleFilter::new();
+    // filter.modules.push("mobc".to_string());
+    // filter.modules.push("reqwest".to_string());
+
+    fast_log::init(fast_log::Config::new()
+        .console()
+        .chan_len(Some(100000))
+        .level(LevelFilter::Debug)
+        .add_filter(filter)
+    ).unwrap();
+}
+
+#[tokio::main]
+async fn main() {
+    init_log();
     let app = app::App::default().load_system_fonts();
     let mut win = window::Window::default()
         .with_size(1220, 820)

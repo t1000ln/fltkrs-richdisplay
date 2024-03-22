@@ -332,62 +332,64 @@ impl RichText {
                             /*
                             显示或隐藏回顾区。
                              */
-                            if app::event_dy() == MouseWheel::Down && reviewer_rc.read().is_none() {
-                                // 显示回顾区
-                                let mut reviewer = RichReviewer::new(0, 0, flex.width(), flex.height() - MAIN_PANEL_FIX_HEIGHT, None);
-                                reviewer.set_enable_blink(enable_blink_rc.load(Ordering::Relaxed));
-                                reviewer.set_blink_state(blink_flag_rc.read().clone());
-                                reviewer.set_background_color(*bg_rc.read());
-                                reviewer.set_basic_char(*basic_char_rc.read());
-                                if let Some(notifier_rc_ref) = notifier_rc.write().as_mut() {
-                                    let cb = notifier_rc_ref.clone();
-                                    reviewer.set_notifier(cb);
-                                }
-                                // let drawable_max_width = flex.w() - PADDING.left - PADDING.right;
-                                // let mut snapshot = Self::create_snapshot(buffer_rc.clone());
-                                let mut snapshot = if remote_flow_control_rc.load(Ordering::SeqCst) {
-                                    // 当前缓存就是主缓存
-                                    buffer_rc.read().clone()
-                                } else {
-                                    // 当前缓存是临时缓存，主缓存位于data_buffer中。
-                                    if let Some(mb) = main_buffer.read().as_ref() {
-                                        mb.clone()
-                                    } else {
-                                        vec![]
+                            if app::event_inside_widget(flex) {
+                                if app::event_dy() == MouseWheel::Down && reviewer_rc.read().is_none() {
+                                    // 显示回顾区
+                                    let mut reviewer = RichReviewer::new(0, 0, flex.width(), flex.height() - MAIN_PANEL_FIX_HEIGHT, None);
+                                    reviewer.set_enable_blink(enable_blink_rc.load(Ordering::Relaxed));
+                                    reviewer.set_blink_state(blink_flag_rc.read().clone());
+                                    reviewer.set_background_color(*bg_rc.read());
+                                    reviewer.set_basic_char(*basic_char_rc.read());
+                                    if let Some(notifier_rc_ref) = notifier_rc.write().as_mut() {
+                                        let cb = notifier_rc_ref.clone();
+                                        reviewer.set_notifier(cb);
                                     }
-                                };
-                                if selected_rc.load(Ordering::Relaxed) {
-                                    snapshot.iter_mut().for_each(|rd| {
-                                        rd.line_pieces.iter_mut().for_each(|piece| {
-                                            piece.read().deselect();
-                                        })
-                                    });
+                                    // let drawable_max_width = flex.w() - PADDING.left - PADDING.right;
+                                    // let mut snapshot = Self::create_snapshot(buffer_rc.clone());
+                                    let mut snapshot = if remote_flow_control_rc.load(Ordering::SeqCst) {
+                                        // 当前缓存就是主缓存
+                                        buffer_rc.read().clone()
+                                    } else {
+                                        // 当前缓存是临时缓存，主缓存位于data_buffer中。
+                                        if let Some(mb) = main_buffer.read().as_ref() {
+                                            mb.clone()
+                                        } else {
+                                            vec![]
+                                        }
+                                    };
+                                    if selected_rc.load(Ordering::Relaxed) {
+                                        snapshot.iter_mut().for_each(|rd| {
+                                            rd.line_pieces.iter_mut().for_each(|piece| {
+                                                piece.read().deselect();
+                                            })
+                                        });
+                                    }
+
+                                    // debug!("历史数据长度：{}", snapshot.len());
+
+                                    reviewer.set_data(snapshot);
+                                    flex.insert(&reviewer.scroller, 0);
+                                    // flex.resizable(&reviewer.scroller);
+                                    flex.fixed(&panel_rc, MAIN_PANEL_FIX_HEIGHT);
+                                    flex.recalc();
+
+                                    should_resize.store(MAIN_PANEL_FIX_HEIGHT, Ordering::Relaxed);
+
+                                    reviewer.scroll_to_bottom();
+                                    reviewer_rc.write().replace(reviewer);
+                                    update_panel_fn.write().update_param(());
+                                    // debug!("打开回顾区");
+                                    flex.set_damage(true);
+
+                                } else if app::event_dy() == MouseWheel::Up && reviewer_rc.read().is_some() {
+                                    // 隐藏回顾区
+                                    Self::should_hide_reviewer(
+                                        reviewer_rc.clone(),
+                                        flex,
+                                        &panel_rc,
+                                        should_resize.clone()
+                                    );
                                 }
-
-                                debug!("历史数据长度：{}", snapshot.len());
-
-                                reviewer.set_data(snapshot);
-                                flex.insert(&reviewer.scroller, 0);
-                                // flex.resizable(&reviewer.scroller);
-                                flex.fixed(&panel_rc, MAIN_PANEL_FIX_HEIGHT);
-                                flex.recalc();
-
-                                should_resize.store(MAIN_PANEL_FIX_HEIGHT, Ordering::Relaxed);
-
-                                reviewer.scroll_to_bottom();
-                                reviewer_rc.write().replace(reviewer);
-                                update_panel_fn.write().update_param(());
-                                debug!("打开回顾区");
-                                flex.set_damage(true);
-
-                            } else if app::event_dy() == MouseWheel::Up && reviewer_rc.read().is_some() {
-                                // 隐藏回顾区
-                                Self::should_hide_reviewer(
-                                    reviewer_rc.clone(),
-                                    flex,
-                                    &panel_rc,
-                                    should_resize.clone()
-                                );
                             }
                         }
                         _ => {}

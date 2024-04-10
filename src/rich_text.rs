@@ -17,7 +17,7 @@ use fltk::app::{MouseButton, MouseWheel};
 use fltk::frame::Frame;
 use fltk::group::{Flex};
 use fltk::menu::{MenuButton, MenuButtonType};
-use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData, BLINK_INTERVAL, BlinkState, Callback, DEFAULT_FONT_SIZE, WHITE, clear_selected_pieces, ClickPoint, locate_target_rd, update_selection_when_drag, CallbackData, ShapeData, LINE_HEIGHT_FACTOR, BASIC_UNIT_CHAR, DEFAULT_TAB_WIDTH, DocEditType, BlinkDegree, DataType, ImageEventData, IMAGE_PADDING_V, expire_data};
+use crate::{Rectangle, disable_data, LinedData, LinePiece, LocalEvent, mouse_enter, PADDING, RichData, RichDataOptions, update_data_properties, UserData, BLINK_INTERVAL, BlinkState, Callback, DEFAULT_FONT_SIZE, WHITE, clear_selected_pieces, ClickPoint, locate_target_rd, update_selection_when_drag, CallbackData, ShapeData, LINE_HEIGHT_FACTOR, BASIC_UNIT_CHAR, DEFAULT_TAB_WIDTH, DocEditType, BlinkDegree, DataType, ImageEventData, IMAGE_PADDING_V, expire_data, select_paragraph};
 
 use log::{debug, error};
 use parking_lot::RwLock;
@@ -75,7 +75,7 @@ pub struct RichText {
     rewrite_board: Arc<RwLock<Option<ReWriteBoard>>>,
     max_rows: Arc<AtomicUsize>,
     max_cols: Arc<AtomicUsize>,
-    update_panel_fn: Arc<RwLock<TokioDebounce<()>>>
+    update_panel_fn: Arc<RwLock<TokioDebounce<bool>>>
 }
 widget_extends!(RichText, Flex, inner);
 
@@ -155,7 +155,7 @@ impl RichText {
             let blink_flag_rc = blink_flag.clone();
             let show_cursor_rc = show_cursor.clone();
             let cursor_piece_rc = cursor_piece.clone();
-            move |_| {
+            move |redraw: bool| {
                 let enable_cursor = if show_cursor_rc.load(Ordering::Relaxed) {
                     Some(cursor_piece_rc.clone())
                 } else {
@@ -172,10 +172,79 @@ impl RichText {
                     blink_flag_rc.clone(),
                     enable_cursor,
                );
+                if redraw {
+                    panel_rc.redraw();
+                }
                // panel_rc.set_damage(true);
            }
         }, Duration::from_millis(20), true)));
 
+        let mut create_reviewer_fn = TokioDebounce::new_throttle({
+            let mut flex = inner.clone();
+            let panel_rc = panel.clone();
+            let buffer_rc = current_buffer.clone();
+            let main_buffer = data_buffer.clone();
+            let selected_rc = selected.clone();
+            let enable_blink_rc = enable_blink.clone();
+            let blink_flag_rc = blink_flag.clone();
+            let basic_char_rc = basic_char.clone();
+            let bg_rc = background_color.clone();
+            let notifier_rc = notifier.clone();
+            let remote_flow_control_rc = remote_flow_control.clone();
+            let reviewer_rc = reviewer.clone();
+            let update_panel_fn = update_panel_fn.clone();
+            let should_resize = should_resize_content.clone();
+            move |()| {
+                // 显示回顾区
+                let mut reviewer = RichReviewer::new(0, 0, flex.width(), flex.height() - MAIN_PANEL_FIX_HEIGHT, None);
+                reviewer.set_enable_blink(enable_blink_rc.load(Ordering::Relaxed));
+                reviewer.set_blink_state(blink_flag_rc.read().clone());
+                reviewer.set_background_color(*bg_rc.read());
+                reviewer.set_basic_char(*basic_char_rc.read());
+                if let Some(notifier_rc_ref) = notifier_rc.write().as_mut() {
+                    let cb = notifier_rc_ref.clone();
+                    reviewer.set_notifier(cb);
+                }
+                // let drawable_max_width = flex.w() - PADDING.left - PADDING.right;
+                // let mut snapshot = Self::create_snapshot(buffer_rc.clone());
+                let mut snapshot = if remote_flow_control_rc.load(Ordering::SeqCst) {
+                    // 当前缓存就是主缓存
+                    buffer_rc.read().clone()
+                } else {
+                    // 当前缓存是临时缓存，主缓存位于data_buffer中。
+                    if let Some(mb) = main_buffer.read().as_ref() {
+                        mb.clone()
+                    } else {
+                        vec![]
+                    }
+                };
+                if selected_rc.load(Ordering::Relaxed) {
+                    snapshot.iter_mut().for_each(|rd| {
+                        rd.line_pieces.iter_mut().for_each(|piece| {
+                            piece.read().deselect();
+                        })
+                    });
+                }
+
+                // debug!("历史数据长度：{}", snapshot.len());
+
+                reviewer.set_data(snapshot);
+                flex.insert(&reviewer.scroller, 0);
+                // flex.resizable(&reviewer.scroller);
+                flex.fixed(&panel_rc, MAIN_PANEL_FIX_HEIGHT);
+                flex.recalc();
+
+                should_resize.store(MAIN_PANEL_FIX_HEIGHT, Ordering::Relaxed);
+
+                reviewer.scroll_to_bottom();
+                reviewer_rc.write().replace(reviewer);
+                update_panel_fn.write().update_param(false);
+                // debug!("打开回顾区");
+                flex.set_damage(true);
+
+                false
+            }
+        }, Duration::from_millis(100), true);
 
         let blink_handler = {
             let blink_flag_rc = blink_flag.clone();
@@ -192,7 +261,7 @@ impl RichText {
                         let should_toggle = blink_flag_rc.write().toggle_when_on();
                         if should_toggle {
                             // FULL_DRAW.store(false, Ordering::Relaxed);
-                            update_panel_fn.write().update_param(());
+                            update_panel_fn.write().update_param(false);
                         }
                     }
                     app::repeat_timeout3(BLINK_INTERVAL, handler);
@@ -252,12 +321,10 @@ impl RichText {
             let bg_rc = background_color.clone();
             let notifier_rc = notifier.clone();
             let should_resize = should_resize_content.clone();
-            let selected_rc = selected.clone();
             let enable_blink_rc = enable_blink.clone();
             let blink_flag_rc = blink_flag.clone();
             let basic_char_rc = basic_char.clone();
             let remote_flow_control_rc = remote_flow_control.clone();
-            let update_panel_fn = update_panel_fn.clone();
             move |flex, evt| {
                 if evt == LocalEvent::DROP_REVIEWER_FROM_EXTERNAL.into() {
                     // 隐藏回顾区
@@ -334,53 +401,7 @@ impl RichText {
                              */
                             if app::event_inside_widget(flex) {
                                 if app::event_dy() == MouseWheel::Down && reviewer_rc.read().is_none() {
-                                    // 显示回顾区
-                                    let mut reviewer = RichReviewer::new(0, 0, flex.width(), flex.height() - MAIN_PANEL_FIX_HEIGHT, None);
-                                    reviewer.set_enable_blink(enable_blink_rc.load(Ordering::Relaxed));
-                                    reviewer.set_blink_state(blink_flag_rc.read().clone());
-                                    reviewer.set_background_color(*bg_rc.read());
-                                    reviewer.set_basic_char(*basic_char_rc.read());
-                                    if let Some(notifier_rc_ref) = notifier_rc.write().as_mut() {
-                                        let cb = notifier_rc_ref.clone();
-                                        reviewer.set_notifier(cb);
-                                    }
-                                    // let drawable_max_width = flex.w() - PADDING.left - PADDING.right;
-                                    // let mut snapshot = Self::create_snapshot(buffer_rc.clone());
-                                    let mut snapshot = if remote_flow_control_rc.load(Ordering::SeqCst) {
-                                        // 当前缓存就是主缓存
-                                        buffer_rc.read().clone()
-                                    } else {
-                                        // 当前缓存是临时缓存，主缓存位于data_buffer中。
-                                        if let Some(mb) = main_buffer.read().as_ref() {
-                                            mb.clone()
-                                        } else {
-                                            vec![]
-                                        }
-                                    };
-                                    if selected_rc.load(Ordering::Relaxed) {
-                                        snapshot.iter_mut().for_each(|rd| {
-                                            rd.line_pieces.iter_mut().for_each(|piece| {
-                                                piece.read().deselect();
-                                            })
-                                        });
-                                    }
-
-                                    // debug!("历史数据长度：{}", snapshot.len());
-
-                                    reviewer.set_data(snapshot);
-                                    flex.insert(&reviewer.scroller, 0);
-                                    // flex.resizable(&reviewer.scroller);
-                                    flex.fixed(&panel_rc, MAIN_PANEL_FIX_HEIGHT);
-                                    flex.recalc();
-
-                                    should_resize.store(MAIN_PANEL_FIX_HEIGHT, Ordering::Relaxed);
-
-                                    reviewer.scroll_to_bottom();
-                                    reviewer_rc.write().replace(reviewer);
-                                    update_panel_fn.write().update_param(());
-                                    // debug!("打开回顾区");
-                                    flex.set_damage(true);
-
+                                    create_reviewer_fn.update_param(());
                                 } else if app::event_dy() == MouseWheel::Up && reviewer_rc.read().is_some() {
                                     // 隐藏回顾区
                                     Self::should_hide_reviewer(
@@ -466,7 +487,7 @@ impl RichText {
                             // 替换新的离线绘制板
                             should_resize.store(current_height, Ordering::Relaxed);
                         }
-                        update_panel_fn.write().update_param(());
+                        update_panel_fn.write().update_param(false);
                         // debug!("主面板缩放");
                     }
                     Event::Move => {
@@ -588,8 +609,12 @@ impl RichText {
                                 }
                             }
                         } else if app::event_mouse_button() == MouseButton::Left {
-                            // 左键弹出提示信息
-                            if let Some(ud) = target_opt {
+                            if app::event_clicks() {
+                                // debug!("双击");
+                                select_paragraph(select_from_row, &mut push_from_point, buffer_rc.read().as_slice(), selected_pieces.clone());
+                                ctx.set_damage(true);
+                            } else if let Some(ud) = target_opt {
+                                // 左键弹出提示信息
                                 // debug!("左键点击：{:?}", ud);
                                 if let Some(action) = &ud.action {
                                     let mut popup_menu_rc = MenuButton::new(0, 0, 0, 0, None);
@@ -623,25 +648,26 @@ impl RichText {
                     }
                     Event::Push => {
                         let (push_from_x, push_from_y) = app::event_coords();
-                        if selected.fetch_and(false, Ordering::Relaxed) {
-                            // debug!("清除选区");
-                            clear_selected_pieces(selected_pieces.clone());
-                            update_panel_fn.write().update_param(());
-                            // ctx.set_damage(true);
+                        // debug!("清除选区");
+                        selected.store(false, Ordering::Relaxed);
+                        clear_selected_pieces(selected_pieces.clone());
+                        update_panel_fn.write().update_param(true);
+                        // ctx.set_damage(true);
+                        select_from_row = 0;
 
-                            select_from_row = 0;
-                        }
                         let (p_offset_x, p_offset_y) = (ctx.x(), ctx.y());
                         let scroll_y = Self::calc_scroll_height(buffer_rc.clone(), ctx.height());
                         push_from_point.x = push_from_x - p_offset_x;
-                        push_from_point.y = push_from_y - p_offset_y + scroll_y + PADDING.top;
-                        // debug!("push_from: {:?}", push_from_point);
+                        push_from_point.y = push_from_y - p_offset_y + scroll_y;
+                        // debug!("scroll_y: {scroll_y}, push_from: {:?}", push_from_point);
+                        push_from_point.align(ctx.width(), ctx.height(), scroll_y);
 
                         // 尝试检测起始点击位置是否位于某个数据段内，可减少后续划选过程中的检测目标范围
                         let index_vec = (0..buffer_rc.read().len()).collect::<Vec<usize>>();
                         let rect = push_from_point.as_rect();
-                        if let Some(row) = locate_target_rd(&mut push_from_point, rect, ctx.w(), buffer_rc.read().as_slice(), index_vec) {
-                            select_from_row = row;
+                        if let Some(tr) = locate_target_rd(&mut push_from_point, rect, ctx.w(), buffer_rc.read().as_slice(), index_vec) {
+                            select_from_row = tr.row;
+                            // debug!("选择行 {row}");
                         }
 
                         return true;
@@ -650,7 +676,8 @@ impl RichText {
                         let (current_x, current_y) = app::event_coords();
                         let (p_offset_x, p_offset_y) = (ctx.x(), ctx.y());
                         let scroll_y = Self::calc_scroll_height(buffer_rc.clone(), ctx.height());
-                        let mut current_point = ClickPoint::new(current_x - p_offset_x, current_y - p_offset_y + scroll_y + PADDING.top);
+                        let mut current_point = ClickPoint::new(current_x - p_offset_x, current_y - p_offset_y + scroll_y);
+                        current_point.align(ctx.width(), ctx.height(), scroll_y);
                         update_selection_when_drag(
                             push_from_point,
                             select_from_row,
@@ -664,7 +691,7 @@ impl RichText {
                         selected.store(need_redraw, Ordering::Relaxed);
                         if need_redraw {
                             // debug!("{need_redraw}");
-                            update_panel_fn.write().update_param(());
+                            update_panel_fn.write().update_param(true);
                             // ctx.set_damage(true);
                         }
                         return true;
@@ -760,8 +787,14 @@ impl RichText {
         }
 
         if should_remove {
-            if let Some(rv) = reviewer_rc.write().take() {
-                app::delete_widget(rv.scroller);
+            if let Some(mut rv) = reviewer_rc.write().take() {
+                // println!("父窗口删除回顾区");
+                rv.hide();
+                app::awake_callback({
+                    move || {
+                        app::delete_widget(rv.scroller.clone());
+                    }
+                });
             }
         }
     }
@@ -782,7 +815,7 @@ impl RichText {
     pub fn append(&mut self, user_data: UserData) {
         self._append(user_data);
 
-        self.update_panel_fn.write().update_param(());
+        self.update_panel_fn.write().update_param(false);
     }
 
     /// 向缓冲区批量添加数据或操作。
@@ -870,7 +903,7 @@ impl RichText {
             }
         }
 
-        self.update_panel_fn.write().update_param(());
+        self.update_panel_fn.write().update_param(false);
 
         // debug!("append_batch: {:?}", now.elapsed());
     }
@@ -957,7 +990,7 @@ impl RichText {
     /// 删除最后一个数据段。
     pub fn delete_last_data(&mut self) {
         if let Some(_rich_data) = self.current_buffer.write().pop() {
-            self.update_panel_fn.write().update_param(());
+            self.update_panel_fn.write().update_param(false);
         }
     }
 
@@ -1301,7 +1334,7 @@ impl RichText {
             if let Some(rd) = self.current_buffer.write().get_mut(target_idx) {
                 update_data_properties(options.clone(), rd);
             }
-            self.update_panel_fn.write().update_param(());
+            self.update_panel_fn.write().update_param(false);
         }
 
         if let Some(reviewer) = self.reviewer.write().as_mut() {
@@ -1391,7 +1424,7 @@ impl RichText {
                 disable_data(rd);
             }
 
-            self.update_panel_fn.write().update_param(());
+            self.update_panel_fn.write().update_param(false);
         }
 
         if let Some(reviewer) = self.reviewer.write().as_mut() {
@@ -1536,6 +1569,10 @@ impl RichText {
         *self.text_font.read()
     }
 
+    pub fn text_font_ref(&self) -> Arc<RwLock<Font>> {
+        self.text_font.clone()
+    }
+
     /// 设置默认的字体颜色，并与`fltk`的其他输入型组件同名接口方法保持兼容。
     ///
     /// # Arguments
@@ -1576,7 +1613,13 @@ impl RichText {
     pub fn set_text_size(&mut self, size: i32) {
         // let old_size = self.text_size;
         self.text_size.store(size, Ordering::Relaxed);
-
+        if self.current_buffer.read().is_empty() {
+            // 更新虚拟光标高度
+            let cursor = &mut *self.cursor_piece.write();
+            cursor.h = (size as f32 * LINE_HEIGHT_FACTOR).ceil() as i32;
+            cursor.font_size = size;
+            *cursor.rd_bounds.write() = (PADDING.top, PADDING.top + (size as f32 * LINE_HEIGHT_FACTOR).ceil() as i32, PADDING.left, PADDING.left);
+        }
     }
 
     /// 获取默认的字体尺寸。

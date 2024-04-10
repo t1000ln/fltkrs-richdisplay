@@ -1,5 +1,6 @@
-use std::cell::{Cell, RefCell};
-use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering::Relaxed;
 use fast_log::filter::ModuleFilter;
 use fltk::{app, window};
 use fltk::button::Button;
@@ -7,6 +8,7 @@ use fltk::enums::{Color, Font};
 use fltk::image::SharedImage;
 use fltk::prelude::{GroupExt, ImageExt, WidgetBase, WidgetExt, WindowExt};
 use log::{LevelFilter, warn};
+use parking_lot::RwLock;
 use fltkrs_richdisplay::rich_reviewer::RichReviewer;
 use fltkrs_richdisplay::{PageOptions, UserData};
 
@@ -39,13 +41,13 @@ async fn main() {
         .center_screen();
     win.make_resizable(true);
 
-    let page_size = Rc::new(Cell::new(10usize));
+    let page_size = Arc::new(AtomicUsize::new(10));
     let mut btn1 = Button::new(120, 10, 100, 30, "page_size - 10");
     let mut btn2 = Button::new(240, 10, 100, 30, "page_size + 10");
 
     let mut reviewer = RichReviewer::new(100, 60, 1600, 800, None).lazy_page_mode();
     // reviewer.set_background_color(Color::Dark1);
-    reviewer.set_page_size(page_size.get());
+    reviewer.set_page_size(page_size.load(Relaxed));
     reviewer.set_piece_spacing(5);
 
     // 设置默认字体和颜色
@@ -57,9 +59,9 @@ async fn main() {
         let page_size_rc = page_size.clone();
         let mut reviewer_rc = reviewer.clone();
         move |_| {
-            if page_size_rc.get() >= 10 {
-                let new_page_size = page_size_rc.get() - 10;
-                page_size_rc.set(new_page_size);
+            if page_size_rc.load(Relaxed) >= 10 {
+                let new_page_size = page_size_rc.load(Relaxed) - 10;
+                page_size_rc.store(new_page_size, Relaxed);
                 reviewer_rc.set_page_size(new_page_size);
             }
         }
@@ -68,9 +70,9 @@ async fn main() {
         let page_size_rc = page_size.clone();
         let mut reviewer_rc = reviewer.clone();
         move |_| {
-            if page_size_rc.get() <= 100 {
-                let new_page_size = page_size_rc.get() + 10;
-                page_size_rc.set(new_page_size);
+            if page_size_rc.load(Relaxed) <= 100 {
+                let new_page_size = page_size_rc.load(Relaxed) + 10;
+                page_size_rc.store(new_page_size, Relaxed);
                 reviewer_rc.set_page_size(new_page_size);
             }
         }
@@ -80,12 +82,14 @@ async fn main() {
     win.show();
 
 
-    let data_buffer = Rc::new(RefCell::new(Vec::<UserData>::new()));
+    let data_buffer = Arc::new(RwLock::new(Vec::<UserData>::new()));
 
     let img1 = SharedImage::load("res/1.jpg").unwrap().to_rgb().unwrap();
     let (img1_width, img1_height) = (img1.width(), img1.height());
     let img2 = SharedImage::load("res/2.jpg").unwrap().to_rgb().unwrap();
     let (img2_width, img2_height) = (img2.width(), img2.height());
+
+    let mut reversed_buffer: Vec<UserData> = vec![];
     for i in 0..100 {
         let turn = i * 14;
         let mut data: Vec<UserData> = Vec::from([
@@ -109,23 +113,24 @@ async fn main() {
         ]);
         data.reverse();
         while let Some(data_unit) = data.pop() {
-            data_buffer.borrow_mut().push(data_unit);
+            reversed_buffer.push(data_unit);
         }
     }
+    data_buffer.write().append(&mut reversed_buffer);
 
     let fetch_page_fn = {
         let data_buffer_rc = data_buffer.clone();
         let mut reviewer_rc = reviewer.clone();
         let page_size_rc = page_size.clone();
         move |opt| {
-            let ps = page_size_rc.get();
+            let ps = page_size_rc.load(Relaxed);
             match opt {
                 PageOptions::NextPage(last_uid) => {
-                    if let Ok(last_pos) = data_buffer_rc.borrow().binary_search_by_key(&last_uid, |d| d.id) {
+                    if let Ok(last_pos) = data_buffer_rc.read().binary_search_by_key(&last_uid, |d| d.id) {
                         // debug!("找到当前页最后一条数据的索引位置: {}, {}", last_pos, auto_extend);
-                        if data_buffer_rc.borrow().len() > last_pos + 1 {
+                        if data_buffer_rc.read().len() > last_pos + 1 {
                             let mut page_data = Vec::<UserData>::with_capacity(ps);
-                            for ud in data_buffer_rc.borrow()[(last_pos + 1)..].iter().take(ps) {
+                            for ud in data_buffer_rc.read()[(last_pos + 1)..].iter().take(ps) {
                                 page_data.push(ud.clone());
                             }
                             // debug!("载入下一页数据");
@@ -136,7 +141,7 @@ async fn main() {
                     }
                 }
                 PageOptions::PrevPage(first_uid) => {
-                    if let Ok(first_pos) = data_buffer_rc.borrow().binary_search_by_key(&first_uid, |d| d.id) {
+                    if let Ok(first_pos) = data_buffer_rc.read().binary_search_by_key(&first_uid, |d| d.id) {
                         // debug!("找到当前页第一条数据的索引位置: {}", first_pos);
                         if first_pos > 0 {
                             let mut page_data = Vec::<UserData>::with_capacity(ps);
@@ -146,7 +151,7 @@ async fn main() {
                                 0
                             };
                             let to = from + ps;
-                            for ud in data_buffer_rc.borrow()[from..to].iter().take(ps) {
+                            for ud in data_buffer_rc.read()[from..to].iter().take(ps) {
                                 page_data.push(ud.clone());
                             }
                             // debug!("载入上一页数据");
@@ -161,11 +166,16 @@ async fn main() {
     };
     reviewer.set_page_notifier(fetch_page_fn);
 
-    let mut page_data = Vec::<UserData>::with_capacity(page_size.get());
-    for ud in data_buffer.borrow().iter().take(page_size.get()) {
+    let mut page_data = Vec::<UserData>::with_capacity(page_size.load(Relaxed));
+    for ud in data_buffer.read().iter().take(page_size.load(Relaxed)) {
         page_data.push(ud.clone());
     }
     reviewer.load_page_now(page_data, PageOptions::NextPage(0));
 
     app.run().unwrap();
+
+    if let Ok(w) = fast_log::flush() {
+        // 等待日志刷出到磁盘上。
+        w.wait();
+    }
 }

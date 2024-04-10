@@ -17,18 +17,22 @@
 //!    rich_text.set_cache_size(200);
 //!    win.end();
 //!    win.show();
+//!
+//!    let ud = UserData::new_text("dev@DESKTOP-PCL7MBI:\t~$ ls\r\n".to_string());
+//!    rich_text.append(ud);
+//!
 //!    app.run().unwrap();
 //! }
 //! ```
 //!
-//! 另一个支持互动的复杂示例：
+//! 另一个支持互动的复杂示例，鼠标右键点击可互动的数据段会产生互动消息：
 //! ```rust,no_run
 //! use fltk::{app, window};
-//! use fltk::enums::{Event, Key};
+//! use fltk::enums::{Color, Event, Font, Key};
 //! use fltk::prelude::{GroupExt, WidgetBase, WidgetExt, WindowExt};
 //! use log::error;
 //! use fltkrs_richdisplay::rich_text::RichText;
-//! use fltkrs_richdisplay::{RichDataOptions, UserData, CallbackData};
+//! use fltkrs_richdisplay::{RichDataOptions, UserData, CallbackData, DocEditType};
 //!
 //! pub enum GlobalMessage {
 //!     ContentData(UserData),
@@ -40,19 +44,24 @@
 //! async fn main() {
 //!     let app = app::App::default();
 //!     let mut win = window::Window::default().with_size(1000, 600).center_screen();
+//!     win.make_resizable(true);
+//!
 //!     let mut rich_text = RichText::new(100, 120, 800, 400, None);
+//!
+//!     // 互动消息通道
 //!     let (action_sender, mut action_receiver) = tokio::sync::mpsc::channel::<CallbackData>(100);
-//!     // 自定义回调函数，当用户鼠标点击可互动的数据段时，组件会调用回调函数。
+//!
+//!     // 自定义回调函数，当用户鼠标右键点击可互动的数据段时，组件会调用回调函数。
 //!     let cb_fn = {
 //!         let sender_rc = action_sender.clone();
 //!         move |user_data| {
-//!            let sender = sender_rc.clone();
-//!            tokio::spawn(async move {
-//!                if let Err(e) = sender.send(user_data).await {
-//!                    error!("发送用户操作失败: {:?}", e);
-//!                }
-//!           });
-//!        }
+//!             let sender = sender_rc.clone();
+//!             tokio::spawn(async move {
+//!                 if let Err(e) = sender.send(user_data).await {
+//!                     error!("发送用户操作失败: {:?}", e);
+//!                 }
+//!             });
+//!         }
 //!     };
 //!     rich_text.set_notifier(cb_fn);
 //!     rich_text.set_cache_size(1000);
@@ -63,64 +72,86 @@
 //!     包里提供的两个API接口为此提供支持：`RichText::auto_open_reviewer(&self)`和`RichText::auto_close_reviewer(&self)`。
 //!     */
 //!     win.handle({
-//!        let rich_text_rc = rich_text.clone();
-//!        move |_, evt| {
-//!            let mut handled = false;
-//!            match evt {
-//!                Event::KeyDown => {
-//!                    if app::event_key_down(Key::PageDown) {
-//!                        handled = rich_text_rc.auto_close_reviewer();
-//!                    } else if app::event_key_down(Key::PageUp) {
-//!                        handled = rich_text_rc.auto_open_reviewer().unwrap();
-//!                    }
-//!                }
-//!                _ => {}
-//!            }
-//!            handled
-//!        }
+//!         let rich_text_rc = rich_text.clone();
+//!         move |_, evt| {
+//!             let mut handled = false;
+//!             match evt {
+//!                 Event::KeyDown => {
+//!                     if app::event_key_down(Key::PageDown) {
+//!                         handled = rich_text_rc.auto_close_reviewer();
+//!                     } else if app::event_key_down(Key::PageUp) {
+//!                         handled = rich_text_rc.auto_open_reviewer().unwrap();
+//!                     }
+//!                 }
+//!                 _ => {}
+//!             }
+//!             handled
+//!         }
 //!     });
 //!
+//!     // App全局消息唯一通道
 //!     let (global_sender, global_receiver) = app::channel::<GlobalMessage>();
 //!
 //!     win.end();
 //!     win.show();
 //!
 //!     let global_sender_rc = global_sender.clone();
+//!
+//!     // 互动消息处理器
 //!     tokio::spawn(async move {
-//!        while let Some(cb_data) = action_receiver.recv().await {
-//!            if let CallbackData::Data(data) = cb_data {
-//!                if data.text.starts_with("10") {
+//!         while let Some(cb_data) = action_receiver.recv().await {
+//!             if let CallbackData::Data(data) = cb_data {
+//!                 if data.text.starts_with("10") {
 //!                     let toggle = !data.blink;
 //!                     let update_options = RichDataOptions::new(data.id).blink(toggle);
 //!                     global_sender_rc.send(GlobalMessage::UpdateData(update_options));
-//!                }
-//!            }
-//!        }
+//!                 }
+//!             }
+//!         }
 //!     });
+//!
+//!     let data = vec![
+//!         UserData::new_text("0dev@DESKTOP-PCL7MBI:\t~$ ls\r\n1分片\r\n2分片".to_string()),
+//!         UserData::new_text("3dev@DESKTOP-PCL7MBI:\t~$ ls\r\n".to_string()),
+//!         UserData::new_text("4dev@DESKTOP-PCL7MBI:\t~$ ls\r\nls -al".to_string()),
+//!         UserData::new_text("5dev@DESKTOP-PCL7MBI:\t~$ ls\r\n速度".to_string()).set_bg_color(Some(Color::Green)),
+//!         UserData::new_text("6dev@DESKTOP-PCL7MBII:\t~$ ls Downloads\r\n".to_string()).set_font_and_size(Font::Helvetica, 22),
+//!         UserData::new_text("7dev@DESKTOP-PCL7MBI:\t~$ ls\r\n".to_string()),
+//!         UserData::new_text("8dev@DESKTOP-PCL7MBI:~$ ls".to_string()).set_underline(true),
+//!         UserData::new_text("9dev@DESKTOP-PCL7MBI:~$ ls\r\n".to_string()).set_underline(true),
+//!         UserData::new_text("10 Right click me! 鼠标右键点击！\r\n".to_string()).set_font_and_size(Font::Helvetica, 20).set_clickable(true).set_blink(true),
+//!         UserData::new_text("11dev@DESKTOP-PCL7MBI:\t~$ ls\r\n".to_string()),
+//!     ];
+//!
+//!     let mut docs: Vec<DocEditType> = Vec::new();
+//!     for ud in data {
+//!         docs.push(DocEditType::Data(ud));
+//!     }
+//!     rich_text.append_batch(&mut docs);
 //!
 //!     let mut has_recent_message = false;
 //!     while app.wait() {
-//!        if let Some(msg) = global_receiver.recv() {
-//!            match msg {
-//!                GlobalMessage::ContentData(data) => {
-//!                    has_recent_message = true;
-//!                    rich_text.append(data);
-//!                }
-//!                GlobalMessage::UpdateData(options) => {
-//!                    rich_text.update_data(options);
-//!                }
-//!                GlobalMessage::DisableData(id) => {
-//!                    rich_text.disable_data(id);
-//!                }
-//!            }
-//!        } else {
-//!            has_recent_message = false; 
-//!        }
+//!         if let Some(msg) = global_receiver.recv() {
+//!             match msg {
+//!                 GlobalMessage::ContentData(data) => {
+//!                     has_recent_message = true;
+//!                     rich_text.append(data);
+//!                 }
+//!                 GlobalMessage::UpdateData(options) => {
+//!                     rich_text.update_data(options);
+//!                 }
+//!                 GlobalMessage::DisableData(id) => {
+//!                     rich_text.disable_data(id);
+//!                 }
+//!             }
+//!         } else {
+//!             has_recent_message = false;
+//!         }
 //!
-//!        if !has_recent_message {
-//!            app::sleep(0.001);
-//!            app::awake();
-//!        }
+//!         if !has_recent_message {
+//!             app::sleep(0.001);
+//!             app::awake();
+//!         }
 //!     }
 //! }
 //! ```
@@ -393,12 +424,12 @@ pub enum PageOptions {
 #[derive(Clone)]
 pub struct CallPage {
     /// 回调函数。
-    notifier: Rc<RefCell<Box<dyn FnMut(PageOptions)>>>,
+    notifier: Arc<RwLock<Box<dyn FnMut(PageOptions) + Sync + Send + 'static>>>,
 }
 
 impl Debug for CallPage {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "CallPage count: {}", Rc::<RefCell<Box<(dyn FnMut(PageOptions) + 'static)>>>::strong_count(&self.notifier))
+        write!(f, "CallPage count: {}", Arc::<RwLock<Box<(dyn FnMut(PageOptions) + Sync + Send + 'static)>>>::strong_count(&self.notifier))
     }
 }
 
@@ -465,13 +496,13 @@ impl ImageEventData {
 
 impl CallPage {
     /// 构建新的分页回调结构体实例。
-    pub fn new(notifier: Rc<RefCell<Box<dyn FnMut(PageOptions)>>>) -> Self {
+    pub fn new(notifier: Arc<RwLock<Box<dyn FnMut(PageOptions) + Sync + Send + 'static>>>) -> Self {
         Self { notifier }
     }
 
     fn notify(&mut self, opt: PageOptions) {
         // let notify = &mut* self.notifier.borrow_mut();
-        let notify = &mut* self.notifier.borrow_mut();
+        let notify = &mut* self.notifier.write();
         notify(opt);
     }
 }
@@ -729,6 +760,36 @@ impl Rectangle {
         self.1 < another.1 + another.3 &&
         self.1 + self.3 > another.1
     }
+
+    // /// 将矩形限制到可绘制区域内。
+    // ///
+    // /// # Arguments
+    // ///
+    // /// * `panel_width`:
+    // /// * `panel_height`:
+    // ///
+    // /// returns: ()
+    // ///
+    // /// # Examples
+    // ///
+    // /// ```
+    // ///
+    // /// ```
+    // pub fn align(mut self, panel_width: i32, panel_height: i32) -> Self {
+    //     if self.0 < PADDING.left {
+    //         self.0 = PADDING.left;
+    //     }
+    //     if self.1 < PADDING.top {
+    //         self.1 = PADDING.top;
+    //     }
+    //     if self.2 > panel_width - PADDING.right {
+    //         self.2 = panel_width - PADDING.right;
+    //     }
+    //     if self.3 > panel_height - PADDING.bottom {
+    //         self.3 = panel_height - PADDING.bottom;
+    //     }
+    //     self
+    // }
 }
 
 /// 鼠标点击位置的坐标信息和数据片段索引信息。
@@ -767,6 +828,23 @@ impl ClickPoint {
     /// ```
     pub fn to_rect(&self, to_point: &Self) -> Rectangle {
         Rectangle::new(self.x, self.y, to_point.x - self.x, to_point.y - self.y)
+    }
+
+    pub fn align(&mut self, panel_width: i32, panel_height: i32, scroll_y: i32) {
+        if self.x < PADDING.left {
+            self.x = PADDING.left;
+            self.p_i = 0;
+            self.c_i = 0;
+        }
+        if self.y < PADDING.top {
+            self.y = PADDING.top;
+        }
+        if self.x > panel_width - PADDING.right {
+            self.x = panel_width - PADDING.right;
+        }
+        if self.y > panel_height + scroll_y - PADDING.bottom {
+            self.y = panel_height + scroll_y - PADDING.bottom;
+        }
     }
 }
 
@@ -882,6 +960,10 @@ pub(crate) struct LinePiece {
 
     /// 字体渲染高度，小于等于行高。
     pub font_height: i32,
+    /// 当行高与字体渲染高度不一致时，需要通过y轴偏移量矫正渲染文字的位置。
+    pub text_offset: i32,
+    /// 当行高与字体渲染高度不一致时，需要通过y轴偏移量矫正背景色渲染位置。
+    pub bg_offset: i32,
 
     /// 在同一行内有多个数据分片的情况下， 跟踪行高信息。每次新增行时，第一个分片需要创建新的对象；在同一行其他分片只需要引用第一个分片的对象即可。
     pub through_line: Arc<RwLock<ThroughLine>>,
@@ -909,6 +991,8 @@ impl LinePiece {
             next_x,
             next_y,
             font_height,
+            text_offset: 0,
+            bg_offset: 0,
             through_line: through_line.clone(),
             selected_range: Arc::new(RwLock::new(None)),
             font,
@@ -932,6 +1016,8 @@ impl LinePiece {
             next_x: PADDING.left,
             next_y: PADDING.top,
             font_height: 1,
+            text_offset: 0,
+            bg_offset: 0,
             through_line: through_line.clone(),
             selected_range: Arc::new(RwLock::new(None)),
             font: Font::Helvetica,
@@ -989,8 +1075,14 @@ impl LinePiece {
 
     /// 获取当前片段右侧的虚拟光标，虚拟光标是一个零宽度的片段。
     pub fn get_cursor(&self) -> LinePiece {
+        // 为光标信息附加文本末尾的字符，用于辅助检测换行逻辑，控制行高。
+        let line = if let Some(c) = self.line.chars().last() {
+            c.to_string()
+        } else {
+            String::new()
+        };
         Self {
-            line: "".to_string(),
+            line,
             x: self.next_x,
             y: self.next_y,
             w: 0,
@@ -1000,6 +1092,8 @@ impl LinePiece {
             next_x: self.next_x,
             next_y: self.next_y,
             font_height: self.font_height,
+            text_offset: 0,
+            bg_offset: 0,
             through_line: self.through_line.clone(),
             selected_range: Arc::new(RwLock::new(None)),
             font: self.font,
@@ -1050,64 +1144,16 @@ impl LinePiece {
         self.next_y = y;
     }
 
-    // /// 将光标恢复到屏幕左上角初始位置。
-    // ///
-    // /// # Arguments
-    // ///
-    // /// * `text_size`:
-    // ///
-    // /// returns: ()
-    // ///
-    // /// # Examples
-    // ///
-    // /// ```
-    // ///
-    // /// ```
-    // pub fn reset_cursor(&mut self, text_size: i32) {
-    //     self.line = "".to_string();
-    //     self.x = PADDING.left;
-    //     self.y = PADDING.top;
-    //     self.next_x = PADDING.left;
-    //     self.next_y = PADDING.top;
-    //     self.w = 0;
-    //     self.h = (text_size as f32 * LINE_HEIGHT_FACTOR).ceil() as i32;
-    //     self.top_y = PADDING.top;
-    //     self.spacing = 0;
-    //     self.font_height = text_size;
-    //     self.through_line = Arc::new(RwLock::new(Default::default()));
-    //     self.selected_range = Arc::new(RwLock::new(None));
-    //     self.font = Font::Helvetica;
-    //     self.font_size = DEFAULT_FONT_SIZE;
-    //     self.rd_bounds = Arc::new(RwLock::new((PADDING.top, PADDING.top + self.h, PADDING.left, PADDING.left)));
-    // }
+    pub fn calc_offset(&mut self) {
+        (self.text_offset, _) = calc_v_center_offset(self.h, self.font_size);
+        (self.bg_offset, _) = calc_v_center_offset(self.h, self.font_height);
+        // debug!("text_offset: {}, bg_offset: {}, h: {}, font_size: {}, font_height: {}, line: {}", self.text_offset, self.bg_offset, self.h, self.font_size, self.font_height, self.line);
 
-    // /// 将光标移动到行首。
-    // ///
-    // /// # Arguments
-    // ///
-    // /// * `text_size`:
-    // ///
-    // /// returns: ()
-    // ///
-    // /// # Examples
-    // ///
-    // /// ```
-    // ///
-    // /// ```
-    // pub fn line_head_cursor(&mut self, text_size: i32) {
-    //     self.line = "".to_string();
-    //     self.x = PADDING.left;
-    //     self.next_x = PADDING.left;
-    //     self.w = 0;
-    //     self.h = (text_size as f32 * LINE_HEIGHT_FACTOR).ceil() as i32;
-    //     self.spacing = 0;
-    //     self.font_height = text_size;
-    //     self.through_line = Arc::new(RwLock::new(Default::default()));
-    //     self.selected_range = Arc::new(RwLock::new(None));
-    //     self.font = Font::Helvetica;
-    //     self.font_size = DEFAULT_FONT_SIZE;
-    //     self.rd_bounds = Arc::new(RwLock::new((self.top_y, self.top_y + self.h, PADDING.left, PADDING.left)));
-    // }
+        #[cfg(target_os = "windows")]
+        {
+            self.text_offset = (self.text_offset as f32  / 2.0f32).floor() as i32;
+        }
+    }
 }
 
 pub(crate) trait LinedData {
@@ -1258,6 +1304,7 @@ impl ActionItem {
     }
 }
 
+/// 互动行为定义。
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct Action {
     /// 互动操作提示信息，当鼠标指向时会弹出该提示，类似于`HTML`标签的`title`属性。
@@ -1586,6 +1633,19 @@ impl UserData {
         self
     }
 
+    /// 设置数据段互动行为。
+    ///
+    /// # Arguments
+    ///
+    /// * `action`: 互动操作。
+    ///
+    /// returns: UserData
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
     pub fn set_action(mut self, action: Action) -> Self {
         self.action = Some(action);
         self.clickable = true;
@@ -1594,6 +1654,19 @@ impl UserData {
         self
     }
 
+    /// 更改当前数据段的互动行为。
+    ///
+    /// # Arguments
+    ///
+    /// * `action`: 互动操作。
+    ///
+    /// returns: ()
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///
+    /// ```
     pub fn change_action(&mut self, action: Option<Action>) {
         if action.is_some() {
             self.action = action;
@@ -2204,7 +2277,6 @@ impl LinedData for RichData {
     fn draw(&self, offset_y: i32, blink_state: &BlinkState) {
         match self.data_type {
             DataType::Text => {
-                let bg_offset = 1;
                 let mut processed_search_len = 0usize;
                 set_font(self.font, self.font_size);
                 for piece in self.line_pieces.iter() {
@@ -2221,12 +2293,7 @@ impl LinedData for RichData {
                             // 绘制文字背景色
                             // debug!("绘制文字背景色: {}", bg_color.to_hex_str());
                             set_draw_color(*bg_color);
-
-                            #[cfg(target_os = "linux")]
-                            draw_rectf(piece.x, y - piece.spacing + 2, piece.w, piece.font_height);
-
-                            #[cfg(not(target_os = "linux"))]
-                            draw_rectf(piece.x, y - piece.spacing, piece.w, piece.font_height);
+                            draw_rectf(piece.x, y - piece.spacing + piece.bg_offset, piece.w, piece.font_height);
                         }
                     }
 
@@ -2243,14 +2310,9 @@ impl LinedData for RichData {
                         };
                         set_draw_color(sel_color);
                         let (skip_width, _) = measure(piece.line.chars().take(from).collect::<String>().as_str(), false);
-                        // let (fill_width, _) = measure(piece.line.chars().skip(from).take(to - from).collect::<String>().as_str(), false);
                         let (fill_width, _) = measure(piece.line.chars().skip(from).take(max(to, from) - from).collect::<String>().as_str(), false);
 
-                        #[cfg(target_os = "linux")]
-                        draw_rectf(piece.x + skip_width, y - piece.spacing + 2, fill_width, piece.font_height);
-
-                        #[cfg(not(target_os = "linux"))]
-                        draw_rectf(piece.x + skip_width, y - piece.spacing, fill_width, piece.font_height);
+                        draw_rectf(piece.x + skip_width, y + piece.bg_offset, fill_width, piece.font_height);
                     }
 
                     // 绘制查找焦点框
@@ -2328,19 +2390,24 @@ impl LinedData for RichData {
 
                     if self.underline {
                         // 绘制下划线
-                        let line_y = y + piece.font_height - ((piece.font_height as f32 / 10f32).floor() as i32 + 1);
-                        draw_line(piece.x, line_y, piece.x + piece.w - 4, line_y);
+                        // let line_y = y + piece.font_height + piece.bg_offset - 1;
+                        let line_y = y + piece.font_size + piece.text_offset + 2;
+                        draw_line(piece.x, line_y, piece.x + piece.w - 2, line_y);
                     }
 
                     // 绘制文本，使用draw_text_n()函数可以正确渲染'@'字符而无需转义处理。
-                    // draw_text2(piece.line.as_str(), piece.x, y + bg_offset, piece.w, piece.h, Align::Left);
-                    draw_text_n(text, piece.x, y + bg_offset + self.font_size);
+                    draw_text_n(text, piece.x, y + self.font_size + piece.text_offset);
 
                     if self.strike_through {
                         // 绘制删除线
                         let line_y = y + ((piece.font_height as f32 / 2f32).floor() as i32);
                         draw_line(piece.x, line_y, piece.x + piece.w - 4, line_y);
                     }
+
+                    // {
+                    //     // 绘制上边界，用来辅助调试绘制内容的偏移效果
+                    //     draw_line(piece.x, piece.y, piece.x + piece.w, piece.y);
+                    // }
                 }
             },
             DataType::Image => {
@@ -2447,8 +2514,8 @@ impl LinedData for RichData {
     /// ```
     fn estimate(&mut self, last_piece: Arc<RwLock<LinePiece>>, max_width: i32, basic_char: char) -> Arc<RwLock<LinePiece>> {
         let mut ret = last_piece.clone();
-        let mut last_piece = last_piece.read().clone();
-        let (top_y, start_x) = (last_piece.next_y, last_piece.next_x);
+        let mut last_line_piece = last_piece.read().clone();
+        let (top_y, start_x) = (last_line_piece.next_y, last_line_piece.next_x);
         let (font, font_size) = (self.font, self.font_size);
         self.line_pieces.clear();
         match self.data_type {
@@ -2458,7 +2525,7 @@ impl LinedData for RichData {
                 // 字体渲染高度，小于等于行高度。
                 let ref_font_height = (self.font_size as f32 * LINE_HEIGHT_FACTOR).ceil() as i32;
 
-                let current_line_spacing = min(last_piece.spacing, descent());
+                let current_line_spacing = min(last_line_piece.spacing, descent());
 
                 /*
                 对含有换行符和不含换行符的文本进行不同处理。
@@ -2471,7 +2538,7 @@ impl LinedData for RichData {
                         let mut current_line_height = max(ref_font_height, th);
                         self.line_height = current_line_height;
 
-                        let mut next_x = last_piece.next_x + tw;
+                        let mut next_x = last_line_piece.next_x + tw;
                         if next_x > max_width {
                             // 超出横向右边界
                             ret = self.wrap_text_for_estimate(line, ret.clone(), max_width, tw, ref_font_height);
@@ -2491,27 +2558,27 @@ impl LinedData for RichData {
                                 new_piece = LinePiece::new(line.to_string(), lp.next_x, y, tw, current_line_height, piece_top_y, lp.spacing, next_x, next_y, ref_font_height, font, font_size, through_line, self.v_bounds.clone());
 
                             } else {
-                                let mut next_y = last_piece.next_y;
+                                let mut next_y = last_line_piece.next_y;
                                 // 最后一段可能带有换行符'\n'。
                                 if line.ends_with("\n") {
                                     // if !last_piece.line.ends_with("\n") && !last_piece.line.is_empty() {
                                     //     current_line_height = max(current_line_height, last_piece.h);
                                     // }
-                                    if !last_piece.line.ends_with("\n") {
-                                        current_line_height = max(current_line_height, last_piece.h);
+                                    if !last_line_piece.line.ends_with("\n") {
+                                        current_line_height = max(current_line_height, last_line_piece.h);
                                     }
                                     next_y += current_line_height;
                                     next_x = PADDING.left;
                                 }
-                                let y = last_piece.next_y;
-                                let piece_top_y = last_piece.next_y;
-                                let through_line = ThroughLine::create_or_update(PADDING.left, last_piece.next_x, current_line_height, ret.clone(), false);
-                                new_piece = LinePiece::new(line.to_string(), last_piece.next_x, y, tw, self.line_height, piece_top_y, last_piece.spacing, next_x, next_y, ref_font_height, font, font_size, through_line, self.v_bounds.clone());
+                                let y = last_line_piece.next_y;
+                                let piece_top_y = last_line_piece.next_y;
+                                let through_line = ThroughLine::create_or_update(PADDING.left, last_line_piece.next_x, current_line_height, ret.clone(), false);
+                                new_piece = LinePiece::new(line.to_string(), last_line_piece.next_x, y, tw, self.line_height, piece_top_y, last_line_piece.spacing, next_x, next_y, ref_font_height, font, font_size, through_line, self.v_bounds.clone());
                             }
                             self.line_pieces.push(new_piece.clone());
                             ret = new_piece;
                         }
-                        last_piece = ret.read().clone();
+                        last_line_piece = ret.read().clone();
                     }
 
                 } else {
@@ -2539,32 +2606,32 @@ impl LinedData for RichData {
                 if start_x + self.image_target_width > max_width {
                     // 本行超宽，直接定位到下一行
                     let x = PADDING.left + IMAGE_PADDING_H;
-                    let y = top_y + last_piece.through_line.read().max_h + IMAGE_PADDING_V;
+                    let y = top_y + last_line_piece.through_line.read().max_h + IMAGE_PADDING_V;
                     let next_x = x + self.image_target_width + IMAGE_PADDING_H;
                     let next_y = y - IMAGE_PADDING_V;
                     let piece_top_y = y - IMAGE_PADDING_V;
                     let through_line = ThroughLine::new(self.image_target_height * IMAGE_PADDING_V * 2, true);
-                    let new_piece = LinePiece::new("".to_string(), x, y, self.image_target_width, self.image_target_height, piece_top_y, last_piece.spacing, next_x, next_y, 1, font, font_size, through_line, self.v_bounds.clone());
+                    let new_piece = LinePiece::new("".to_string(), x, y, self.image_target_width, self.image_target_height, piece_top_y, last_line_piece.spacing, next_x, next_y, 1, font, font_size, through_line, self.v_bounds.clone());
                     self.line_pieces.push(new_piece.clone());
                     ret = new_piece;
                 } else {
                     let x = start_x + IMAGE_PADDING_H;
                     let next_x = start_x + self.image_target_width + IMAGE_PADDING_H * 2 + self.piece_spacing;
-                    if last_piece.line.ends_with("\n") {
+                    if last_line_piece.line.ends_with("\n") {
                         // 定位在行首
                         let y = top_y + IMAGE_PADDING_V;
                         let piece_top_y = y - IMAGE_PADDING_V;
                         let through_line = ThroughLine::new(self.image_target_height * IMAGE_PADDING_V * 2, true);
-                        let new_piece = LinePiece::new("".to_string(), x, y, self.image_target_width, self.image_target_height, piece_top_y, last_piece.spacing, next_x, top_y, 1, font, font_size, through_line, self.v_bounds.clone());
+                        let new_piece = LinePiece::new("".to_string(), x, y, self.image_target_width, self.image_target_height, piece_top_y, last_line_piece.spacing, next_x, top_y, 1, font, font_size, through_line, self.v_bounds.clone());
                         self.line_pieces.push(new_piece.clone());
                         ret = new_piece;
                     } else {
                         // 在本行已有其他内容，需要与前一个片段协调行高
-                        let current_line_height = max(last_piece.h, h);
+                        let current_line_height = max(last_line_piece.h, h);
                         let mut raw_y = top_y + IMAGE_PADDING_V;
-                        if current_line_height > last_piece.h {
+                        if current_line_height > last_line_piece.h {
                             // 图形比前一个分片行高要高
-                            last_piece.through_line.write().set_max_h(current_line_height);
+                            last_line_piece.through_line.write().set_max_h(current_line_height);
                         } else {
                             // 图形的高度小于等于前一个分片的行高，需要计算垂直居中位置
                             let (up, _) = calc_v_center_offset(current_line_height, h);
@@ -2573,7 +2640,7 @@ impl LinedData for RichData {
                         let y = raw_y;
                         let piece_top_y = y - IMAGE_PADDING_V;
                         let through_line = ThroughLine::create_or_update(PADDING.left + IMAGE_PADDING_H, x, self.image_target_height * IMAGE_PADDING_V * 2, ret, true);
-                        let new_piece = LinePiece::new("".to_string(), x, y, self.image_target_width, self.image_target_height, piece_top_y, last_piece.spacing, next_x, top_y + IMAGE_PADDING_V, 1, font, font_size, through_line, self.v_bounds.clone());
+                        let new_piece = LinePiece::new("".to_string(), x, y, self.image_target_width, self.image_target_height, piece_top_y, last_line_piece.spacing, next_x, top_y + IMAGE_PADDING_V, 1, font, font_size, through_line, self.v_bounds.clone());
                         self.line_pieces.push(new_piece.clone());
                         ret = new_piece;
                     }
@@ -2611,6 +2678,10 @@ impl LinedData for RichData {
                 }
             }
         }
+
+        // 计算文字片段字体高度小于行高时的渲染偏移量
+        self.line_pieces.iter_mut().for_each(|lp| lp.write().calc_offset());
+
         // 重新计算同一行内低于最大行高的片段的y坐标
         for (lp, max_h) in to_be_updated {
             let y = lp.read().y;
@@ -2910,34 +2981,58 @@ fn select_piece_from_or_to(rd: &RichData, piece_index: usize, pos: usize, select
 /// ```
 ///
 /// ```
-pub(crate) fn select_text(from_point: &ClickPoint, to_point: &ClickPoint, data_buffer: &[RichData], rd_range: RangeInclusive<usize>, selected_pieces: Arc<RwLock<Vec<Weak<RwLock<LinePiece>>>>>) {
+pub(crate) fn select_text(
+    from_point: &ClickPoint,
+    to_point: &ClickPoint,
+    data_buffer: &[RichData],
+    rd_range: RangeInclusive<usize>,
+    selected_pieces: Arc<RwLock<Vec<Weak<RwLock<LinePiece>>>>>,
+    select_from_row: usize) {
     /*
     选择片段的原则：应选择起点右下方的第一行片段，结束点左上方的第一行片段，以及两点之间的中间行片段。
      */
     // debug!("传入的fp: {:?}, tp: {:?}", from_point, to_point);
     let drag_rect = from_point.to_rect(to_point);
+    // debug!("drag_rect: {:?}", drag_rect);
     let (lt, br) = drag_rect.corner_rect();
     let (mut lt_p, mut br_p) = (from_point, to_point);
-    if (br.0 == from_point.x && br.1 == from_point.y) || (lt.0 == from_point.x && br.1 == from_point.y) {
-        // debug!("对换坐标点");
-        lt_p = to_point;
-        br_p = from_point;
-    };
-    let (f_p_i, t_p_i) = (lt_p.p_i, br_p.p_i);
-
-    // debug!("f_p_i: {f_p_i}, t_p_i: {t_p_i}, rd_range: {:?}, drag_rect: {:?}, lt: {:?}, br: {:?}", rd_range, drag_rect, lt, br);
+    /*
+    lt_p: 划选区左上角点击位置
+    br_p: 划选区右下角点击位置
+    lf_p_i: 左上角数据分片索引号
+    br_p_i: 右下角数据分片索引号
+     */
+    let (mut lt_p_i, mut br_p_i) = (lt_p.p_i, br_p.p_i);
+    // debug!("lt_p_i: {lt_p_i}, br_p_i: {br_p_i}, rd_range: {:?}, drag_rect: {:?}, lt_p: {:?}, br_p: {:?}", rd_range, drag_rect, lt_p, br_p);
     // 清理上一次选择的区域
     clear_selected_pieces(selected_pieces.clone());
 
     let (r_start, r_end) = (*rd_range.start(), *rd_range.end());
-    let across_rds = r_end - r_start;
+    let across_rds = max(r_end as isize - r_start as isize, 0);
     if across_rds > 0 {
         // 超过一行
         // debug!("选区超过一个数据段");
         if let Some(rd) = data_buffer.get(r_start) {
             // 选择第一个数据段起点之后的所有分片内容。
-            select_piece_from_or_to(rd, f_p_i, lt_p.c_i, selected_pieces.clone(), true);
-            for p in rd.line_pieces.iter().skip(f_p_i + 1) {
+            // debug!("第一个数据段 lt_p_i: {lt_p_i}, lt_p.c_i: {}, br_p_i: {br_p_i}, br_p.c_i: {}", lt_p.c_i, br_p.c_i);
+            let v_bounds = &*rd.v_bounds.read();
+            // 若起始点成为划选区的右下角或左下角的时候，对调起始点和结束点
+            let mut should_exchange = (br.0 == from_point.x && br.1 == from_point.y) || (lt.0 == from_point.x && br.1 == from_point.y);
+            // 若划选区在起点数据段边界内，则不应对调
+            if should_exchange && r_start == select_from_row && drag_rect.1 >= v_bounds.0 && (drag_rect.1 + drag_rect.3) <= v_bounds.1 {
+                should_exchange = false;
+            }
+
+            if should_exchange {
+                // debug!("对换坐标点");
+                lt_p = to_point;
+                br_p = from_point;
+                lt_p_i = lt_p.p_i;
+                br_p_i = br_p.p_i;
+            }
+
+            select_piece_from_or_to(rd, lt_p_i, lt_p.c_i, selected_pieces.clone(), true);
+            for p in rd.line_pieces.iter().skip(lt_p_i + 1) {
                 let piece = &*p.read();
                 piece.select_all();
                 selected_pieces.write().push(Arc::downgrade(p));
@@ -2945,41 +3040,54 @@ pub(crate) fn select_text(from_point: &ClickPoint, to_point: &ClickPoint, data_b
         }
 
         // 如果中间有更多跨行数据段，则全选这些数据段。
-        let mut piece_rcs = Vec::new();
-        for i in r_start + 1..r_end {
-            if let Some(rd) = data_buffer.get(i) {
-                for p in rd.line_pieces.iter() {
-                    let piece = &*p.read();
-                    piece.select_all();
-                    piece_rcs.push(Arc::downgrade(p));
+        if r_end > r_start + 1 {
+            let mut piece_rcs = Vec::new();
+            for i in r_start + 1..r_end {
+                if let Some(rd) = data_buffer.get(i) {
+                    for p in rd.line_pieces.iter() {
+                        let piece = &*p.read();
+                        piece.select_all();
+                        piece_rcs.push(Arc::downgrade(p));
+                    }
                 }
             }
+            selected_pieces.write().append(&mut piece_rcs);
         }
-        selected_pieces.write().append(&mut piece_rcs);
 
         if let Some(rd) = data_buffer.get(r_end) {
             // 选择最后一个数据段终点之前的所有内容。
-            for p in rd.line_pieces.iter().take(t_p_i) {
+            for p in rd.line_pieces.iter().take(br_p_i) {
                 let piece = &*p.read();
                 piece.select_all();
                 selected_pieces.write().push(Arc::downgrade(p));
             }
-            select_piece_from_or_to(rd, t_p_i, br_p.c_i + 1, selected_pieces.clone(), false);
+            // debug!("br_p_i: {br_p_i}, br_p.c_i: {}", br_p.c_i);
+            select_piece_from_or_to(rd, br_p_i, br_p.c_i + 1, selected_pieces.clone(), false);
         }
     } else {
         // 只有一行
         // debug!("选区只有一个数据段");
+
+        // 若起始点成为划选区的右下角或左下角的时候，对调起始点和结束点
+        if (br.0 == from_point.x && br.1 == from_point.y) || (lt.0 == from_point.x && br.1 == from_point.y) {
+            // debug!("对换坐标点");
+            lt_p = to_point;
+            br_p = from_point;
+            lt_p_i = lt_p.p_i;
+            br_p_i = br_p.p_i;
+        }
+
         if let Some(rd) = data_buffer.get(r_start) {
-            let across_pieces = if t_p_i > f_p_i {t_p_i - f_p_i} else {0};
-            if across_pieces > 0 {
+            // debug!("br_p_i: {br_p_i}, lt_p_i: {lt_p_i}");
+            if br_p_i != lt_p_i {
                 // 超过一个分片
                 // debug!("选区超过一个分片");
-                select_piece_from_or_to(rd, f_p_i, lt_p.c_i, selected_pieces.clone(), true);
+                select_piece_from_or_to(rd, lt_p_i, lt_p.c_i, selected_pieces.clone(), true);
 
                 // 超过两个分片
                 // debug!("选区超过两个分片");
                 let mut piece_rcs = Vec::new();
-                for i in f_p_i + 1..t_p_i {
+                for i in lt_p_i + 1..br_p_i {
                     if let Some(piece_rc) = rd.line_pieces.get(i) {
                         let piece = &*piece_rc.read();
                         piece.select_all();
@@ -2988,10 +3096,10 @@ pub(crate) fn select_text(from_point: &ClickPoint, to_point: &ClickPoint, data_b
                 }
                 selected_pieces.write().append(&mut piece_rcs);
 
-                select_piece_from_or_to(rd, t_p_i, br_p.c_i + 1, selected_pieces.clone(), false);
+                select_piece_from_or_to(rd, br_p_i, br_p.c_i + 1, selected_pieces.clone(), false);
             } else {
                 // 在同一个分片内
-                if let Some(piece_rc) = rd.line_pieces.get(f_p_i) {
+                if let Some(piece_rc) = rd.line_pieces.get(lt_p_i) {
                     // debug!("selected range from: {} to: {}", lt_p.c_i, br_p.c_i + 1);
                     let (mut fci, mut tci) = (lt_p.c_i, br_p.c_i + 1);
                     if fci >= tci {
@@ -3013,6 +3121,18 @@ pub(crate) fn select_text(from_point: &ClickPoint, to_point: &ClickPoint, data_b
     app::copy(selection.as_str());
 }
 
+#[derive(Debug)]
+pub(crate) struct TargetRow {
+    pub(crate) row: usize,
+    pub(crate) expanded: bool,
+}
+
+impl TargetRow {
+    pub fn new(row: usize, expanded: bool) -> Self {
+        Self { row, expanded }
+    }
+}
+
 /// 检测拖选范围所涵盖的数据段。
 ///
 /// # Arguments
@@ -3030,95 +3150,168 @@ pub(crate) fn select_text(from_point: &ClickPoint, to_point: &ClickPoint, data_b
 /// ```
 ///
 /// ```
-pub(crate) fn locate_target_rd(point: &mut ClickPoint, drag_rect: Rectangle, panel_width: i32, data_buffer: &[RichData], index_vec: Vec<usize>) -> Option<usize> {
+pub(crate) fn locate_target_rd(point: &mut ClickPoint, mut drag_rect: Rectangle, panel_width: i32, data_buffer: &[RichData], index_vec: Vec<usize>) -> Option<TargetRow> {
     let point_rect = point.as_rect();
     // debug!("index_vec: {:?}", index_vec);
     if let Ok(idx) = index_vec.binary_search_by({
         let point_rect_rc = point_rect.clone();
         let point_rc = point.clone();
-        move |row| {
-            /*
-            先将不规则的数据段外形扩展为顶宽的矩形，再检测划选区是否与之重叠；
-            如果有重叠，则进一步检测其中每个分片是否与划选区有重叠，如果任意分片有重叠，说明划选区包含了该数据段的某些分片，
-            还须再进一步确定选区起点位置所在的分片，最终返回等于，否则返回大于或小于；
-            如果没有重叠，则判断其相对位置，并返回大于或小于。
-             */
-            let mut rd_extend_rect = Rectangle::zero();
-            let rd = &data_buffer[*row];
-            // debug!("检测行 {row} : {}", rd.text);
-            let (rd_top_y, rd_bottom_y, _, _) = *rd.v_bounds.read();
-            rd_extend_rect.replace(0, rd_top_y, panel_width, rd_bottom_y - rd_top_y);
-            // debug!("rd_top_y: {}, rd_bottom_y: {}, drag_rect: {:?}", rd_top_y, rd_bottom_y, drag_rect);
-
-            // 粗略过滤到的数据段，还须进一步检测其中的分片是否包含划选区起点。
-            if is_overlap(&rd_extend_rect, &drag_rect) {
-                // debug!("行 {row} 与划选区有重叠");
-                let mut ord = Ordering::Less;
-                for piece_rc in rd.line_pieces.iter() {
-                    let piece = &*piece_rc.read();
-                    let piece_rect = piece.rect(0, 0);
-                    // debug!("piece_rect: {:?}, piece_top_y: {}, : {}", piece_rect, piece.top_y, piece.line);
-                    if is_overlap(&piece_rect, &point_rect_rc) {
-                        // 划选区起点位于分片内
-                        // debug!("划选区起点位于分片内：{}", piece.line);
-                        ord = Ordering::Equal;
-                        break;
-                    }
-                }
-                // 如果划选起点不在重叠数据段的任意分片内部，则还须判断当前数据段在起点的前面或后面，为查找算法提供判断依据。
-                if ord != Ordering::Equal {
-                    if let Some(first_piece_rc) = rd.line_pieces.first() {
-                        let piece = &*first_piece_rc.read();
-                        // debug!("piece: {:?}", piece);
-                        if point_rc.x < piece.x && point_rc.y < piece.top_y + piece.through_line.read().max_h {
-                            ord = Ordering::Greater;
-                        } else {
-                            ord = Ordering::Less;
-                        }
-                    }
-                }
-                // debug!("行 {row}: ord: {:?}", ord);
-                ord
-            } else {
-                if rd_extend_rect.is_below(&drag_rect) {
-                    // debug!("行 {row}: 大于");
-                    Ordering::Greater
-                } else {
-                    // debug!("行 {row}: 小于");
-                    Ordering::Less
-                }
-            }
-        }
+        move |row| _search_row_idx(row, &data_buffer, panel_width, &drag_rect, point_rect_rc, point_rc)
     }) {
-        let rd = &data_buffer[index_vec[idx]];
-        if rd.data_type != DataType::Image {
-            // debug!("找到目标点所在数据段： {}", rd.text);
-            for (p_i, piece_rc) in rd.line_pieces.iter().enumerate() {
-                let piece = &*piece_rc.read();
-                let piece_rect = piece.rect(0, 0);
-                // debug!("point_rect: {:?}, piece_rect: {:?}, line: {}", point_rect, piece_rect, piece.line);
-                if is_overlap(&piece_rect, &point_rect) {
-                    // 划选区起点位于分片内
-                    point.p_i = p_i;
-                    // debug!("目标点位于分片:{} 内: {}", p_i, piece.line);
-                    search_index_of_piece(piece, point);
-                    break;
+        // debug!("已定位当前数据段 {idx}");
+        let ret = _record_start_char_pos(data_buffer, &index_vec, idx, &point_rect, point);
+        if let Some(row) = ret {
+            Some(TargetRow::new(row, false))
+        } else {
+            None
+        }
+    } else {
+        // debug!("没找到目标数据段！向左上扩展");
+        drag_rect.2 = max(drag_rect.0 - PADDING.left, 0);
+        drag_rect.3 = max(drag_rect.1 - PADDING.top, 0);
+        drag_rect.0 = PADDING.left;
+        drag_rect.1 = PADDING.top;
+        let point_rect = drag_rect.clone();
+        let mut tmp_point = point.clone();
+        tmp_point.x = PADDING.left;
+
+        // 先用二分法粗略定位到选区中的某个数据段，再从该数据段开始向后遍历找到最后一个位于选区内的数据段，将该数据段的末尾设定为新的选择起点。
+        if let Ok(idx) = index_vec.binary_search_by({
+            let point_rect_rc = point_rect.clone();
+            let point_rc = tmp_point.clone();
+            move |row| _search_row_idx(row, &data_buffer, panel_width, &drag_rect, point_rect_rc, point_rc)
+        }) {
+            // debug!("粗略定位到选区中的数据段 {idx}");
+            let ret = _record_start_char_pos2(data_buffer, index_vec[idx], &point_rect, &mut tmp_point);
+            if let Some(row) = ret {
+                point.x = tmp_point.x;
+                point.y = tmp_point.y;
+                point.p_i = tmp_point.p_i;
+                point.c_i = tmp_point.c_i;
+                // debug!("point: {point:?}");
+                Some(TargetRow::new(row, true))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+}
+
+fn _search_row_idx(row: &usize, data_buffer: &[RichData], panel_width: i32, drag_rect: &Rectangle, point_rect_rc: Rectangle, point_rc: ClickPoint) -> Ordering {
+    /*
+    先将不规则的数据段外形扩展为顶宽的矩形，再检测划选区是否与之重叠；
+    如果有重叠，则进一步检测其中每个分片是否与划选区有重叠，如果任意分片有重叠，说明划选区包含了该数据段的某些分片，
+    还须再进一步确定选区起点位置所在的分片，最终返回等于，否则返回大于或小于；
+    如果没有重叠，则判断其相对位置，并返回大于或小于。
+     */
+    let mut rd_extend_rect = Rectangle::zero();
+    let rd = &data_buffer[*row];
+    // debug!("检测行 {row} : {}", rd.text);
+    let (rd_top_y, rd_bottom_y, _, _) = *rd.v_bounds.read();
+    // let max_h = if let Some(first_lp) = rd.line_pieces.first() {
+    //     rd_top_y = first_lp.read().top_y;
+    //     first_lp.read().through_line.read().max_h
+    // } else {
+    //     rd_bottom_y - rd_top_y
+    // };
+    rd_extend_rect.replace(0, rd_top_y, panel_width, rd_bottom_y - rd_top_y);
+    // debug!("{point_rect:?}, rd_top_y: {}, rd_bottom_y: {}, drag_rect: {:?}", rd_top_y, rd_bottom_y, drag_rect);
+
+    // 粗略过滤到的数据段，还须进一步检测其中的分片是否包含划选区起点。
+    if is_overlap(&rd_extend_rect, &drag_rect) {
+        // debug!("行 {row} 与划选区有重叠");
+        let mut ord = Ordering::Less;
+        for piece_rc in rd.line_pieces.iter() {
+            let piece = &*piece_rc.read();
+            let piece_rect = piece.rect(0, 0);
+            // debug!("piece_rect: {:?}, piece_top_y: {}, : {}", piece_rect, piece.top_y, piece.line);
+            if is_overlap(&piece_rect, &point_rect_rc) {
+                // 划选区起点位于分片内
+                // debug!("划选区起点位于分片内：{:?}", piece.line);
+                ord = Ordering::Equal;
+                break;
+            }
+        }
+        // 如果划选起点不在重叠数据段的任意分片内部，则还须判断当前数据段在起点的前面或后面，为查找算法提供判断依据。
+        if ord != Ordering::Equal {
+            if let Some(first_piece_rc) = rd.line_pieces.first() {
+                let piece = &*first_piece_rc.read();
+                // debug!("piece: {:?}", piece);
+                if point_rc.x < piece.x && point_rc.y < piece.top_y + piece.through_line.read().max_h {
+                    ord = Ordering::Greater;
+                } else {
+                    ord = Ordering::Less;
                 }
             }
-
-            return Some(idx);
-        } else {
-            // 选择了图片，不予处理。
-            // debug!("选择了图片")
         }
-
+        // debug!("行 {row}: ord: {:?}", ord);
+        ord
     } else {
-        // debug!("没找到目标数据段！")
+        if rd_extend_rect.is_below(&drag_rect) {
+            // debug!("行 {row}: 大于");
+            Ordering::Greater
+        } else {
+            // debug!("行 {row}: 小于");
+            Ordering::Less
+        }
     }
-    None
 }
 
 
+fn _record_start_char_pos2(data_buffer: &[RichData], from_row: usize, point_rect: &Rectangle, point: &mut ClickPoint) -> Option<usize> {
+    // 从指定位置开始向后查找选区内的数据段
+    let mut ret = from_row;
+    let bottom_y = point_rect.1 + point_rect.3;
+    'OUTER: for row in from_row..data_buffer.len() {
+        let rd = &data_buffer[row];
+        if rd.data_type != DataType::Image {
+            if rd.v_bounds.read().0 > bottom_y {
+                // 直到数据段上边界大于选区的下边界时，结束遍历。
+                break 'OUTER;
+            } else {
+                for (p_i, piece_rc) in rd.line_pieces.iter().enumerate() {
+                    let piece = &*piece_rc.read();
+                    let piece_rect = piece.rect(0, 0);
+                    // 将最后一个选区内的数据片段末尾位置，当作选区的起点
+                    if is_overlap(&piece_rect, &point_rect) {
+                        point.x = piece_rect.0 + piece_rect.2;
+                        point.y = piece_rect.1 + piece_rect.3 / 2;
+                        point.p_i = p_i;
+                        point.c_i = piece.line.trim().len();
+                        ret = row;
+                    }
+                }
+            }
+        }
+    }
+    Some(ret)
+}
+
+fn _record_start_char_pos(data_buffer: &[RichData], index_vec: &Vec<usize>, idx: usize, point_rect: &Rectangle, point: &mut ClickPoint) -> Option<usize> {
+    let rd = &data_buffer[index_vec[idx]];
+    if rd.data_type != DataType::Image {
+        // debug!("找到目标点所在数据段： {}", rd.text);
+        for (p_i, piece_rc) in rd.line_pieces.iter().enumerate() {
+            let piece = &*piece_rc.read();
+            let piece_rect = piece.rect(0, 0);
+            // debug!("point_rect: {:?}, piece_rect: {:?}, line: {}", point_rect, piece_rect, piece.line);
+            if is_overlap(&piece_rect, &point_rect) {
+                // 划选区起点位于分片内
+                point.p_i = p_i;
+                // debug!("目标点位于分片:{} 内: {}", p_i, piece.line);
+                search_index_of_piece(piece, point);
+                break;
+            }
+        }
+        return Some(idx);
+    } else {
+        // 选择了图片，不予处理。
+        // debug!("选择了图片")
+        None
+    }
+}
 
 /// 更新拖选结束点所在数段的位置属性，用于拖选过程准实时检测结束点位置。
 ///
@@ -3152,17 +3345,41 @@ pub(crate) fn update_selection_when_drag(
         (select_from_row..data_buffer_slice.len()).collect::<Vec<usize>>()
     } else {
         // 向上选择
+        // debug!("向上划选");
         down = false;
-        (0..=select_from_row).collect::<Vec<usize>>()
+        /*
+        这里引入一个魔法数字100,表示查找范围从0到起点行再向后扩展100个数据段，
+        这是为了临时解决划选区从起点数据段向右侧划选时，跨入同行内后面的数据段无法被查找到的问题，
+        数字100表示允许向起点数据段之后延伸查找最多100个数据段。
+         */
+        let max_rows = min(select_from_row + 100, data_buffer_slice.len() - 1);
+        (0..=max_rows).collect::<Vec<usize>>()
     };
     // debug!("开始查找结束点所在数据段: {:?}", index_vec);
+    // debug!("push_from: {:?}, current_point: {:?}", push_from_point, current_point);
     if let Some(select_to_row) = locate_target_rd(current_point, current_point.as_rect(), panel.w(), data_buffer_slice, index_vec) {
+        // debug!("select_from_row: {select_from_row}, select_to_row: {select_to_row:?}");
+        /*
+        向下选择时，select_to_row表示相对于select_from_row的偏移量或绝对位置；
+        向上选择时，select_to_row表示相对于0的偏移量也就是绝对位置。
+         */
         let rd_range = if down {
-            select_from_row..=(select_from_row + select_to_row)
+            if !select_to_row.expanded {
+                select_from_row..=(select_from_row + select_to_row.row)
+            } else {
+                select_from_row..=select_to_row.row
+            }
         } else {
-            select_to_row..=select_from_row
+            if select_from_row < select_to_row.row {
+                select_from_row..=select_to_row.row
+            } else {
+                select_to_row.row..=select_from_row
+            }
         };
-        select_text(&push_from_point, current_point, data_buffer_slice, rd_range, selected_pieces);
+        // let rd_range = select_from_row..=(select_from_row + select_to_row);
+        // debug!("rd_range: {:?}", rd_range);
+        // debug!("push_from: {:?}, current_point: {:?}", push_from_point, current_point);
+        select_text(&push_from_point, current_point, data_buffer_slice, rd_range, selected_pieces, select_from_row);
         // debug!("push_from: {:?}, current_point: {:?}", push_from_point, current_point);
         panel.set_damage(true);
     }
@@ -3205,10 +3422,78 @@ pub(crate) fn search_index_of_piece(piece: &LinePiece, point: &mut ClickPoint) {
         }
     }) {
         point.c_i = c_i;
-        // debug!("目标字符：{}，位置：{}", piece.line.chars().nth(c_i).unwrap(), c_i);
+        // debug!("目标字符：{}，位置：{}, point: {point:?}", piece.line.chars().nth(c_i).unwrap(), c_i);
     } else {
         // debug!("没找到目标字符！")
     }
+}
+
+/// 选择段落。
+/// 段落的定义：在目标点前后两个换行符之间的所有数据片段，可能跨越多个数据段。
+///
+/// # Arguments
+///
+/// * `anchor_row`: 目标点所在数据段索引。
+/// * `data_buffer`: 数据缓存片段。
+///
+/// returns: ()
+///
+/// # Examples
+///
+/// ```
+///
+/// ```
+pub(crate) fn select_paragraph(anchor_row: usize, push_from_point: &mut ClickPoint, data_buffer: &[RichData], selected_pieces: Arc<RwLock<Vec<Weak<RwLock<LinePiece>>>>>) {
+    let (mut from_point, mut to_point) = (ClickPoint::new(0, 0), ClickPoint::new(0, 0));
+    let (mut from_row, mut to_row) = (0, 0);
+
+    'BEFORE: for i in (0..=anchor_row).rev() {
+        let mut piece_range = 0..data_buffer[i].line_pieces.len();
+        if i == anchor_row {
+            if push_from_point.p_i > 0 {
+                piece_range = 0..push_from_point.p_i;
+            } else {
+                continue;
+            }
+        }
+        for j in piece_range.rev() {
+            if let Some(lp_arc) = data_buffer[i].line_pieces.get(j) {
+                let lp = &*lp_arc.read();
+                if lp.line.ends_with('\n') {
+                    from_row = i;
+                    from_point.p_i = j + 1;
+                    from_point.c_i = 0;
+                    from_point.x = lp.next_x;
+                    from_point.y = lp.next_y;
+                    break 'BEFORE;
+                }
+            }
+        }
+    }
+
+    'AFTER: for i in anchor_row..data_buffer.len() {
+        let piece_range = if i == anchor_row {
+            push_from_point.p_i..data_buffer[i].line_pieces.len()
+        } else {
+            0..data_buffer[i].line_pieces.len()
+        };
+        for j in piece_range {
+            if let Some(lp_arc) = data_buffer[i].line_pieces.get(j) {
+                let lp = &*lp_arc.read();
+                if lp.line.ends_with('\n') {
+                    to_row = i;
+                    to_point.p_i = j;
+                    to_point.c_i = lp.line.chars().count() - 1;
+                    to_point.x = lp.next_x;
+                    to_point.y = lp.next_y;
+                    break 'AFTER;
+                }
+            }
+        }
+    }
+
+    let rd_range = from_row..=to_row;
+    select_text(&from_point, &to_point, data_buffer, rd_range, selected_pieces, anchor_row);
 }
 
 /// 获取指定颜色的对比色。若指定颜色为中等灰色(R/G/B值相等且在116-139之间)，则返回白色。

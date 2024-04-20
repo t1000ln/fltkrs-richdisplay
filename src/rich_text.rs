@@ -80,7 +80,6 @@ pub struct RichText {
 widget_extends!(RichText, Flex, inner);
 
 
-
 impl RichText {
     pub fn new<T>(x: i32, y: i32, w: i32, h: i32, title: T) -> Self
         where T: Into<Option<&'static str>> + Clone {
@@ -711,6 +710,64 @@ impl RichText {
             cursor_piece, show_cursor, remote_flow_control, rewrite_board, max_rows, max_cols,
             update_panel_fn,
         }
+    }
+    
+    /// 设置`richdisplay`组件所在窗口的屏幕缩放比例。
+    /// 
+    /// 该方法主要是用于暂时避免当在`Windows`环境下屏幕缩放比例为`100%`时，回顾区出现渲染异常的问题。
+    /// 该问题只在`Windows`环境下发现，依赖的`FLTK`版本是`1.4.28`，未来或许随着`FLTK`版本的升级会解决该问题。
+    /// 
+    /// 若要调用此方法，则必须在组件所在窗口调用`show()`方法之前调用。
+    /// 
+    /// # Arguments 
+    /// 
+    /// * `scale`: 指定窗口的屏幕缩放比例，建议大于`1.0`，也即缩放比例大于`100%`。数值乘以100对应缩放比例的百分比。若传入`None`则固定设置为`1.25`。
+    /// 
+    /// returns: () 
+    /// 
+    /// # Examples 
+    /// 
+    /// ```
+    /// use fltk::{app, window};
+    /// use fltk::group::Flex;
+    /// use fltk::prelude::{GroupExt, WidgetExt, WindowExt};
+    /// use tokio::runtime::Runtime;
+    /// use fltkrs_richdisplay::{DocEditType, UserData};
+    /// use fltkrs_richdisplay::rich_text::RichText;
+    ///
+    /// let rt  = Runtime::new().unwrap();
+    /// rt.block_on(async {
+    ///     let app = app::App::default().load_system_fonts();
+    ///     let mut win = window::Window::default().with_size(600, 400).center_screen();;    /// 
+    ///     let mut rich_text = RichText::default_fill();
+    ///     rich_text.fix_scale(None);
+    ///     win.end();
+    ///     win.show();
+    ///
+    ///     let mut data = vec![DocEditType::Data(UserData::new_text("hello richdisplay!".to_string()))];
+    ///     rich_text.append_batch(&mut data);
+    /// 
+    ///     app.run().unwrap();
+    /// });
+    /// ```
+    pub fn fix_scale(&self, scale: Option<f32>) {
+        if cfg!(target_os = "windows") {
+            if let Some(win) = self.window() {
+                if app::screen_scale(win.screen_num()) == 1.0 {
+                    app::set_screen_scale(win.screen_num(), scale.unwrap_or(1.25));
+                }
+            }
+        }
+    }
+    
+    /// 创建初始位置在(0, 0)且长宽为(0, 0)的`richdisplay`组件。
+    pub fn default() -> Self {
+        Self::new(0, 0, 0, 0, None)
+    }
+    
+    /// 创建填满父组件的`richdisplay`组件。
+    pub fn default_fill() -> Self {
+        Self::default().size_of_parent().center_of_parent()
     }
 
     fn update_window_size(

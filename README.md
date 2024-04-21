@@ -190,7 +190,7 @@ async fn main() {
 
 `1.0.2`更新：
 1. 增加`RichText.fix_scale`方法，用于解决在`Windows`环境下屏幕缩放比例为`100%`时可能出现回顾区渲染异常的问题。
-2. 增加`RichText::default`和`RichText::defailt_fill`函数。
+2. 增加`RichText::default`和`RichText::default_fill`函数。
 
 下图是目前已实现的图文混排效果预览图：
 
